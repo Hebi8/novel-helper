@@ -2,7 +2,7 @@
   "name": "novel-helper",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "dreaife",
   "license": "MIT",
   "repository": {
@@ -43,7 +43,9 @@
         "novelHelper.gemini.model",
         "novelHelper.openaiCompatible.baseUrl",
         "novelHelper.openaiCompatible.model",
-        "novelHelper.extraRequestBody"
+        "novelHelper.extraRequestBody",
+        "novelHelper.usage.prices",
+        "novelHelper.usage.dailyLimitUsd"
       ]
     }
   },
@@ -63,6 +65,11 @@
       {
         "command": "novelHelper.showLastRequest",
         "title": "%command.showLastRequest%",
+        "category": "Novel Helper"
+      },
+      {
+        "command": "novelHelper.showUsage",
+        "title": "%command.showUsage%",
         "category": "Novel Helper"
       }
     ],
@@ -160,6 +167,38 @@
           "default": {},
           "markdownDescription": "%config.extraRequestBody%"
         },
+        "novelHelper.usage.prices": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "input",
+              "output"
+            ],
+            "properties": {
+              "input": {
+                "type": "number"
+              },
+              "output": {
+                "type": "number"
+              },
+              "cacheRead": {
+                "type": "number"
+              },
+              "cacheWrite": {
+                "type": "number"
+              }
+            }
+          },
+          "markdownDescription": "%config.usage.prices%"
+        },
+        "novelHelper.usage.dailyLimitUsd": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "markdownDescription": "%config.usage.dailyLimitUsd%"
+        },
         "novelHelper.files.lore": {
           "type": "array",
           "items": {
@@ -204,9 +243,22 @@
           "scope": "resource",
           "markdownDescription": "%config.files.summaries%"
         },
+        "novelHelper.files.bookNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "全书",
+            "总纲",
+            "book"
+          ],
+          "scope": "resource",
+          "markdownDescription": "%config.files.bookNames%"
+        },
         "novelHelper.context.beforeChars": {
           "type": "number",
-          "default": 1500,
+          "default": 6000,
           "minimum": 0,
           "markdownDescription": "%config.context.beforeChars%",
           "scope": "resource"
@@ -216,13 +268,6 @@
           "default": 200,
           "minimum": 0,
           "markdownDescription": "%config.context.afterChars%",
-          "scope": "resource"
-        },
-        "novelHelper.context.scanChars": {
-          "type": "number",
-          "default": 3000,
-          "minimum": 0,
-          "markdownDescription": "%config.context.scanChars%",
           "scope": "resource"
         },
         "novelHelper.context.alwaysChars": {
@@ -244,6 +289,20 @@
           "default": 500,
           "minimum": 0,
           "markdownDescription": "%config.context.entryChars%",
+          "scope": "resource"
+        },
+        "novelHelper.context.bookOutlineChars": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 0,
+          "markdownDescription": "%config.context.bookOutlineChars%",
+          "scope": "resource"
+        },
+        "novelHelper.context.levelOutlineChars": {
+          "type": "number",
+          "default": 800,
+          "minimum": 0,
+          "markdownDescription": "%config.context.levelOutlineChars%",
           "scope": "resource"
         },
         "novelHelper.context.outlineChars": {

@@ -2,7 +2,7 @@
 // a full scan when the folder is first needed, then file watchers.
 
 import * as vscode from 'vscode';
-import { type FileKind, Library } from '../core/library';
+import { type FileKind, globRootDepth, Library } from '../core/library';
 import { filePatterns } from './config';
 
 /** Text of a file: the editor's copy if it is open (possibly unsaved), else the file on disk. */
@@ -17,7 +17,7 @@ export async function readText(uri: vscode.Uri): Promise<string> {
 type Kind = 'lore' | FileKind;
 
 export class FolderIndex implements vscode.Disposable {
-	readonly library = new Library();
+	readonly library: Library;
 	readonly ready: Promise<void>;
 	private readonly disposables: vscode.Disposable[] = [];
 	/** Counts events per lore file, so a slow read cannot undo a later change or deletion. */
@@ -27,6 +27,7 @@ export class FolderIndex implements vscode.Disposable {
 		readonly folder: vscode.WorkspaceFolder,
 		private readonly log: vscode.LogOutputChannel,
 	) {
+		this.library = new Library(filePatterns(folder.uri).bookNames);
 		this.ready = this.load();
 	}
 
@@ -51,17 +52,18 @@ export class FolderIndex implements vscode.Disposable {
 			groups.flatMap(([kind, globs]) =>
 				globs.map(async (glob) => {
 					const pattern = new vscode.RelativePattern(this.folder, glob);
+					const rootDepth = globRootDepth(glob);
 					const watcher = vscode.workspace.createFileSystemWatcher(pattern);
 					this.disposables.push(
 						watcher,
-						watcher.onDidCreate((uri) => this.add(kind, uri)),
+						watcher.onDidCreate((uri) => this.add(kind, uri, rootDepth)),
 						watcher.onDidDelete((uri) => this.remove(kind, uri)),
 					);
 					if (kind === 'lore') {
-						this.disposables.push(watcher.onDidChange((uri) => this.add(kind, uri)));
+						this.disposables.push(watcher.onDidChange((uri) => this.add(kind, uri, rootDepth)));
 					}
 					const uris = await vscode.workspace.findFiles(pattern);
-					await Promise.all(uris.map((uri) => this.add(kind, uri)));
+					await Promise.all(uris.map((uri) => this.add(kind, uri, rootDepth)));
 				}),
 			),
 		);
@@ -70,10 +72,10 @@ export class FolderIndex implements vscode.Disposable {
 		);
 	}
 
-	private async add(kind: Kind, uri: vscode.Uri): Promise<void> {
+	private async add(kind: Kind, uri: vscode.Uri, rootDepth: number): Promise<void> {
 		const path = this.relative(uri);
 		if (kind !== 'lore') {
-			this.library.addFile(kind, path);
+			this.library.addFile(kind, path, rootDepth);
 			return;
 		}
 		const event = this.loreEvent(path);

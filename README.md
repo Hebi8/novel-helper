@@ -2,7 +2,7 @@
 
 [中文说明](README.zh-CN.md)
 
-Ghost-text continuation for writing fiction in VS Code that reads your lore. Pause at the end of a line in a chapter and a one-sentence continuation appears in gray; **Tab** takes it. Each request carries what the scene needs: the text around the cursor, the lore entries for names that appear nearby, entries you marked always-on (style rules, world basics), this chapter's outline, and the summaries or endings of the previous chapters.
+Ghost-text continuation for writing fiction in VS Code that reads your lore. Pause at the end of a line in a chapter and a one-sentence continuation appears in gray; **Tab** takes it. Each request carries what the scene needs: the chapter so far, the lore entries for names that appear in it, entries you marked always-on (style rules, world basics), the outlines from the whole book down to this chapter, and the summaries or endings of the previous chapters. What it costs in tokens and dollars is always on view.
 
 Lore is one key away too: hover a name to see its card, press **F12** to open its file.
 
@@ -10,8 +10,8 @@ Built for long Chinese web novels first (one chapter per file, hundreds of chapt
 
 ## Install
 
-1. Build `novel-helper-0.1.0.vsix` (see [Build from source](#build-from-source)).
-2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.1.0.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
+1. Build `novel-helper-0.2.0.vsix` (see [Build from source](#build-from-source)).
+2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.2.0.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
 
 ## Set an API key
 
@@ -28,7 +28,7 @@ The key is kept in VS Code's secret storage (the system keychain), never in sett
 | Gemini (OpenAI-compatible endpoint) | `gemini` | `gemini-3.5-flash-lite` | Gemini 3 cannot turn it off; this model defaults to `minimal` |
 | Local model or other OpenAI-compatible endpoint | `openaiCompatible` | set `novelHelper.openaiCompatible.model` | as the server does |
 
-Workspace settings for the provider, model, base URL and `extraRequestBody` apply only once you trust the folder; in Restricted Mode they come from your user settings, so an untrusted folder cannot redirect your text or key.
+Workspace settings for the provider, model, base URL, `extraRequestBody`, prices and the daily limit apply only once you trust the folder; in Restricted Mode they come from your user settings, so an untrusted folder cannot redirect your text or key, or lift your spending limit.
 
 Pick another model with `novelHelper.<provider>.model`. When a model needs different request fields, put them in `novelHelper.extraRequestBody`; they are merged into every request, and `null` removes a field. For example, Claude Sonnet 5.5 rejects `disabled` and turns thinking off like this:
 
@@ -38,6 +38,8 @@ Pick another model with `novelHelper.<provider>.model`. When a model needs diffe
 ```
 
 For Ollama, set `novelHelper.provider` to `openaiCompatible` and `novelHelper.openaiCompatible.model` to the model name; the default base URL `http://localhost:11434/v1` already points at it. No key is needed.
+
+The OpenAI provider marks cache breakpoints the way GPT-5.6 and later expect (see [What it costs](#what-it-costs)). Earlier OpenAI models do not take those fields: use `openaiCompatible` with the base URL `https://api.openai.com/v1` for them.
 
 ## Lay out the workspace
 
@@ -51,13 +53,29 @@ my-novel/
 ├── 人物/
 │   └── 林小满.md
 ├── 正文/        chapters, one per file (also: 章节/ chapters/ manuscript/)
-│   ├── 第1章 雾里来信.md
-│   └── 第2章 灯塔.md
-├── 大纲/        outline of the chapter with the same file name (also: 细纲/ outline/ outlines/)
-│   └── 第2章 灯塔.md
+│   └── 第一卷 雾港/                 a volume: one folder level
+│       └── 第一幕 来信/             an arc: a folder level inside the volume
+│           ├── 第1章 雾里来信.md
+│           └── 第2章 灯塔.md
+├── 大纲/        (also: 细纲/ outline/ outlines/)
+│   ├── 全书.md                      outline of the whole book (also: 总纲.md, book.md)
+│   ├── 第一卷 雾港.md               outline of the volume: named after its folder
+│   └── 第一卷 雾港/
+│       ├── 第一幕 来信.md           outline of the arc: named after its folder
+│       └── 第一幕 来信/
+│           └── 第2章 灯塔.md        outline of the chapter: named after its file
 └── 摘要/        summary of the chapter with the same file name (also: summary/ summaries/)
     └── 第1章 雾里来信.md
 ```
+
+While you write a chapter, the outline of every level above it goes along: the book, the volume, the arc, the chapter. Two rules cover it:
+
+- **Every folder level under the chapters folder is a level**, as many as you like: chapters right in the folder, volumes only, arcs inside volumes, and further down.
+- **An outline has the name of what it outlines and sits at the same place under the outline folder**: a chapter's outline is named after the chapter file, a level's after its folder (`正文/第一卷 雾港/` → `大纲/第一卷 雾港.md`). The whole book's is `全书.md`, right in the outline folder; `novelHelper.files.bookNames` changes the name.
+
+A level without an outline file is skipped; the others are not affected. Outlines and summaries may also sit in fewer folders than the chapter: `大纲/第31章.md` and `摘要/第31章.md` serve `正文/卷二/第31章.md` too, and when both places have one, the one whose folders match wins. A same-named file in another volume is never used (`大纲/卷一/第1章.md` does not pair with `正文/卷二/第1章.md`).
+
+A flat layout, all chapters right in `正文/`, works as before.
 
 A lore entry is a Markdown (or `.txt`) file named after the entry. Frontmatter is optional:
 
@@ -72,7 +90,7 @@ summary: 十七岁，雾港邮局的送信员……   # sent instead of the text
 The entry's text. Without a summary, its first 500 characters are sent.
 ```
 
-Chapters are ordered by path, numbers compared by value: 第2章 before 第10章, 第九章 before 第十二章, 卷二 before 卷十. With volumes in subfolders, outlines and summaries can mirror them (`大纲/卷二/第1章.md` pairs with `正文/卷二/第1章.md`).
+Chapters are ordered by path, numbers compared by value: 第2章 before 第10章, 第九章 before 第十二章, 卷二 before 卷十.
 
 ## Write
 
@@ -88,21 +106,64 @@ Command Palette → **Novel Helper: Show Last Request to the Model** opens a rea
 
 - every entry that went in, and why: always-on, or which names matched, how often, how close to the cursor, named in the outline; with its size and whether its summary or text was used;
 - entries left out because their budget ran out;
-- the outline and previous chapters used, and how much of each;
-- the full prompt, the request parameters (never the key), the model's raw reply, the ghost text it became, and the timing.
+- for each level, the outline file used, how much of it, whether it was cut, and which levels have none; the previous chapters used, and how much of each;
+- what the request used: input tokens at full price, read from cache and written to cache, output tokens, and the cost estimated from the prices;
+- the full prompt (cut where the cache breakpoints are), the request parameters (never the key), the model's raw reply, the ghost text it became, and the timing.
 
 When the model ignores something you expected it to know, this page shows whether the name was never found or the budget was full.
 
 ## What goes into a request
 
-In this order, so the parts that change least come first and providers that cache prompt prefixes can reuse them (Anthropic through a cache breakpoint; OpenAI, DeepSeek and Gemini automatically):
+In this order, the parts that change least first:
 
 1. Instructions and always-on entries.
-2. Previous chapters (summary, or the chapter's ending when it has none) and this chapter's outline.
-3. Entries whose names or aliases appear in the last 3,000 characters before the cursor or in the outline. Each mention counts more the closer it is to the cursor; the highest-ranked entries go in until the budget is used.
-4. The text before the cursor, and a little after it.
+2. The outlines above the chapter, largest first: the book, the volume, the arc; then the previous chapters (summary, or the chapter's ending when it has none) and this chapter's outline. Each outline above the chapter has its own size cap and is cut beyond it.
+3. Entries whose names or aliases appear in this chapter before the cursor or in this chapter's outline. Each mention counts more the closer it is to the cursor; when the budget runs short the highest-ranked entries stay. Names in the outlines above the chapter do not count, or the book's outline would pull in every character.
+4. This chapter from its start to the cursor, and a little after it.
 
 Names are matched longest-first, so 「张三丰」 never counts as 「张三」. Names with Latin letters ignore case and need word boundaries: `Al` does not match inside `Also`.
+
+## What it costs
+
+Writing a chapter takes many requests, and most of each prompt repeats the one before. Providers bill the part of a prompt that starts the same as an earlier request at about a tenth of the price (prompt caching), so the prompt is laid out to make each request the beginning of the next:
+
+- The chapter is sent from its start, not as a window before the cursor: as you write on, nothing before changes. Past `novelHelper.context.beforeChars` (6,000 by default) the chapter loses a third of that from its start at a time, instead of sliding with every character.
+- Lore entries come before the text, in the order they first come up in the chapter: a newly mentioned name adds one entry at the end.
+- The text is cut at line ends into pieces of about 300 characters. Cache breakpoints go after the outlines and after the last two finished pieces; each request reads up to the previous breakpoint from the cache and writes the newly finished piece to it.
+
+So while you keep writing, the only part of a request billed at full price is the piece being written (a hundred or two characters on average) and the closing instruction; the rest is billed at the cache price. Come back after the cache has expired and the first request writes the whole prompt to the cache again.
+
+| Provider | How the cache is used | Lifetime | Price of the default model (US dollars per million tokens, from the official pricing pages on 2026-11-12) |
+|---|---|---|---|
+| Anthropic | Breakpoints in the request | 5 minutes, renewed on each hit | Input 0.10, cache write 0.125, cache read 0.01, output 0.50 |
+| OpenAI | Breakpoints in the request (GPT-5.6 and later) | 30 minutes | Input 0.10, cache write 0.125, cache read 0.01, output 0.50 |
+| DeepSeek | Finds shared beginnings by itself, best effort | Hours to days | Input 0.15, cache hit 0.003, output 0.60; double on weekdays 01:00–04:00 and 06:00–10:00 UTC |
+| Gemini | Automatic on the native API; not documented for the OpenAI-compatible endpoint | | Input 0.30, cached 0.03, output 2.50; has a free tier |
+
+A prompt that is too short is not cached (Anthropic needs 512 tokens, OpenAI 1,024).
+
+**Seeing the usage:**
+
+- Hover the status bar item for today's requests, tokens of each kind and estimated cost.
+- Command Palette → **Novel Helper: Show Usage and Estimated Cost** for today and this month, per provider and model, with the share of input read from cache.
+- **Show Last Request to the Model** has the usage of the last request.
+
+The counts are what the provider reported for each request. Cost is tokens times price: an estimate, and the provider's bill is what counts. Some details:
+
+- A request cut short by your typing is closed at once. If the provider had reported usage by then, it is counted as usual (Anthropic reports the input side at the start of the stream, so it usually had); if not, the request is counted with its usage unknown.
+- Ghost text takes the first sentence and does not wait for the rest. Anthropic reports the input side at the start of the stream, so the connection closes at once and the output count is estimated from the text received, marked as an estimate. OpenAI-compatible endpoints report usage at the very end, so after the first sentence the connection stays open for up to 2 seconds to get it; if it does not come, the usage is recorded as unknown rather than made up. Local models are not waited for.
+- With a model other than the default, the extension has no price and counts tokens only. To get a cost, add the price to `novelHelper.usage.prices`:
+
+  ```json
+  "novelHelper.usage.prices": {
+    "claude-sonnet-5-5": { "input": 2, "output": 10, "cacheRead": 0.1, "cacheWrite": 2.5 }
+  }
+  ```
+
+- DeepSeek's peak hours are applied by the clock; Chinese public holidays, which are off-peak, are not accounted for. Gemini is costed at the paid tier, so on the free tier the real cost is zero.
+- The totals are kept on the machine the extension runs on (the remote one under Remote-SSH), for this month and the last, and shared by all windows.
+
+**Daily limit:** set `novelHelper.usage.dailyLimitUsd` to a dollar amount and automatic requests stop once the day's estimated cost reaches it; the status bar says so, and **Alt+\\** still asks for one. The default, `0`, is no limit. Requests without a price do not count towards it.
 
 ## Look up lore
 
@@ -126,29 +187,34 @@ Names are matched longest-first, so 「张三丰」 never counts as 「张三」
 | `novelHelper.openaiCompatible.baseUrl` | `http://localhost:11434/v1` | Up to `/v1` |
 | `novelHelper.openaiCompatible.model` | | |
 | `novelHelper.extraRequestBody` | `{}` | Merged into every request body; `null` removes a field |
+| `novelHelper.usage.prices` | `{}` | Your own prices by model id, in US dollars per million tokens |
+| `novelHelper.usage.dailyLimitUsd` | `0` | Stop automatic requests once the day's estimated cost reaches this; `0` for no limit |
 | `novelHelper.files.lore` | `{设定,人物,角色,资料,世界观,lore,characters,worldbuilding}/**/*.{md,txt}` | Globs relative to the workspace folder |
 | `novelHelper.files.chapters` | `{正文,章节,chapters,manuscript}/**/*.{md,txt}` | |
 | `novelHelper.files.outlines` | `{大纲,细纲,outline,outlines}/**/*.{md,txt}` | |
 | `novelHelper.files.summaries` | `{摘要,summary,summaries}/**/*.{md,txt}` | |
-| `novelHelper.context.beforeChars` | `1500` | Text before the cursor sent to the model |
+| `novelHelper.files.bookNames` | `全书`, `总纲`, `book` | File names (without extension) of the whole book's outline |
+| `novelHelper.context.beforeChars` | `6000` | Most of this chapter before the cursor sent to the model; names are searched in it |
 | `novelHelper.context.afterChars` | `200` | Text after the cursor sent to the model |
-| `novelHelper.context.scanChars` | `3000` | Text before the cursor searched for names |
 | `novelHelper.context.alwaysChars` | `1500` | Budget for always-on entries |
 | `novelHelper.context.matchedChars` | `2500` | Budget for matched entries |
 | `novelHelper.context.entryChars` | `500` | Most taken from one entry |
+| `novelHelper.context.bookOutlineChars` | `1000` | Most taken from the whole book's outline |
+| `novelHelper.context.levelOutlineChars` | `800` | Most taken from the outline of each level in between (volume, arc) |
 | `novelHelper.context.outlineChars` | `800` | Most taken from this chapter's outline |
 | `novelHelper.context.previousChapters` | `3` | Previous chapters included |
 | `novelHelper.context.previousChapterChars` | `400` | Most taken from each previous chapter |
 
-Sizes are in characters; one Chinese character counts as one. The `files` and `context` settings can differ per workspace folder.
+Sizes are in characters; one Chinese character counts as one. The `files` and `context` settings can differ per workspace folder. `novelHelper.context.scanChars` from 0.1.0 is gone: names are now searched in all of the chapter text that is sent.
 
 ## Try the example
 
 1. Open the [`examples/`](examples) folder of this repository as a workspace and set a key.
-2. Open `正文/第2章 灯塔.md`, put the cursor at the end of the last line and wait for the gray text.
-3. Run **Show Last Request to the Model** to see what went in: 「陆青山」 matched as itself, not as 「陆青」, and 潮汐钟 came in through the outline.
+2. Open `正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md`, put the cursor at the end of the last line and wait for the gray text.
+3. Run **Show Last Request to the Model** to see what went in: which file served as the outline of the book, of 「第一卷 雾港」, of 「第一幕 来信」 and of the chapter; 「陆青山」 matched as itself, not as 「陆青」; 潮汐钟 came in through the chapter's outline.
+4. Ask for another suggestion, then run **Show Usage and Estimated Cost** to see how much of the second request's input was read from cache.
 
-第1章 has a summary and 第2章 does not: create `正文/第3章.md` and its request carries the end of 第2章 instead.
+第1章 has a summary and 第2章 does not: create `第3章.md` in the same folder and its request carries the end of 第2章 instead.
 
 ## Build from source
 
@@ -158,7 +224,7 @@ npm test
 npx @vscode/vsce package
 ```
 
-`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, budgets, prompt assembly, sentence cutting, and the model client against a local fake server.
+`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, sentence cutting, usage and cost, and the model client against a local fake server.
 
 ## License
 

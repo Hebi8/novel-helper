@@ -10,7 +10,27 @@
 //     off; gemini-3.5-flash-lite defaults to the `minimal` level, so nothing is
 //     sent. The compatible endpoint does not document an output-cap field, so
 //     none is sent either.
+//
+// Prices (US dollars per million tokens) and caching rules were read off each
+// provider's pricing and prompt-caching pages on 2026-11-12:
+//   Anthropic: claude-haiku-5-5 at prompts up to 100K tokens: input 0.10,
+//     output 0.50, 5-minute cache write 0.125, cache read 0.01. Caches only at
+//     explicit breakpoints; a prefix needs 512 tokens; entries live 5 minutes
+//     from their last read.
+//   OpenAI: gpt-6-luna: input 0.10, output 0.50, cached input 0.01, 30-minute
+//     cache write 0.125. From GPT-5.6 on, the default (implicit) mode writes
+//     the whole prompt to the cache on every request and only finds it again
+//     at message ends, so the preset marks explicit breakpoints instead; a
+//     prefix needs 1,024 tokens.
+//   DeepSeek: deepseek-flash: input 0.15 on a cache miss and 0.003 on a hit,
+//     output 0.60; double on weekdays 01:00-04:00 and 06:00-10:00 UTC (Chinese
+//     public holidays excepted, which is not modelled here). Caches shared
+//     prefixes by itself, at no charge for writing.
+//   Gemini: gemini-3.5-flash-lite paid tier: input 0.30, output 2.50 (thinking
+//     included), cached input 0.03. Caches by itself on the native API; the
+//     OpenAI-compatible endpoint does not say whether it does.
 
+import type { Pricing } from '../core/usage';
 import type { Protocol } from './client';
 
 export type ProviderId = 'anthropic' | 'openai' | 'deepseek' | 'gemini' | 'openaiCompatible';
@@ -27,7 +47,25 @@ export interface ProviderPreset {
 	/** Fields that switch thinking off for the default model. */
 	extraBody: Record<string, unknown>;
 	keyRequired: boolean;
+	/** OpenAI-compatible only: mark cache breakpoints the way OpenAI's GPT-5.6 and later expect. */
+	cacheBreakpoints?: boolean;
+	/**
+	 * How long a request that has given its sentence stays open for the
+	 * provider to report what it used. Zero for local servers, where a
+	 * finished request should free the model at once.
+	 */
+	usageWaitMs: number;
+	/** Published prices of the default model. */
+	pricing?: Pricing;
 }
+
+/**
+ * OpenAI-compatible endpoints report usage in the last event of the stream,
+ * after text the ghost text no longer needs. A model told to write one
+ * sentence usually ends there, so the wait is short and costs few tokens.
+ * Anthropic reports the input side in the first event and never waits.
+ */
+const USAGE_WAIT_MS = 2000;
 
 export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
 	anthropic: {
@@ -39,6 +77,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
 		maxTokensField: 'max_tokens',
 		extraBody: { thinking: { type: 'disabled' } },
 		keyRequired: true,
+		usageWaitMs: USAGE_WAIT_MS,
+		pricing: { model: 'claude-haiku-5-5', rates: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 } },
 	},
 	openai: {
 		id: 'openai',
@@ -49,6 +89,9 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
 		maxTokensField: 'max_completion_tokens',
 		extraBody: { reasoning_effort: 'none' },
 		keyRequired: true,
+		cacheBreakpoints: true,
+		usageWaitMs: USAGE_WAIT_MS,
+		pricing: { model: 'gpt-6-luna', rates: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 } },
 	},
 	deepseek: {
 		id: 'deepseek',
@@ -59,6 +102,15 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
 		maxTokensField: 'max_tokens',
 		extraBody: { thinking: { type: 'disabled' } },
 		keyRequired: true,
+		usageWaitMs: USAGE_WAIT_MS,
+		pricing: {
+			model: 'deepseek-flash',
+			rates: { input: 0.15, output: 0.6, cacheRead: 0.003 },
+			peak: {
+				rates: { input: 0.3, output: 1.2, cacheRead: 0.006 },
+				utcHours: [[1, 4], [6, 10]],
+			},
+		},
 	},
 	gemini: {
 		id: 'gemini',
@@ -68,6 +120,8 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
 		defaultModel: 'gemini-3.5-flash-lite',
 		extraBody: {},
 		keyRequired: true,
+		usageWaitMs: USAGE_WAIT_MS,
+		pricing: { model: 'gemini-3.5-flash-lite', rates: { input: 0.3, output: 2.5, cacheRead: 0.03 } },
 	},
 	openaiCompatible: {
 		id: 'openaiCompatible',
@@ -78,6 +132,7 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
 		maxTokensField: 'max_tokens',
 		extraBody: {},
 		keyRequired: false,
+		usageWaitMs: 0,
 	},
 };
 

@@ -1,6 +1,8 @@
-// The workspace index: lore entries parsed from Markdown files, plus the
-// chapter, outline and summary file lists. It knows nothing about VS Code;
-// the extension feeds it paths (relative, `/`-separated) and file contents.
+// The workspace index: lore entries parsed from Markdown files, the chapter,
+// outline and summary file lists, and the book's structure (the book, its
+// volumes and arcs, its chapters) read off the folders the chapters are in.
+// It knows nothing about VS Code; the extension feeds it paths (relative,
+// `/`-separated) and file contents.
 
 import { parse as parseYaml } from 'yaml';
 import { Matcher } from './match';
@@ -75,15 +77,49 @@ export function parseLoreEntry(path: string, content: string): LoreEntry {
 
 export type FileKind = 'chapter' | 'outline' | 'summary';
 
+/** File names (extension aside) of the whole book's outline and summary. */
+export const DEFAULT_BOOK_NAMES = ['全书', '总纲', 'book'];
+
+// How many leading folders of a glob are fixed, which is where the files it
+// matches are rooted: `{正文,章节}/**/*.md` → 1, `稿子/正文/**/*.md` → 2, `**/*.md` → 0.
+export function globRootDepth(glob: string): number {
+	const segments = glob.split('/');
+	const wild = segments.findIndex((segment) => /[*?[]/.test(segment));
+	return wild === -1 ? segments.length - 1 : wild;
+}
+
+/** The whole book, or one folder level between the chapters folder and a chapter (卷, 幕…). */
+export interface Level {
+	/** Folder path relative to the workspace folder; '' for the whole book. */
+	path: string;
+	/** Folder name; for the whole book, the name of its outline file (全书). */
+	name: string;
+	outline?: string;
+	summary?: string;
+}
+
+/** The book as a tree of levels and chapters in reading order. */
+export interface BookNode extends Level {
+	kind: 'book' | 'level' | 'chapter';
+	children: BookNode[];
+}
+
+type Companion = 'outline' | 'summary';
+
 export class Library {
 	private readonly lore = new Map<string, LoreEntry>();
 	private chapters: string[] = [];
-	private readonly companions: Record<'outline' | 'summary', Map<string, Set<string>>> = {
+	/** Folders of each chapter below the chapters folder: 正文/第一卷/第一幕/第1章.md → [第一卷, 第一幕]. */
+	private readonly chapterDirs = new Map<string, string[]>();
+	/** By file name (extension aside): path → its folders below the outline or summary folder. */
+	private readonly companions: Record<Companion, Map<string, Map<string, string[]>>> = {
 		outline: new Map(),
 		summary: new Map(),
 	};
 	private cachedMatcher?: Matcher;
 	private cachedEntries?: LoreEntry[];
+
+	constructor(private readonly bookNames: readonly string[] = DEFAULT_BOOK_NAMES) {}
 
 	setLore(path: string, content: string): LoreEntry {
 		const entry = parseLoreEntry(path, content);
@@ -115,31 +151,38 @@ export class Library {
 		return this.cachedMatcher;
 	}
 
-	addFile(kind: FileKind, path: string): void {
+	/**
+	 * `rootDepth` is how many leading folders of `path` are the chapters (or
+	 * outline, or summary) folder itself rather than part of the book's
+	 * structure: 1 for 正文/第一卷/第1章.md. See `globRootDepth`.
+	 */
+	addFile(kind: FileKind, path: string, rootDepth = 1): void {
+		const dirs = dirSegments(path).slice(rootDepth);
 		if (kind === 'chapter') {
-			if (!this.chapters.includes(path)) {
+			if (!this.chapterDirs.has(path)) {
 				this.chapters.push(path);
 				this.chapters.sort(comparePaths);
 			}
+			this.chapterDirs.set(path, dirs);
 			return;
 		}
-		const byStem = this.companions[kind];
-		const key = stem(path);
-		const paths = byStem.get(key) ?? new Set<string>();
-		paths.add(path);
-		byStem.set(key, paths);
+		const byName = this.companions[kind];
+		const paths = byName.get(stem(path)) ?? new Map<string, string[]>();
+		paths.set(path, dirs);
+		byName.set(stem(path), paths);
 	}
 
 	deleteFile(kind: FileKind, path: string): void {
 		if (kind === 'chapter') {
 			this.chapters = this.chapters.filter((p) => p !== path);
+			this.chapterDirs.delete(path);
 			return;
 		}
 		this.companions[kind].get(stem(path))?.delete(path);
 	}
 
 	isChapter(path: string): boolean {
-		return this.chapters.includes(path);
+		return this.chapterDirs.has(path);
 	}
 
 	/** Chapters in reading order. */
@@ -155,32 +198,106 @@ export class Library {
 
 	/**
 	 * The outline or summary file for a chapter: same file name (extension
-	 * aside); when several match, the one whose directories line up best with
-	 * the chapter's (大纲/卷二/第1章 for 正文/卷二/第1章).
+	 * aside), in the same folders below the outline folder as the chapter is
+	 * below the chapters folder, or in fewer of them: 正文/卷二/第1章.md takes
+	 * 大纲/卷二/第1章.md, else 大纲/第1章.md, never 大纲/卷一/第1章.md.
 	 */
-	companionOf(kind: 'outline' | 'summary', chapterPath: string): string | undefined {
-		const candidates = this.companions[kind].get(stem(chapterPath));
-		if (!candidates) {
-			return undefined;
+	companionOf(kind: Companion, chapterPath: string): string | undefined {
+		return this.companion(kind, stem(chapterPath), this.chapterDirs.get(chapterPath) ?? []);
+	}
+
+	/**
+	 * The levels above a chapter, the whole book first. Every folder between
+	 * the chapters folder and the chapter is a level, however deep:
+	 * 正文/第一卷/第一幕/第1章.md → 全书, 第一卷, 第一幕. A level's outline and
+	 * summary are the files named after its folder, placed like a chapter's:
+	 * 大纲/第一卷.md, 大纲/第一卷/第一幕.md. The book's are named 全书 (or
+	 * another of the book names) and sit right in the outline or summary
+	 * folder. Files that are not chapters get the book alone.
+	 */
+	levelsOf(chapterPath: string): Level[] {
+		const dirs = this.chapterDirs.get(chapterPath) ?? [];
+		const folders = dirSegments(chapterPath);
+		const root = folders.slice(0, folders.length - dirs.length);
+		const levels = [this.book()];
+		for (let depth = 1; depth <= dirs.length; depth++) {
+			const name = dirs[depth - 1];
+			const parents = dirs.slice(0, depth - 1);
+			levels.push({
+				path: [...root, ...dirs.slice(0, depth)].join('/'),
+				name,
+				outline: this.companion('outline', name, parents),
+				summary: this.companion('summary', name, parents),
+			});
 		}
-		const dirs = dirSegments(chapterPath);
+		return levels;
+	}
+
+	/** Levels and chapters in reading order; a level shows up once it holds a chapter. */
+	tree(): BookNode {
+		const root: BookNode = { kind: 'book', ...this.book(), children: [] };
+		const levels = new Map<string, BookNode>();
+		for (const chapter of this.chapters) {
+			let parent = root;
+			for (const level of this.levelsOf(chapter).slice(1)) {
+				let node = levels.get(level.path);
+				if (!node) {
+					node = { kind: 'level', ...level, children: [] };
+					levels.set(level.path, node);
+					parent.children.push(node);
+				}
+				parent = node;
+			}
+			parent.children.push({
+				kind: 'chapter',
+				path: chapter,
+				name: stem(chapter),
+				outline: this.companionOf('outline', chapter),
+				summary: this.companionOf('summary', chapter),
+				children: [],
+			});
+		}
+		return root;
+	}
+
+	private book(): Level {
+		const outline = this.bookFile('outline');
+		return {
+			path: '',
+			name: outline ? stem(outline) : this.bookNames[0] ?? '',
+			outline,
+			summary: this.bookFile('summary'),
+		};
+	}
+
+	/** The file named after the book right in an outline (or summary) folder; the first book name wins. */
+	private bookFile(kind: Companion): string | undefined {
+		for (const name of this.bookNames) {
+			const path = this.companion(kind, name, []);
+			if (path) {
+				return path;
+			}
+		}
+		return undefined;
+	}
+
+	/** The file called `name` whose folders are the longest tail of `dirs`. */
+	private companion(kind: Companion, name: string, dirs: string[]): string | undefined {
 		let best: string | undefined;
-		let bestScore = -1;
-		for (const candidate of candidates) {
-			const score = commonSuffixLength(dirSegments(candidate), dirs);
-			if (score > bestScore || (score === bestScore && best !== undefined && comparePaths(candidate, best) < 0)) {
-				best = candidate;
-				bestScore = score;
+		let bestDepth = -1;
+		for (const [path, own] of this.companions[kind].get(name) ?? []) {
+			if (!isTail(own, dirs)) {
+				continue;
+			}
+			if (own.length > bestDepth || (own.length === bestDepth && comparePaths(path, best!) < 0)) {
+				best = path;
+				bestDepth = own.length;
 			}
 		}
 		return best;
 	}
 }
 
-function commonSuffixLength(a: string[], b: string[]): number {
-	let n = 0;
-	while (n < a.length && n < b.length && a[a.length - 1 - n] === b[b.length - 1 - n]) {
-		n++;
-	}
-	return n;
+function isTail(tail: string[], dirs: string[]): boolean {
+	return tail.length <= dirs.length && tail.every((dir, i) => dir === dirs[dirs.length - tail.length + i]);
 }

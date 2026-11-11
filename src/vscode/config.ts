@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { ContextLimits } from '../core/context';
+import type { Pricing, Rates } from '../core/usage';
 import type { ModelRequest } from '../llm/client';
 import { MAX_OUTPUT_TOKENS, PROVIDERS, REQUEST_TIMEOUT_MS, type ProviderId } from '../llm/providers';
 
@@ -10,6 +11,8 @@ export interface FilePatterns {
 	chapters: string[];
 	outlines: string[];
 	summaries: string[];
+	/** File names of the whole book's outline and summary. */
+	bookNames: string[];
 }
 
 export function filePatterns(scope?: vscode.Uri): FilePatterns {
@@ -19,6 +22,7 @@ export function filePatterns(scope?: vscode.Uri): FilePatterns {
 		chapters: c.get<string[]>('chapters', []),
 		outlines: c.get<string[]>('outlines', []),
 		summaries: c.get<string[]>('summaries', []),
+		bookNames: c.get<string[]>('bookNames', []),
 	};
 }
 
@@ -32,10 +36,11 @@ export function contextSettings(scope?: vscode.Uri): ContextSettings {
 	return {
 		beforeChars: n('beforeChars'),
 		afterChars: n('afterChars'),
-		scanChars: n('scanChars'),
 		alwaysChars: n('alwaysChars'),
 		matchedChars: n('matchedChars'),
 		entryChars: n('entryChars'),
+		bookOutlineChars: n('bookOutlineChars'),
+		levelOutlineChars: n('levelOutlineChars'),
 		outlineChars: n('outlineChars'),
 		previousChapters: n('previousChapters'),
 		previousChapterChars: n('previousChapterChars'),
@@ -65,9 +70,11 @@ export function currentProvider(): ProviderId {
 }
 
 /** Everything about the model except the prompt and the key. */
-export type ModelSettings = Omit<ModelRequest, 'system' | 'stable' | 'dynamic' | 'apiKey'> & {
+export type ModelSettings = Omit<ModelRequest, 'system' | 'user' | 'apiKey'> & {
 	provider: ProviderId;
 	keyRequired: boolean;
+	/** Published prices of the provider's default model. */
+	pricing?: Pricing;
 };
 
 export function modelSettings(): ModelSettings {
@@ -83,8 +90,26 @@ export function modelSettings(): ModelSettings {
 		maxTokens: MAX_OUTPUT_TOKENS,
 		maxTokensField: preset.maxTokensField,
 		extraBody: { ...preset.extraBody, ...c.get<Record<string, unknown>>('extraRequestBody', {}) },
+		cacheBreakpoints: preset.cacheBreakpoints,
 		timeoutMs: REQUEST_TIMEOUT_MS,
+		usageWaitMs: preset.usageWaitMs,
 		keyRequired: preset.keyRequired,
+		pricing: preset.pricing,
+	};
+}
+
+export interface UsageSettings {
+	/** The user's own prices by model id, in US dollars per million tokens. */
+	prices: Record<string, Rates>;
+	/** Dollars a day after which automatic requests stop; 0 for no limit. */
+	dailyLimitUsd: number;
+}
+
+export function usageSettings(): UsageSettings {
+	const c = vscode.workspace.getConfiguration(`${SECTION}.usage`);
+	return {
+		prices: c.get<Record<string, Rates>>('prices', {}),
+		dailyLimitUsd: c.get<number>('dailyLimitUsd', 0),
 	};
 }
 

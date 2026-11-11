@@ -1,13 +1,16 @@
 import * as vscode from 'vscode';
-import { renderReport, type RunRecord } from './core/report';
+import { renderReport, renderUsage, type RunRecord } from './core/report';
+import { costOf, ratesFor } from './core/usage';
 import { PROVIDERS, type ProviderId } from './llm/providers';
-import { SECTION, completionSettings, currentProvider, secretKey } from './vscode/config';
+import { SECTION, completionSettings, currentProvider, modelSettings, secretKey, usageSettings } from './vscode/config';
 import { ContinuationProvider } from './vscode/inlineProvider';
 import { LoreProviders } from './vscode/loreProviders';
 import { StatusBar } from './vscode/statusBar';
+import { UsageStore } from './vscode/usageStore';
 import { WorkspaceIndexes } from './vscode/workspaceIndex';
 
 const REPORT_URI = vscode.Uri.from({ scheme: 'novel-helper', path: '/last-request.md' });
+const USAGE_URI = vscode.Uri.from({ scheme: 'novel-helper', path: '/usage.md' });
 const SELECTOR: vscode.DocumentFilter[] = ['markdown', 'plaintext'].flatMap((language) =>
 	['file', 'untitled'].map((scheme) => ({ language, scheme })),
 );
@@ -15,7 +18,8 @@ const SELECTOR: vscode.DocumentFilter[] = ['markdown', 'plaintext'].flatMap((lan
 export function activate(context: vscode.ExtensionContext): void {
 	const log = vscode.window.createOutputChannel('Novel Helper', { log: true });
 	const indexes = new WorkspaceIndexes(log);
-	const status = new StatusBar();
+	const usage = new UsageStore(context.globalStorageUri);
+	const status = new StatusBar(usage);
 	const reportChanged = new vscode.EventEmitter<vscode.Uri>();
 	const askedForKey = new Set<ProviderId>();
 	let lastRun: RunRecord | undefined;
@@ -28,6 +32,15 @@ export function activate(context: vscode.ExtensionContext): void {
 		recordRun(run) {
 			lastRun = run;
 			reportChanged.fire(REPORT_URI);
+		},
+		recordUsage(run, used) {
+			run.usage = used;
+			if (run === lastRun) {
+				reportChanged.fire(REPORT_URI);
+			}
+			usage
+				.add(`${run.provider}/${run.model}`, used, run.rates && costOf(used, run.rates))
+				.catch((error) => log.warn(`could not save usage: ${error instanceof Error ? error.message : String(error)}`));
 		},
 		missingKey(provider) {
 			const label = PROVIDERS[provider].label;
@@ -47,26 +60,49 @@ export function activate(context: vscode.ExtensionContext): void {
 		},
 	});
 	const lore = new LoreProviders(indexes);
+	const showDocument = async (uri: vscode.Uri) => {
+		const document = await vscode.workspace.openTextDocument(uri);
+		await vscode.window.showTextDocument(document, { preview: true, viewColumn: vscode.ViewColumn.Beside });
+	};
+	const usageDocument = (): string => {
+		const model = modelSettings();
+		const settings = usageSettings();
+		return renderUsage(
+			usage.current(),
+			new Date(),
+			{
+				dailyLimit: settings.dailyLimitUsd,
+				current: `${model.provider} · ${model.model}`,
+				rates: ratesFor(model.model, new Date(), model.pricing, settings.prices),
+			},
+			vscode.l10n.t,
+		);
+	};
+	void usage.load();
 
 	context.subscriptions.push(
 		log,
 		indexes,
+		usage,
 		status,
 		reportChanged,
+		usage.onDidChange(() => reportChanged.fire(USAGE_URI)),
 		vscode.languages.registerInlineCompletionItemProvider(SELECTOR, continuation),
 		vscode.languages.registerHoverProvider(SELECTOR, lore),
 		vscode.languages.registerDefinitionProvider(SELECTOR, lore),
 		vscode.workspace.registerTextDocumentContentProvider(REPORT_URI.scheme, {
 			onDidChange: reportChanged.event,
-			provideTextDocumentContent: () => renderReport(lastRun, vscode.l10n.t),
+			provideTextDocumentContent: (uri) =>
+				uri.path === USAGE_URI.path ? usageDocument() : renderReport(lastRun, vscode.l10n.t),
 		}),
 		vscode.commands.registerCommand('novelHelper.toggle', toggle),
 		vscode.commands.registerCommand('novelHelper.setApiKey', (provider?: ProviderId) =>
 			setApiKey(context.secrets, provider),
 		),
-		vscode.commands.registerCommand('novelHelper.showLastRequest', async () => {
-			const document = await vscode.workspace.openTextDocument(REPORT_URI);
-			await vscode.window.showTextDocument(document, { preview: true, viewColumn: vscode.ViewColumn.Beside });
+		vscode.commands.registerCommand('novelHelper.showLastRequest', () => showDocument(REPORT_URI)),
+		vscode.commands.registerCommand('novelHelper.showUsage', async () => {
+			await usage.load();
+			await showDocument(USAGE_URI);
 		}),
 		vscode.workspace.onDidChangeConfiguration((event) => {
 			if (event.affectsConfiguration(`${SECTION}.files`)) {
@@ -78,9 +114,13 @@ export function activate(context: vscode.ExtensionContext): void {
 			}
 			if (event.affectsConfiguration(SECTION)) {
 				status.setProblem(undefined);
+				reportChanged.fire(USAGE_URI);
 			}
 		}),
 		vscode.workspace.onDidChangeWorkspaceFolders(() => indexes.reset(vscode.workspace.workspaceFolders ?? [])),
+		// Renaming or deleting a folder (a volume, an arc) moves many files at once: index again on next use.
+		vscode.workspace.onDidRenameFiles(() => indexes.reset()),
+		vscode.workspace.onDidDeleteFiles(() => indexes.reset()),
 		context.secrets.onDidChange(() => status.setProblem(undefined)),
 	);
 }

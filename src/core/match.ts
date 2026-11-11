@@ -126,6 +126,8 @@ export interface Hit {
 	count: number;
 	/** Characters between the closest occurrence and the cursor; undefined if the entry only appears in the outline. */
 	nearest?: number;
+	/** Where the first occurrence starts in the scanned text; undefined if the entry only appears in the outline. */
+	first?: number;
 	/** How often each key of the entry matched. */
 	keys: Map<string, number>;
 	inOutline: boolean;
@@ -160,6 +162,7 @@ export function rankHits(textMatches: Match[], cursor: number, outlineMatches: M
 			hit.count++;
 			hit.keys.set(m.key, (hit.keys.get(m.key) ?? 0) + 1);
 			hit.nearest = hit.nearest === undefined ? distance : Math.min(hit.nearest, distance);
+			hit.first ??= m.start;
 			hit.score += 1 / (1 + distance / DISTANCE_HALF_WEIGHT);
 		}
 	}

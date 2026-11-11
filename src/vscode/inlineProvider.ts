@@ -2,12 +2,13 @@
 // and shows the first sentence of its reply. Tab accepts (VS Code's own key).
 
 import * as vscode from 'vscode';
-import { buildContext, type ChapterSource } from '../core/context';
+import { buildContext, type ChapterSource, type LevelSource } from '../core/context';
 import type { RunRecord } from '../core/report';
 import { Matcher } from '../core/match';
+import { ratesFor, type Usage } from '../core/usage';
 import { buildHttpRequest, complete } from '../llm/client';
 import type { ProviderId } from '../llm/providers';
-import { completionSettings, contextSettings, modelSettings, secretKey } from './config';
+import { completionSettings, contextSettings, modelSettings, secretKey, usageSettings } from './config';
 import type { StatusBar } from './statusBar';
 import { readText, type WorkspaceIndexes } from './workspaceIndex';
 
@@ -43,6 +44,8 @@ export interface ProviderHooks {
 	log: vscode.LogOutputChannel;
 	/** Called when a request finishes (not when it is cancelled). */
 	recordRun(run: RunRecord): void;
+	/** Called once the provider has reported what a request used, cancelled requests included. */
+	recordUsage(run: RunRecord, usage: Usage): void;
 	missingKey(provider: ProviderId): void;
 }
 
@@ -80,6 +83,11 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 		if (!manual && (!LINE_END_REST.test(lineAfter) || COMPOSING.test(before.slice(before.lastIndexOf('\n') + 1)))) {
 			return undefined;
 		}
+		if (!manual && this.hooks.status.overLimit()) {
+			// The status bar says why nothing comes; a new day lifts it.
+			this.hooks.status.update();
+			return undefined;
+		}
 		const located = await this.hooks.indexes.locate(document);
 		if (!manual) {
 			if (!located || !located.index.library.isChapter(located.path)) {
@@ -94,10 +102,18 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 		const apiKey = await this.hooks.secrets.get(secretKey(model.provider));
 		const limits = contextSettings(document.uri);
 		const library = located?.index.library;
+		let levels: LevelSource[] = [];
 		let outline: { path: string; content: string } | undefined;
 		let previous: ChapterSource[] = [];
 		if (located && library) {
 			const read = (path: string) => readText(located.index.uri(path));
+			levels = await Promise.all(
+				library.levelsOf(located.path).map(async (level): Promise<LevelSource> => ({
+					name: level.name,
+					book: level.path === '',
+					outline: level.outline ? { path: level.outline, content: await read(level.outline) } : undefined,
+				})),
+			);
 			const outlinePath = library.companionOf('outline', located.path);
 			if (outlinePath) {
 				outline = { path: outlinePath, content: await read(outlinePath) };
@@ -125,6 +141,7 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 			after,
 			entries: library?.entries() ?? [],
 			matcher: library?.matcher() ?? NO_LORE,
+			levels,
 			outline,
 			previous,
 			limits,
@@ -137,8 +154,9 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 		if (!manual && this.lastShown?.key === key) {
 			return item(this.lastShown.text);
 		}
+		const time = new Date();
 		const run: RunRecord = {
-			time: new Date(),
+			time,
 			document: documentPath,
 			line: position.line + 1,
 			trigger: manual ? 'manual' : 'auto',
@@ -147,6 +165,7 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 			trace,
 			prompt,
 			request: { url, body },
+			rates: ratesFor(model.model, time, model.pricing, usageSettings().prices),
 		};
 
 		const controller = new AbortController();
@@ -158,6 +177,7 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 			before,
 			after: lineAfter,
 			maxChars: settings.maxSuggestionChars,
+			onUsage: (usage) => this.hooks.recordUsage(run, usage),
 		});
 		this.running.delete(controller);
 		cancel.dispose();

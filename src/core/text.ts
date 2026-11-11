@@ -43,6 +43,48 @@ export function tailChars(text: string, max: number, snapToLine = false): Cut {
 	return { text: text.slice(start), truncated: true };
 }
 
+/**
+ * Where to start so that at most `max` characters of `text` are left, moving
+ * forward a whole `step` at a time: while the text grows by less than a step
+ * the start stays where it is, so what is left keeps the same beginning (and
+ * a prompt cache keyed on it keeps hitting). A start that lands mid-line
+ * moves on to the next line when that is close.
+ */
+export function steppedStart(text: string, max: number, step: number): number {
+	if (text.length <= max) {
+		return 0;
+	}
+	let start = Math.min(text.length, Math.ceil((text.length - max) / step) * step);
+	if (isLowSurrogate(text.charCodeAt(start))) {
+		start++;
+	}
+	if (text[start - 1] !== '\n') {
+		const newline = text.indexOf('\n', start);
+		if (newline !== -1 && newline - start < step / 2) {
+			start = newline + 1;
+		}
+	}
+	return start;
+}
+
+/**
+ * Offsets that cut `text` into pieces of at least `size` characters, each
+ * ending with a line break. Only finished pieces: the text after the last
+ * offset is still being written. Appending to `text` never moves an offset.
+ */
+export function chunkEnds(text: string, size: number): number[] {
+	const ends: number[] = [];
+	let from = 0;
+	for (;;) {
+		const newline = text.indexOf('\n', from + size - 1);
+		if (newline === -1) {
+			return ends;
+		}
+		from = newline + 1;
+		ends.push(from);
+	}
+}
+
 const FRONTMATTER = /^﻿?---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/;
 
 /** Splits a leading YAML frontmatter block off a Markdown file. */

@@ -1,14 +1,23 @@
 // Builds the prompt for one continuation request and records what went into
-// it. Order follows how often each part changes, so providers that cache
-// prompt prefixes can reuse the start of the prompt between requests:
-//   system:  instructions, always-on entries          (same for every request)
-//   stable:  previous chapters, this chapter's outline (same within a chapter)
-//   dynamic: matched entries, text around the cursor   (changes every request)
-// The text right before the cursor comes last, so the model reads prose last.
+// it. Providers bill a prompt prefix they have seen before at about a tenth of
+// the price, so the prompt is laid out to keep one request a prefix of the
+// next for as long as possible:
+//   system:   instructions, always-on entries              (same for every request)
+//   outlines: the book, the levels above the chapter,
+//             previous chapters, this chapter's outline    (same within a chapter)
+//   lore:     entries named in the chapter, in the order
+//             they first come up                           (grows now and then)
+//   text:     this chapter from its start to the cursor,
+//             cut into pieces at line ends                 (only ever appended to)
+//   tail:     the line being written, the cursor, the
+//             text after it                                (changes every request)
+// Cache breakpoints go after the outlines and after the last two finished
+// pieces before the tail: a request reads everything up to the previous
+// breakpoint from the cache and adds one piece to it.
 
 import type { LoreEntry } from './library';
 import { type Hit, type Matcher, rankHits } from './match';
-import { frontmatterLength, headChars, splitFrontmatter, stem, tailChars } from './text';
+import { chunkEnds, frontmatterLength, headChars, splitFrontmatter, stem, steppedStart, tailChars } from './text';
 
 export const CURSOR = '⟨光标⟩';
 
@@ -22,19 +31,25 @@ export const INSTRUCTIONS = `你是小说写作助手，负责行内续写：从
 5. 人物的言行、称呼和关系要和资料一致；资料里没有的关键设定不要自己编。
 6. 光标后面如果已经有文字，续写要能自然接上它。`;
 
+/** Size of the pieces the chapter text is cut into for caching. */
+export const TEXT_CHUNK_CHARS = 300;
+
 export interface ContextLimits {
-	/** Text before the cursor sent to the model. */
+	/** Most text of this document before the cursor sent to the model; lore names are searched in the same text. */
 	beforeChars: number;
 	/** Text after the cursor sent to the model. */
 	afterChars: number;
-	/** Text before the cursor searched for lore names. */
-	scanChars: number;
 	/** Budget for always-on entries. */
 	alwaysChars: number;
 	/** Budget for entries matched by name. */
 	matchedChars: number;
 	/** Cap for a single entry (its summary, or the start of its body). */
 	entryChars: number;
+	/** Cap for the whole book's outline. */
+	bookOutlineChars: number;
+	/** Cap for the outline of each level between the book and the chapter (卷, 幕…). */
+	levelOutlineChars: number;
+	/** Cap for this chapter's outline. */
 	outlineChars: number;
 	/** Cap per previous chapter (its summary, or the end of its text). */
 	previousChapterChars: number;
@@ -48,6 +63,13 @@ export interface ChapterSource {
 	text?: string;
 }
 
+/** The whole book, or a folder level above the chapter, with its outline if it has one. */
+export interface LevelSource {
+	name: string;
+	book: boolean;
+	outline?: { path: string; content: string };
+}
+
 export interface ContextInput {
 	/** Relative path (or name) of the document being written. */
 	documentPath: string;
@@ -57,16 +79,25 @@ export interface ContextInput {
 	after: string;
 	entries: readonly LoreEntry[];
 	matcher: Matcher;
+	/** The book first, then each level down to the chapter's folder. */
+	levels: LevelSource[];
+	/** This chapter's outline. */
 	outline?: { path: string; content: string };
 	/** Previous chapters, oldest first. */
 	previous: ChapterSource[];
 	limits: ContextLimits;
 }
 
+export interface PromptBlock {
+	text: string;
+	/** A cache breakpoint goes right after this block. */
+	cache: boolean;
+}
+
 export interface Prompt {
 	system: string;
-	stable: string;
-	dynamic: string;
+	/** The user message; the blocks joined as they are make its text. */
+	user: PromptBlock[];
 }
 
 export interface UsedEntry {
@@ -92,15 +123,17 @@ export interface SkippedEntry {
 
 export interface ContextTrace {
 	always: UsedEntry[];
+	/** In the order they appear in the prompt. */
 	matched: UsedEntry[];
 	/** Entries left out because their budget ran out. */
 	skipped: SkippedEntry[];
 	limits: ContextLimits;
+	/** One per level, the book first; `path` is undefined when the level has no outline. */
+	levels: Array<{ name: string; book: boolean; path?: string; chars: number; truncated: boolean }>;
 	outline?: { path: string; chars: number; truncated: boolean };
 	previous: Array<{ path: string; source: 'summary' | 'ending'; chars: number; truncated: boolean }>;
 	before: { chars: number; truncated: boolean };
 	after: { chars: number; truncated: boolean };
-	scannedChars: number;
 }
 
 interface Piece {
@@ -126,8 +159,13 @@ function entryPiece(entry: LoreEntry, max: number): Piece {
 	return { block, chars: block.length, truncated: cut.truncated, source };
 }
 
-function tagged(tag: string, body: string, attrs = ''): string {
-	return `<${tag}${attrs}>\n${body}\n</${tag}>`;
+function tagged(tag: string, body: string): string {
+	return `<${tag}>\n${body}\n</${tag}>`;
+}
+
+/** The user message as one string. */
+export function userText(prompt: Prompt): string {
+	return prompt.user.map((block) => block.text).join('');
 }
 
 export function buildContext(input: ContextInput): { prompt: Prompt; trace: ContextTrace } {
@@ -151,17 +189,21 @@ export function buildContext(input: ContextInput): { prompt: Prompt; trace: Cont
 		always.push({ id: entry.id, name: entry.name, type: entry.type, chars: piece.chars, truncated: piece.truncated, source: piece.source });
 	}
 
-	const before = input.before.slice(frontmatterLength(input.before));
-	const scan = tailChars(before, limits.scanChars).text;
-	const outlineText = input.outline ? splitFrontmatter(input.outline.content).body.trim() : '';
-	const hits = rankHits(input.matcher.find(scan), scan.length, outlineText ? input.matcher.find(outlineText) : []);
-	const byId = new Map(input.entries.map((e) => [e.id, e]));
+	// The chapter from its start. When it outgrows the limit the start moves a third of the limit at a time.
+	const body = input.before.slice(frontmatterLength(input.before));
+	const start = steppedStart(body, limits.beforeChars, Math.max(1, Math.ceil(limits.beforeChars / 3)));
+	const before = body.slice(start);
 
-	const matched: UsedEntry[] = [];
-	const matchedBlocks: string[] = [];
+	const outlineText = input.outline ? splitFrontmatter(input.outline.content).body.trim() : '';
+	const hits = rankHits(input.matcher.find(before), before.length, outlineText ? input.matcher.find(outlineText) : []);
+	const order = new Map(input.entries.map((entry, index) => [entry.id, index]));
+
+	// Entries are picked best first, then laid out so that a new one lands at the end:
+	// those named in the outline in path order, the rest in the order they first come up in the text.
+	const picked: Array<{ entry: LoreEntry; piece: Piece; hit: Hit }> = [];
 	room = limits.matchedChars;
 	for (const hit of hits) {
-		const entry = byId.get(hit.id);
+		const entry = input.entries[order.get(hit.id) ?? -1];
 		if (!entry || entry.always) {
 			continue;
 		}
@@ -171,8 +213,23 @@ export function buildContext(input: ContextInput): { prompt: Prompt; trace: Cont
 			continue;
 		}
 		room -= piece.chars;
-		matchedBlocks.push(piece.block);
-		matched.push({ id: entry.id, name: entry.name, type: entry.type, chars: piece.chars, truncated: piece.truncated, source: piece.source, hit });
+		picked.push({ entry, piece, hit });
+	}
+	const position = (hit: Hit) => (hit.inOutline ? -1 : hit.first ?? 0);
+	picked.sort((a, b) => position(a.hit) - position(b.hit) || order.get(a.entry.id)! - order.get(b.entry.id)!);
+	const matched = picked.map(({ entry, piece, hit }): UsedEntry => ({
+		id: entry.id, name: entry.name, type: entry.type, chars: piece.chars, truncated: piece.truncated, source: piece.source, hit,
+	}));
+
+	const levels: ContextTrace['levels'] = [];
+	const levelBlocks: string[] = [];
+	for (const level of input.levels) {
+		const text = level.outline ? splitFrontmatter(level.outline.content).body.trim() : '';
+		const cut = headChars(text, level.book ? limits.bookOutlineChars : limits.levelOutlineChars);
+		if (cut.text) {
+			levelBlocks.push(`【${level.name}】\n${cut.text}${cut.truncated ? '（后略）' : ''}`);
+		}
+		levels.push({ name: level.name, book: level.book, path: level.outline?.path, chars: cut.text.length, truncated: cut.truncated });
 	}
 
 	const previous: ContextTrace['previous'] = [];
@@ -198,42 +255,56 @@ export function buildContext(input: ContextInput): { prompt: Prompt; trace: Cont
 		outline = { path: input.outline.path, chars: cut.text.length, truncated: cut.truncated };
 	}
 
-	const beforeCut = tailChars(before, limits.beforeChars, true);
+	const outlines = [
+		levelBlocks.length ? tagged('上层大纲', levelBlocks.join('\n\n')) : '',
+		previousBlocks.length ? tagged('前文', previousBlocks.join('\n\n')) : '',
+		outlineBlock,
+	].filter(Boolean);
+
+	// Lore and the finished pieces of the chapter: the part that is only ever added to.
+	const grown: string[] = [];
+	if (picked.length) {
+		grown.push(`${tagged('本章涉及的资料', picked.map((p) => p.piece.block).join('\n\n'))}\n\n`);
+	}
+	let opened = `<当前章节 文件="${stem(input.documentPath)}">\n${start > 0 ? '（前略）' : ''}`;
+	let from = 0;
+	for (const end of chunkEnds(before, TEXT_CHUNK_CHARS)) {
+		grown.push(opened + before.slice(from, end));
+		opened = '';
+		from = end;
+	}
+
 	const afterCut = headChars(input.after, limits.afterChars);
 	const afterText = afterCut.text.trimEnd();
-	const chapterText =
-		(beforeCut.truncated ? '（前略）' : '') +
-		beforeCut.text +
+	const tail =
+		opened +
+		before.slice(from) +
 		CURSOR +
 		afterText +
-		(afterCut.truncated && afterText ? '（后略）' : '');
+		(afterCut.truncated && afterText ? '（后略）' : '') +
+		`\n</当前章节>\n\n从 ${CURSOR} 处接着写一句。`;
 
+	const user: PromptBlock[] = [
+		...(outlines.length ? [{ text: `${outlines.join('\n\n')}\n\n`, cache: true }] : []),
+		...grown.map((text, index) => ({ text, cache: index >= grown.length - 2 })),
+		{ text: tail, cache: false },
+	];
 	const system = alwaysBlocks.length
 		? `${INSTRUCTIONS}\n\n${tagged('常驻资料', alwaysBlocks.join('\n\n'))}`
 		: INSTRUCTIONS;
-	const stable = [previousBlocks.length ? tagged('前文', previousBlocks.join('\n\n')) : '', outlineBlock]
-		.filter(Boolean)
-		.join('\n\n');
-	const dynamic = [
-		matchedBlocks.length ? tagged('本章涉及的资料', matchedBlocks.join('\n\n')) : '',
-		tagged('当前章节', chapterText, ` 文件="${stem(input.documentPath)}"`),
-		`从 ${CURSOR} 处接着写一句。`,
-	]
-		.filter(Boolean)
-		.join('\n\n');
 
 	return {
-		prompt: { system, stable, dynamic },
+		prompt: { system, user },
 		trace: {
 			always,
 			matched,
 			skipped,
 			limits,
+			levels,
 			outline,
 			previous,
-			before: { chars: beforeCut.text.length, truncated: beforeCut.truncated },
+			before: { chars: before.length, truncated: start > 0 },
 			after: { chars: afterText.length, truncated: afterCut.truncated },
-			scannedChars: scan.length,
 		},
 	};
 }

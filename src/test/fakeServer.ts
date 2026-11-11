@@ -70,8 +70,10 @@ export function anthropicText(text: string): string {
 	return `event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } })}\n\n`;
 }
 
+/** `message_start` reports 40 input tokens at full price, 900 read from cache and 300 written to it. */
 export const ANTHROPIC_START =
-	'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[]}}\n\n' +
+	'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],' +
+	'"usage":{"input_tokens":40,"cache_creation_input_tokens":300,"cache_read_input_tokens":900,"output_tokens":1}}}\n\n' +
 	'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n' +
 	'event: ping\ndata: {"type": "ping"}\n\n';
 
@@ -86,3 +88,8 @@ export function openaiText(content: string): string {
 
 export const OPENAI_START = `data: ${JSON.stringify({ object: 'chat.completion.chunk', choices: [{ index: 0, delta: { role: 'assistant', content: '' } }] })}\n\n`;
 export const OPENAI_END = `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`;
+
+/** The extra event `stream_options.include_usage` adds before `[DONE]`. */
+export function openaiUsage(usage: Record<string, unknown>): string {
+	return `data: ${JSON.stringify({ object: 'chat.completion.chunk', choices: [], usage })}\n\n`;
+}

@@ -1,6 +1,7 @@
 import * as assert from 'node:assert/strict';
 import * as http from 'node:http';
 import { after, describe, test } from 'node:test';
+import type { Usage } from '../core/usage';
 import { buildHttpRequest, complete, type CompletionOptions, type ModelRequest, redact } from '../llm/client';
 import { PROVIDERS } from '../llm/providers';
 import {
@@ -11,6 +12,8 @@ import {
 	OPENAI_END,
 	OPENAI_START,
 	openaiText,
+	openaiUsage,
+	sleep,
 	stream,
 } from './fakeServer';
 
@@ -24,12 +27,18 @@ function request(protocol: 'anthropic' | 'openai', baseUrl: string, overrides: P
 		apiKey: KEY,
 		model: preset.defaultModel,
 		system: '系统',
-		stable: '稳定部分',
-		dynamic: '变化部分',
+		user: [
+			{ text: '大纲\n\n', cache: true },
+			{ text: '资料\n\n', cache: false },
+			{ text: '第一段\n', cache: true },
+			{ text: '第二段\n', cache: true },
+			{ text: '正在写的一行', cache: false },
+		],
 		maxTokens: 300,
 		maxTokensField: preset.maxTokensField,
 		extraBody: preset.extraBody,
 		timeoutMs: 5000,
+		usageWaitMs: 0,
 		...overrides,
 	};
 }
@@ -60,22 +69,28 @@ describe('Anthropic Messages API', () => {
 		assert.equal(body.stream, true);
 		assert.deepEqual(body.thinking, { type: 'disabled' });
 		assert.deepEqual(body.system, [{ type: 'text', text: '系统' }]);
+		const cache_control = { type: 'ephemeral' };
 		assert.deepEqual(body.messages, [
 			{
 				role: 'user',
 				content: [
-					{ type: 'text', text: '稳定部分', cache_control: { type: 'ephemeral' } },
-					{ type: 'text', text: '变化部分' },
+					{ type: 'text', text: '大纲\n\n', cache_control },
+					{ type: 'text', text: '资料\n\n' },
+					{ type: 'text', text: '第一段\n', cache_control },
+					{ type: 'text', text: '第二段\n', cache_control },
+					{ type: 'text', text: '正在写的一行' },
 				],
 			},
 		]);
 		assert.equal('temperature' in body, false);
+		assert.equal('cache_control' in body, false, 'no automatic breakpoint: it would land on the line being written');
 	});
 
-	test('without a stable part the breakpoint goes on the system prompt', () => {
-		const { body } = buildHttpRequest(request('anthropic', 'https://api.anthropic.com', { stable: '' }));
+	test('with nothing marked in the user message the breakpoint goes on the system prompt', () => {
+		const user = [{ text: '正在写的一行', cache: false }];
+		const { body } = buildHttpRequest(request('anthropic', 'https://api.anthropic.com', { user }));
 		assert.deepEqual(body.system, [{ type: 'text', text: '系统', cache_control: { type: 'ephemeral' } }]);
-		assert.deepEqual(body.messages, [{ role: 'user', content: [{ type: 'text', text: '变化部分' }] }]);
+		assert.deepEqual(body.messages, [{ role: 'user', content: [{ type: 'text', text: '正在写的一行' }] }]);
 	});
 
 	test('streams text deltas into one sentence', async () => {
@@ -117,9 +132,11 @@ describe('OpenAI-compatible Chat Completions', () => {
 		assert.equal(openai.body.max_completion_tokens, 300);
 		assert.equal('max_tokens' in openai.body, false);
 		assert.equal(openai.body.reasoning_effort, 'none');
+		assert.deepEqual(openai.body.stream_options, { include_usage: true });
+		assert.equal('prompt_cache_options' in openai.body, false);
 		assert.deepEqual(openai.body.messages, [
 			{ role: 'system', content: '系统' },
-			{ role: 'user', content: '稳定部分\n\n变化部分' },
+			{ role: 'user', content: '大纲\n\n资料\n\n第一段\n第二段\n正在写的一行' },
 		]);
 
 		const deepseek = PROVIDERS.deepseek;
@@ -140,6 +157,31 @@ describe('OpenAI-compatible Chat Completions', () => {
 		);
 		assert.equal(g.url, 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
 		assert.equal('max_tokens' in g.body || 'max_completion_tokens' in g.body, false);
+	});
+
+	test('OpenAI from GPT-5.6 on: explicit cache breakpoints on content parts', () => {
+		const { body } = buildHttpRequest(request('openai', 'https://api.openai.com/v1', { cacheBreakpoints: true }));
+		const prompt_cache_breakpoint = { mode: 'explicit' };
+		assert.deepEqual(body.prompt_cache_options, { mode: 'explicit' });
+		assert.deepEqual(body.messages, [
+			{ role: 'system', content: [{ type: 'text', text: '系统' }] },
+			{
+				role: 'user',
+				content: [
+					{ type: 'text', text: '大纲\n\n', prompt_cache_breakpoint },
+					{ type: 'text', text: '资料\n\n' },
+					{ type: 'text', text: '第一段\n', prompt_cache_breakpoint },
+					{ type: 'text', text: '第二段\n', prompt_cache_breakpoint },
+					{ type: 'text', text: '正在写的一行' },
+				],
+			},
+		]);
+		assert.equal(PROVIDERS.openai.cacheBreakpoints, true);
+		assert.deepEqual(
+			[PROVIDERS.deepseek, PROVIDERS.gemini, PROVIDERS.openaiCompatible].map((p) => p.cacheBreakpoints),
+			[undefined, undefined, undefined],
+			'only OpenAI itself takes the markers',
+		);
 	});
 
 	test('extra body fields are merged; null removes one', () => {
@@ -266,6 +308,148 @@ describe('stopping and failing', () => {
 		);
 		const outcome = await complete(request('openai', server.baseUrl), options());
 		assert.deepEqual([outcome.status, outcome.text, outcome.stoppedEarly], ['meta', '', true]);
+	});
+});
+
+/** Runs one request and returns its outcome with the usage reported for it (`null` if none was). */
+async function run(req: ModelRequest, overrides: Partial<CompletionOptions> = {}) {
+	let reported: Usage | null = null;
+	let calls = 0;
+	const done = new Promise<void>((resolve) => {
+		overrides = {
+			...overrides,
+			onUsage(usage) {
+				reported = usage;
+				calls++;
+				resolve();
+			},
+		};
+	});
+	const outcome = await complete(req, options(overrides));
+	await Promise.race([done, sleep(800)]);
+	return { outcome, usage: reported as Usage | null, calls };
+}
+
+describe('usage', () => {
+	test('Anthropic, stream read to its end: input side from message_start, output from message_delta', async () => {
+		const server = await serve((res) => stream(res, [ANTHROPIC_START, anthropicText('他推开门'), ANTHROPIC_END]));
+		const { outcome, usage, calls } = await run(request('anthropic', server.baseUrl));
+		assert.equal(outcome.text, '他推开门');
+		assert.deepEqual(usage, { input: 40, cacheRead: 900, cacheWrite: 300, output: 12 });
+		assert.equal(calls, 1);
+	});
+
+	test('Anthropic, closed after the first sentence: the input side is exact, the output an estimate', async () => {
+		const server = await serve((res) =>
+			// The sentence is known to be over once the text after it starts.
+			stream(res, [ANTHROPIC_START, anthropicText('他推开门，走了进去。'), anthropicText('屋里'), { wait: 3000 }, ANTHROPIC_END]),
+		);
+		const started = Date.now();
+		const { outcome, usage } = await run(request('anthropic', server.baseUrl, { usageWaitMs: 2000 }));
+		assert.ok(Date.now() - started < 1000, 'message_start was in: no waiting');
+		assert.equal(outcome.stoppedEarly, true);
+		assert.deepEqual(usage, { input: 40, cacheRead: 900, cacheWrite: 300, output: 12, outputEstimated: true });
+		assert.equal(await server.received[0].closed, true);
+	});
+
+	test('Anthropic without cache fields: they stay unknown', async () => {
+		const start = 'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":25,"output_tokens":1}}}\n\n';
+		const server = await serve((res) => stream(res, [start, anthropicText('好。'), ANTHROPIC_END]));
+		const { usage } = await run(request('anthropic', server.baseUrl));
+		assert.deepEqual(usage, { input: 25, output: 12 });
+	});
+
+	test('OpenAI: asks for usage and stays for it after the first sentence, without holding up the answer', async () => {
+		const server = await serve((res) =>
+			stream(res, [
+				OPENAI_START,
+				openaiText('他推开门，走了进去。'),
+				openaiText('屋里很暗。'),
+				{ wait: 300 },
+				OPENAI_END.replace('data: [DONE]\n\n', ''),
+				openaiUsage({
+					prompt_tokens: 1240,
+					completion_tokens: 17,
+					prompt_tokens_details: { cached_tokens: 900, cache_write_tokens: 300 },
+				}),
+				'data: [DONE]\n\n',
+			]),
+		);
+		const started = Date.now();
+		let answeredAfter = 0;
+		const usage = await new Promise<Usage>((resolve) => {
+			void complete(request('openai', server.baseUrl, { usageWaitMs: 2000 }), options({ onUsage: resolve })).then((outcome) => {
+				answeredAfter = Date.now() - started;
+				assert.deepEqual([outcome.text, outcome.raw, outcome.stoppedEarly], ['他推开门，走了进去。', '他推开门，走了进去。屋里很暗。', true]);
+			});
+		});
+		assert.ok(answeredAfter > 0 && answeredAfter < 250, `answered after ${answeredAfter} ms, before the rest of the stream`);
+		assert.deepEqual(usage, { input: 40, cacheRead: 900, cacheWrite: 300, output: 17 });
+		assert.deepEqual(server.received[0].body.stream_options, { include_usage: true });
+	});
+
+	test('OpenAI: the usage never comes within the wait: reported as unknown, connection closed', async () => {
+		const server = await serve((res) =>
+			stream(res, [OPENAI_START, openaiText('他推开门。'), openaiText('屋里很暗，什么也看不见'), { wait: 3000 }, OPENAI_END]),
+		);
+		const started = Date.now();
+		const { outcome, usage } = await run(request('openai', server.baseUrl, { usageWaitMs: 200 }));
+		assert.equal(outcome.text, '他推开门。');
+		assert.deepEqual(usage, {});
+		assert.ok(Date.now() - started < 1000);
+		assert.equal(await server.received[0].closed, true);
+	});
+
+	test('DeepSeek field names; a server that reports no cache fields', async () => {
+		const deepseek = await serve((res) =>
+			stream(res, [
+				openaiText('好'),
+				openaiUsage({ prompt_tokens: 1000, completion_tokens: 3, prompt_cache_hit_tokens: 800, prompt_cache_miss_tokens: 200 }),
+				'data: [DONE]\n\n',
+			]),
+		);
+		assert.deepEqual((await run(request('openai', deepseek.baseUrl))).usage, { input: 200, cacheRead: 800, output: 3 });
+
+		const local = await serve((res) =>
+			stream(res, [openaiText('好'), openaiUsage({ prompt_tokens: 1000, completion_tokens: 3 }), 'data: [DONE]\n\n']),
+		);
+		assert.deepEqual((await run(request('openai', local.baseUrl))).usage, { input: 1000, output: 3 });
+	});
+
+	test('cancelled: closed at once, with the usage that had come in by then', async () => {
+		const anthropic = await serve((res) => stream(res, [ANTHROPIC_START, anthropicText('他推开'), { wait: 3000 }, ANTHROPIC_END]));
+		let controller = new AbortController();
+		setTimeout(() => controller.abort(), 100);
+		const first = await run(request('anthropic', anthropic.baseUrl, { usageWaitMs: 2000 }), { signal: controller.signal });
+		assert.equal(first.outcome.status, 'cancelled');
+		assert.deepEqual(first.usage, { input: 40, cacheRead: 900, cacheWrite: 300, output: 3, outputEstimated: true });
+
+		const openai = await serve((res) =>
+			stream(res, [OPENAI_START, openaiText('他推开'), { wait: 3000 }, openaiUsage({ prompt_tokens: 500, completion_tokens: 4 }), 'data: [DONE]\n\n']),
+		);
+		controller = new AbortController();
+		setTimeout(() => controller.abort(), 100);
+		const started = Date.now();
+		const second = await run(request('openai', openai.baseUrl, { usageWaitMs: 2000 }), { signal: controller.signal });
+		assert.equal(second.outcome.status, 'cancelled');
+		assert.deepEqual(second.usage, {}, 'this protocol reports at the end: unknown');
+		assert.ok(Date.now() - started < 500, 'no waiting');
+		assert.equal(await openai.received[0].closed, true);
+	});
+
+	test('a request the provider refused, or that never went out, reports nothing', async () => {
+		const server = await serve((res) => {
+			res.writeHead(429, { 'content-type': 'application/json' });
+			res.end(JSON.stringify({ error: { message: 'Rate limited' } }));
+		});
+		const refused = await run(request('anthropic', server.baseUrl, { usageWaitMs: 100 }));
+		assert.equal(refused.outcome.status, 'error');
+		assert.deepEqual([refused.usage, refused.calls], [null, 0]);
+
+		const controller = new AbortController();
+		controller.abort();
+		const unsent = await run(request('openai', 'http://127.0.0.1:9'), { signal: controller.signal });
+		assert.deepEqual([unsent.outcome.status, unsent.calls], ['cancelled', 0]);
 	});
 });
 
