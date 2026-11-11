@@ -5,8 +5,9 @@ import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { nameProblem, suggestChapterName, suggestLevelName } from '../core/book';
 import { type BookNode, globFolders, Library, parseLoreEntry } from '../core/library';
-import { builtinTemplate, fillTemplate, folderForNew, groupLore, groupOf, parseAliases } from '../core/loreGroups';
+import { builtinTemplate, fillTemplate, folderForNew, groupLore, groupOf, parseAliases, templateNames } from '../core/loreGroups';
 import type { Translate } from '../core/report';
+import { leadsOut } from '../core/story';
 import { firstNames, markerOf, scaffold, storyNames } from '../core/scaffold';
 
 const t: Translate = (message, ...args) => message.replace(/\{(\d+)\}/g, (_, i: string) => String(args[Number(i)]));
@@ -71,26 +72,28 @@ describe('Library: tree nodes, roots', () => {
 });
 
 describe('Library: renames', () => {
+	const moves = (lib: Library, name: string, newName: string) => lib.renames(find(lib.tree(), name), newName).renames;
+
 	test('a chapter takes its outline and summary along, each keeping its extension', () => {
 		const lib = layout(BOOK);
-		assert.deepEqual(lib.renames(find(lib.tree(), '第2章 灯塔'), '第2章 北角灯塔'), [
+		assert.deepEqual(moves(lib, '第2章 灯塔', '第2章 北角灯塔'), [
 			{ from: '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md', to: '正文/第一卷 雾港/第一幕 来信/第2章 北角灯塔.md' },
 			{ from: '大纲/第一卷 雾港/第一幕 来信/第2章 灯塔.txt', to: '大纲/第一卷 雾港/第一幕 来信/第2章 北角灯塔.txt' },
 			{ from: '摘要/第一卷 雾港/第一幕 来信/第2章 灯塔.md', to: '摘要/第一卷 雾港/第一幕 来信/第2章 北角灯塔.md' },
 		]);
-		assert.deepEqual(lib.renames(find(lib.tree(), '第3章 钟'), '第3章 潮汐钟'), [
+		assert.deepEqual(moves(lib, '第3章 钟', '第3章 潮汐钟'), [
 			{ from: '正文/第一卷 雾港/第二幕 潮声/第3章 钟.md', to: '正文/第一卷 雾港/第二幕 潮声/第3章 潮汐钟.md' },
 		]);
 		const dotted = layout({ chapters: ['正文/第1章 v1.0 初稿.md'], outlines: ['大纲/第1章 v1.0 初稿.md'] });
-		assert.deepEqual(dotted.renames(find(dotted.tree(), '第1章 v1.0 初稿'), '第1章 v2.0'), [
+		assert.deepEqual(moves(dotted, '第1章 v1.0 初稿', '第1章 v2.0'), [
 			{ from: '正文/第1章 v1.0 初稿.md', to: '正文/第1章 v2.0.md' },
 			{ from: '大纲/第1章 v1.0 初稿.md', to: '大纲/第1章 v2.0.md' },
 		]);
 	});
 
-	test('a volume: its folder, the outline and summary named after it, and the folders that mirror it', () => {
+	test('a volume: its folder, the outline and summary named after it, and the folders that stand for it', () => {
 		const lib = layout(BOOK);
-		assert.deepEqual(lib.renames(find(lib.tree(), '第一卷 雾港'), '第一卷 雾港旧事'), [
+		assert.deepEqual(moves(lib, '第一卷 雾港', '第一卷 雾港旧事'), [
 			{ from: '正文/第一卷 雾港', to: '正文/第一卷 雾港旧事' },
 			{ from: '大纲/第一卷 雾港', to: '大纲/第一卷 雾港旧事' },
 			{ from: '摘要/第一卷 雾港', to: '摘要/第一卷 雾港旧事' },
@@ -101,40 +104,109 @@ describe('Library: renames', () => {
 
 	test('a level inside a volume; one with nothing to take along', () => {
 		const lib = layout(BOOK);
-		assert.deepEqual(lib.renames(find(lib.tree(), '第一幕 来信'), '序幕'), [
+		assert.deepEqual(moves(lib, '第一幕 来信', '序幕'), [
 			{ from: '正文/第一卷 雾港/第一幕 来信', to: '正文/第一卷 雾港/序幕' },
 			{ from: '大纲/第一卷 雾港/第一幕 来信', to: '大纲/第一卷 雾港/序幕' },
 			{ from: '摘要/第一卷 雾港/第一幕 来信', to: '摘要/第一卷 雾港/序幕' },
 			{ from: '大纲/第一卷 雾港/第一幕 来信.md', to: '大纲/第一卷 雾港/序幕.md' },
 		]);
-		assert.deepEqual(lib.renames(find(lib.tree(), '第二幕 潮声'), '终幕'), [
-			{ from: '正文/第一卷 雾港/第二幕 潮声', to: '正文/第一卷 雾港/终幕' },
-		]);
+		assert.deepEqual(moves(lib, '第二幕 潮声', '终幕'), [{ from: '正文/第一卷 雾港/第二幕 潮声', to: '正文/第一卷 雾港/终幕' }]);
 	});
 
-	test('mirror folders that skip the levels above move too, also one that a same-named level elsewhere shares', () => {
+	test('same-named arcs in two volumes: each takes only the folders that are its own', () => {
 		const lib = layout({
 			chapters: ['正文/卷一/第一幕/第1章.md', '正文/卷二/第一幕/第9章.md'],
 			outlines: ['大纲/第一幕/第1章.md', '大纲/卷二/第一幕/第9章.md', '大纲/卷二/第一幕.md'],
 		});
 		const [first, second] = lib.tree().children.map((volume) => volume.children[0]);
-		assert.deepEqual(lib.renames(first, '序幕'), [
+		// 大纲/第一幕 skips the volume; the only chapter that takes an outline from it is in 卷一.
+		assert.deepEqual(lib.renames(first, '序幕').renames, [
 			{ from: '正文/卷一/第一幕', to: '正文/卷一/序幕' },
 			{ from: '大纲/第一幕', to: '大纲/序幕' },
 		]);
-		assert.deepEqual(lib.renames(second, '终幕'), [
+		assert.deepEqual(lib.renames(second, '终幕').renames, [
 			{ from: '正文/卷二/第一幕', to: '正文/卷二/终幕' },
-			{ from: '大纲/第一幕', to: '大纲/终幕' },
 			{ from: '大纲/卷二/第一幕', to: '大纲/卷二/终幕' },
 			{ from: '大纲/卷二/第一幕.md', to: '大纲/卷二/终幕.md' },
 		]);
 	});
 
+	test('a folder that holds the outlines of two volumes\' same-named arcs: neither arc is renamed', () => {
+		const lib = layout({
+			chapters: ['正文/卷一/第一幕/第1章.md', '正文/卷二/第一幕/第9章.md'],
+			outlines: ['大纲/第一幕/第1章.md', '大纲/第一幕/第9章.md'],
+		});
+		const [first, second] = lib.tree().children.map((volume) => volume.children[0]);
+		const blocked = { path: '大纲/第一幕', sharedBy: ['正文/卷一/第一幕', '正文/卷二/第一幕'] };
+		assert.deepEqual(lib.renames(first, '序幕'), { blocked });
+		assert.deepEqual(lib.renames(second, '终幕'), { blocked });
+		// The volumes themselves share nothing.
+		assert.deepEqual(lib.renames(lib.tree().children[0], '第一卷').renames, [{ from: '正文/卷一', to: '正文/第一卷' }]);
+	});
+
+	test('a level named like the one it is in: the outer folder stays, no move pulls the ground from under another', () => {
+		const lib = layout({ chapters: ['正文/A/A/第1章.md'], outlines: ['大纲/A/A.md', '大纲/A/A/第1章.md'] });
+		const outer = lib.tree().children[0];
+		assert.deepEqual(lib.renames(outer.children[0], 'B').renames, [
+			{ from: '正文/A/A', to: '正文/A/B' },
+			{ from: '大纲/A/A', to: '大纲/A/B' },
+			{ from: '大纲/A/A.md', to: '大纲/A/B.md' },
+		]);
+		assert.deepEqual(lib.renames(outer, 'B').renames, [
+			{ from: '正文/A', to: '正文/B' },
+			{ from: '大纲/A', to: '大纲/B' },
+		]);
+		const bare = layout({ chapters: ['正文/A/A/第1章.md'], outlines: ['大纲/A/A.md'] });
+		assert.deepEqual(bare.renames(bare.tree().children[0].children[0], 'B').renames, [
+			{ from: '正文/A/A', to: '正文/A/B' },
+			{ from: '大纲/A/A.md', to: '大纲/A/B.md' },
+		]);
+	});
+
+	test('an outline or summary that two chapters, or two levels, take: neither is renamed', () => {
+		const chapters = layout({ chapters: ['正文/卷一/第1章.md', '正文/卷二/第1章.md'], outlines: ['大纲/第1章.md'] });
+		const [one, two] = chapters.tree().children.map((volume) => volume.children[0]);
+		const blocked = { path: '大纲/第1章.md', sharedBy: ['正文/卷一/第1章.md', '正文/卷二/第1章.md'] };
+		assert.deepEqual(chapters.renames(one, '第1章 雾'), { blocked });
+		assert.deepEqual(chapters.renames(two, '第1章 雾'), { blocked });
+		const levels = layout({ chapters: ['正文/卷一/第一幕/第1章.md', '正文/卷二/第一幕/第9章.md'], summaries: ['摘要/第一幕.md'] });
+		assert.deepEqual(levels.renames(levels.tree().children[0].children[0], '序幕'), {
+			blocked: { path: '摘要/第一幕.md', sharedBy: ['正文/卷一/第一幕', '正文/卷二/第一幕'] },
+		});
+	});
+
+	test('outlines written ahead, for chapters that are not there yet, go along when the folder can only be this level\'s', () => {
+		const lib = layout({ chapters: ['正文/卷一/第1章.md', '正文/卷二/第一幕/第9章.md'], outlines: ['大纲/卷一/第5章.md', '大纲/第一幕/第12章.md'] });
+		assert.deepEqual(moves(lib, '卷一', '第一卷'), [
+			{ from: '正文/卷一', to: '正文/第一卷' },
+			{ from: '大纲/卷一', to: '大纲/第一卷' },
+		]);
+		assert.deepEqual(moves(lib, '第一幕', '序幕'), [
+			{ from: '正文/卷二/第一幕', to: '正文/卷二/序幕' },
+			{ from: '大纲/第一幕', to: '大纲/序幕' },
+		]);
+		const two = layout({ chapters: ['正文/卷一/第一幕/第1章.md', '正文/卷二/第一幕/第9章.md'], outlines: ['大纲/第一幕/第12章.md'] });
+		assert.deepEqual(two.renames(two.tree().children[0].children[0], '序幕').renames, [{ from: '正文/卷一/第一幕', to: '正文/卷一/序幕' }], 'whose it is cannot be told: it stays');
+	});
+
+	test('no move is ever from inside a folder that moves too', () => {
+		for (const lib of [layout(BOOK), layout({ chapters: ['正文/A/A/A/第1章.md'], outlines: ['大纲/A/A/A.md', '大纲/A/A/A/第1章.md', '大纲/A.md'], summaries: ['摘要/A/第1章.md'] })]) {
+			const visit = (node: BookNode) => {
+				const plan = node.kind === 'book' ? undefined : lib.renames(node, 'X').renames;
+				for (const one of plan ?? []) {
+					assert.ok(!plan!.some((other) => one.from.startsWith(`${other.from}/`)), `${one.from} moves on its own and with its folder`);
+				}
+				node.children.forEach(visit);
+			};
+			visit(lib.tree());
+		}
+	});
+
 	test('after the renames the tree shows the same outlines and summaries under the new name', () => {
 		const lib = layout(BOOK);
-		const moves = lib.renames(find(lib.tree(), '第一卷 雾港'), '卷一');
+		const plan = moves(lib, '第一卷 雾港', '卷一')!;
 		const move = (path: string) => {
-			const hit = moves.find(({ from }) => path === from || path.startsWith(`${from}/`));
+			const hit = plan.find(({ from }) => path === from || path.startsWith(`${from}/`));
 			return hit ? hit.to + path.slice(hit.from.length) : path;
 		};
 		const after = layout({ chapters: BOOK.chapters.map(move), outlines: BOOK.outlines.map(move), summaries: BOOK.summaries.map(move) });
@@ -237,6 +309,35 @@ describe('lore groups', () => {
 	});
 });
 
+describe('templates of the workspace', () => {
+	test('a name is put in as it is: $ means nothing', () => {
+		assert.equal(fillTemplate('# {{name}}\n\n{{name}}（{{type}}）\n', '设定/x.md', '$&', '$$'), '---\ntype: $$\n---\n# $&\n\n$&（$$）\n');
+		assert.equal(fillTemplate("# {{name}}\n", '人物/x.md', "$`$'$1", '人物'), "# $`$'$1\n");
+	});
+
+	test('inside the frontmatter a name is a YAML value, quoted where it has to be', () => {
+		const template = '---\nname: {{name}}\ntype: {{type}}\naliases: []\n---\n# {{name}}\n';
+		for (const name of ['风: 雨', '[风]', '{雨}', '# 七', '123', 'true', '"引号"', "it's", '林小满']) {
+			const entry = parseLoreEntry('设定/x.md', fillTemplate(template, '设定/x.md', name, '天气: 晴'));
+			assert.deepEqual([entry.name, entry.type, entry.error, entry.body], [name, '天气: 晴', undefined, `# ${name}`], name);
+		}
+		assert.equal(fillTemplate(template, '设定/x.md', '林小满', '人物'), '---\nname: 林小满\ntype: 人物\naliases: []\n---\n# 林小满\n');
+	});
+
+	test('a template whose frontmatter is not valid once filled in is refused', () => {
+		assert.throws(() => fillTemplate('---\nname: "{{name}}"\n---\n', '设定/x.md', '风: 雨', '天气'));
+		assert.throws(() => fillTemplate('---\naliases: [未收尾\n---\n# {{name}}\n', '设定/x.md', '雾', '天气'));
+	});
+
+	test('a type names a template only when it is a plain file name', () => {
+		assert.deepEqual(templateNames('人物'), ['人物', 'default']);
+		assert.deepEqual(templateNames('default'), ['default']);
+		for (const type of ['../../../private', '..', '.', '', 'a/b', 'a\\b', '/etc/passwd']) {
+			assert.deepEqual(templateNames(type), ['default'], type);
+		}
+	});
+});
+
 describe('scaffold', () => {
 	const folders = {
 		chapters: ['正文', '章节', 'chapters', 'manuscript'],
@@ -319,6 +420,12 @@ describe('scaffold', () => {
 	test('files rooted in the story folder itself have no folder to make', () => {
 		const names = storyNames({ chapters: [''], outlines: ['大纲'], summaries: [], lore: ['设定'] }, [], 'zh');
 		assert.deepEqual(shape(scaffold(names, t)), ['大纲/', '设定/', '大纲/全书.md', '设定/文风.md', '第一卷/第1章.md (first volume)', '大纲/第一卷.md (first volume)']);
+	});
+
+	test('names from settings that would lead out of the story folder can be told', () => {
+		const names = storyNames({ chapters: ['正文'], outlines: ['大纲'], summaries: ['摘要'], lore: ['../escaped'] }, ['../../escaped-book'], 'zh');
+		assert.deepEqual(scaffold(names, t).map((item) => item.path).filter(leadsOut), ['../escaped', '大纲/../../escaped-book.md', '../escaped/文风.md']);
+		assert.deepEqual(scaffold(storyNames(folders, bookNames, 'zh'), t).map((item) => item.path).filter(leadsOut), []);
 	});
 
 	test('the marker records the names and nothing else', () => {

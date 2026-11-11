@@ -230,7 +230,6 @@
   "Which names should the folders and starter files get? Both are recognized later.": "文件夹和骨架文件用哪种名字？两种以后都认。",
   "Everything was already here. {0} is now marked as an initialized story folder.": "该有的都已经在了。已把「{0}」标记为初始化过的故事目录。",
   "initialized": "已初始化",
-  "in use, no marker": "在用，没有标记",
   "not initialized": "未初始化",
   "does not exist": "不存在",
   "not a path inside the workspace folder": "无效：不是工作区文件夹里面的路径",
@@ -249,5 +248,11 @@
   "Mark this folder as initialized": "给这个目录补上标记",
   "writes {0}, so that it is found as a story folder": "写一个 {0}，以后能被认成故事空间",
   "Now: {0}. Where is the story?": "现在：{0}。故事放在哪？",
-  "{0} Story folders found in this workspace are listed below: click one to use it.": "{0}下面是在这个工作区里找到的故事空间，点一个就切过去。"
+  "{0} Story folders found in this workspace are listed below: click one to use it.": "{0}下面是在这个工作区里找到的故事空间，点一个就切过去。",
+  "in use": "在用",
+  "Nothing was changed: {0} would be outside the story folder. Check the folder and file names in the settings under novelHelper.files.": "没有做任何改动：{0} 会落在故事目录之外。请检查 novelHelper.files 下各项设置里的目录名和文件名。",
+  "{0} was not renamed, and nothing was changed: {1} is shared by {2}, and renaming it for one would take it from the others. Give each its own first, or rename by hand.": "没有重命名「{0}」，也没有改动任何文件：{1} 由 {2} 共用，只为其中一个改名会把其他几处的也带走。请先把它们各自分开，或手动改名。",
+  "{0} was not renamed, and nothing was changed: {1} is inside a folder that would be renamed too.": "没有重命名「{0}」，也没有改动任何文件：{1} 位于另一个也要改名的目录里。",
+  "{0} was not changed: the way its frontmatter is written, this field cannot be set from here without touching a comment or another field. Change it in the file. ({1})": "没有改动 {0}：按它 frontmatter 现在的写法，从这里改这个字段会动到注释或别的字段。请直接在文件里改。（{1}）",
+  "No entry was created: with the name and type filled in, the frontmatter of the template {0} is not valid YAML. ({1})": "没有新建条目：填入名字和类型之后，模板 {0} 的 frontmatter 不是合法的 YAML。（{1}）"
 }

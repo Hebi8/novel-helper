@@ -28,6 +28,7 @@ export class FolderIndex implements vscode.Disposable {
 
 	/** After the first scan, every change to the library is announced. */
 	private loaded = false;
+	private disposed = false;
 
 	/** The story folder setting as written. */
 	readonly storySetting: string;
@@ -96,6 +97,12 @@ export class FolderIndex implements vscode.Disposable {
 		}
 		if (this.exists) {
 			this.marker = await readMarker(this.storyUri);
+		}
+		// Dropped while that was being read (the settings changed): no watchers for an index nobody uses.
+		if (this.disposed) {
+			return;
+		}
+		if (this.exists) {
 			await this.scan();
 		}
 		if (!isUsable(this.state)) {
@@ -185,6 +192,7 @@ export class FolderIndex implements vscode.Disposable {
 	}
 
 	dispose(): void {
+		this.disposed = true;
 		this.disposables.forEach((d) => d.dispose());
 	}
 }

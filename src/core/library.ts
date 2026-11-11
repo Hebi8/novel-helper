@@ -123,6 +123,14 @@ export interface Rename {
 	to: string;
 }
 
+/**
+ * The moves of a rename; or, when it cannot be done without taking
+ * something from another chapter or level, the file or folder in the way
+ * and the chapters and levels that share it (none: it sits inside a folder
+ * that moves as well).
+ */
+export type RenamePlan = { renames: Rename[]; blocked?: undefined } | { blocked: { path: string; sharedBy: string[] }; renames?: undefined };
+
 type Companion = 'outline' | 'summary';
 
 export class Library {
@@ -310,32 +318,111 @@ export class Library {
 	 * What has to move to rename a chapter or a level of `tree()` and keep
 	 * its outline and summary with it. A chapter: its file and the two that
 	 * go with it. A level: its folder, the outline and summary named after
-	 * it, and the folders of that name that hold the outlines and summaries
-	 * of what is inside it (大纲/第一卷/…). Files keep their extensions.
+	 * it, and the folders that stand for it under the outline and summary
+	 * folders (大纲/第一卷/…). Files keep their extensions.
+	 *
+	 * Nothing is moved when that could take something away from another
+	 * chapter or level: an outline two chapters share, a folder that holds
+	 * the outlines of two volumes' same-named arcs. The plan then says what
+	 * is shared and by whom.
 	 */
-	renames(node: BookNode, newName: string): Rename[] {
+	renames(node: BookNode, newName: string): RenamePlan {
 		const renamed = (path: string) => {
 			const slash = path.lastIndexOf('/') + 1;
 			return { from: path, to: path.slice(0, slash) + newName + path.slice(slash + stem(path).length) };
 		};
-		const files = [node.outline, node.summary].filter((path): path is string => path !== undefined).map(renamed);
-		if (node.kind === 'chapter') {
-			return [renamed(node.path), ...files];
+		const uses = this.uses();
+		const users = (path: string) => [...new Set(uses.filter((use) => use.file === path).map((use) => use.user))];
+		const files = [node.outline, node.summary].filter((path): path is string => path !== undefined);
+		for (const file of files) {
+			if (users(file).length > 1) {
+				return { blocked: { path: file, sharedBy: users(file) } };
+			}
 		}
-		const folders = new Set<string>();
-		for (const kind of ['outline', 'summary'] as const) {
-			for (const paths of this.companions[kind].values()) {
-				for (const [path, own] of paths) {
-					// The folder of this name in the file's path, when the folders above it are the level's own, or fewer of them.
-					const at = own.findIndex((dir, i) => dir === node.name && isTail(own.slice(0, i), node.dirs));
-					if (at !== -1) {
-						folders.add(dirSegments(path).slice(0, dirSegments(path).length - own.length + at + 1).join('/'));
-					}
+		if (node.kind === 'chapter') {
+			return { renames: [node.path, ...files].map(renamed) };
+		}
+		// Which levels each folder under the outline and summary folders stands for, going by the files in use below it.
+		const owners = new Map<string, Set<string>>();
+		for (const use of uses) {
+			use.folders.forEach((level, folder) => owners.set(folder, (owners.get(folder) ?? new Set()).add(level)));
+		}
+		const chain = [...node.dirs, node.name];
+		const namesakes = this.levels().filter((level) => level.name === node.name);
+		const folders: string[] = [];
+		for (const [folder, own] of this.mirrors()) {
+			const owned = owners.get(folder);
+			if (owned) {
+				if (!owned.has(node.path)) {
+					continue;
 				}
+				if (owned.size > 1) {
+					return { blocked: { path: folder, sharedBy: [...owned] } };
+				}
+				folders.push(folder);
+			} else if (isTail(own, chain) && namesakes.every((level) => level.path === node.path || !isTail(own, [...level.dirs, level.name]))) {
+				// Nothing in it is in use yet (outlines written ahead): it goes along when it can only be this level's.
+				folders.push(folder);
 			}
 		}
 		const moved = [node.path, ...folders].map((from) => ({ from, to: from.slice(0, from.lastIndexOf('/') + 1) + newName }));
-		return [...moved, ...files];
+		const all = [...moved, ...files.map(renamed)];
+		// A folder that moves takes what is in it along: nothing else may be renamed from inside it.
+		const inside = all.find((one) => all.some((other) => one.from.startsWith(`${other.from}/`)));
+		return inside ? { blocked: { path: inside.from, sharedBy: [] } } : { renames: all };
+	}
+
+	/** Every level of the book. */
+	private levels(node: BookNode = this.tree()): BookNode[] {
+		return node.children.filter((child) => child.kind === 'level').flatMap((level) => [level, ...this.levels(level)]);
+	}
+
+	/**
+	 * Each outline and summary file that a chapter or level takes, with who
+	 * takes it, and, for every folder between the outline (or summary)
+	 * folder and the file, the level that folder stands for: for
+	 * 正文/卷一/第一幕/第1章.md taking 大纲/第一幕/第1章.md, 大纲/第一幕 stands
+	 * for 正文/卷一/第一幕.
+	 */
+	private uses(): Array<{ file: string; user: string; folders: Map<string, string> }> {
+		const uses: Array<{ file: string; user: string; folders: Map<string, string> }> = [];
+		const visit = (node: BookNode) => {
+			for (const kind of ['outline', 'summary'] as const) {
+				const file = node[kind];
+				if (node.kind === 'book' || !file) {
+					continue;
+				}
+				const own = this.companions[kind].get(stem(file))!.get(file)!;
+				const fileFolders = dirSegments(file);
+				// The folders the user is in; the last of them line up with the file's folders.
+				const nodeFolders = dirSegments(node.path);
+				const folders = new Map<string, string>();
+				own.forEach((_, i) => {
+					folders.set(
+						fileFolders.slice(0, fileFolders.length - own.length + i + 1).join('/'),
+						nodeFolders.slice(0, nodeFolders.length - own.length + i + 1).join('/'),
+					);
+				});
+				uses.push({ file, user: node.path, folders });
+			}
+			node.children.forEach(visit);
+		};
+		visit(this.tree());
+		return uses;
+	}
+
+	/** Every folder below the outline and summary folders that holds files, with its folders below that root. */
+	private mirrors(): Map<string, string[]> {
+		const mirrors = new Map<string, string[]>();
+		for (const kind of ['outline', 'summary'] as const) {
+			for (const paths of this.companions[kind].values()) {
+				for (const [path, own] of paths) {
+					const folders = dirSegments(path);
+					own.forEach((_, i) => mirrors.set(folders.slice(0, folders.length - own.length + i + 1).join('/'), own.slice(0, i + 1)));
+				}
+			}
+		}
+		return mirrors;
 	}
 
 	private book(): Level {

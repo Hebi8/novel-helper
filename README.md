@@ -10,8 +10,8 @@ Built for long Chinese web novels first (one chapter per file, hundreds of chapt
 
 ## Install
 
-1. Build `novel-helper-0.3.1.vsix` (see [Build from source](#build-from-source)).
-2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.3.1.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
+1. Build `novel-helper-0.3.2.vsix` (see [Build from source](#build-from-source)).
+2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.3.2.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
 
 ## Set an API key
 
@@ -52,14 +52,14 @@ The activity bar has a Novel Helper icon with three views. The sidebar lays out 
 - Click a chapter to open it; the chapter being edited is selected in the tree.
 - Every node says whether it has an outline and a summary: `outline ✓ · summary ✗`. The inline buttons open its outline (and, for a chapter, its summary); one that is missing is first created, empty, where it belongs. The book node at the top opens the outline of the whole book.
 - **New Chapter** suggests the next number in the pattern of the chapters before it: `第12章 ` after `第11章 雾里来信`, `第十二章` after `第十一章`, `Chapter 10 - ` after `Chapter 9 - Fog`; add the title and press Enter. **New Volume or Arc** asks for its name and then for the name of its first chapter (a volume is a folder that holds chapters, so it shows up once it has one).
-- **Rename** in the context menu of a volume, arc or chapter renames its outline and summary with it, and the folders of that name in the outline and summary folders: one step, and Undo takes it back.
+- **Rename** in the context menu of a volume, arc or chapter renames its outline and summary with it, and the folders of that name in the outline and summary folders: one step, and Undo takes it back. When a folder or file that would go along is used from elsewhere too (same-named arcs of two volumes sharing one outline folder, say), nothing is renamed, not one file is touched, and you are told what is shared by whom; give each its own first, or rename by hand.
 - There is no delete and no drag and drop; delete and move files in the Explorer and the tree follows.
 
 **Lore**: entries grouped by type (`type` in the frontmatter; without one, the top folder the file is in).
 
 - Click an entry to open it. Its line says whether it is always on and what its aliases are.
-- Inline buttons toggle always-on and edit the aliases; the context menu also changes the type. Each changes that one frontmatter field and nothing else in the file: other fields, their order, comments and the body stay as they are. A file without frontmatter gets one.
-- **New Lore Entry**: pick a type (or type a new one), give a name, and the file is made from a template and opened. Templates hold the frontmatter to fill in and two or three headings. To use your own, put `.novel-helper/templates/<type>.md` in the workspace (`人物.md`, say), and `default.md` for every other type; `{{name}}` and `{{type}}` in it are replaced.
+- Inline buttons toggle always-on and edit the aliases; the context menu also changes the type. Each changes that one frontmatter field and nothing else in the file: other fields, their order, comments and the body stay as they are. A file without frontmatter gets one. Where the way the frontmatter is written does not allow that (all of it in `{…}` without the field, or a comment inside the value to be replaced), the file is left alone and you are told to change it in the file.
+- **New Lore Entry**: pick a type (or type a new one), give a name, and the file is made from a template and opened. Templates hold the frontmatter to fill in and two or three headings. To use your own, put `.novel-helper/templates/<type>.md` in the workspace (`人物.md`, say), and `default.md` for every other type; `{{name}}` and `{{type}}` in it are replaced (inside the frontmatter as YAML values, so a name with a colon or brackets is fine).
 
 **Settings and Usage**: one row each, click to change: [the story folder](#the-story-folder), ghost text on or off, automatic or manual trigger, provider, model, API key (shown only as saved or not set, never the key), today's and this month's requests and estimated cost (click for the details), the daily limit, and what was last sent to the model.
 
@@ -70,7 +70,7 @@ The activity bar has a Novel Helper icon with three views. The sidebar lays out 
 The story need not sit at the root of the workspace. `novelHelper.files.storyFolder` is the story folder: a path relative to the workspace folder, empty for the workspace folder itself. The folders for chapters, outlines, summaries and lore, and `.novel-helper/templates/`, are looked for inside it; ghost text, lore cards, the sidebar, creating and renaming all work from there, and files outside it are not chapters. There is no need to edit the setting by hand: click the **Story folder** row at the top of **Settings and Usage** to switch to a story folder that was found, pick one in a folder dialog, type a path, or go back to the workspace folder.
 
 - One story folder is in use per workspace folder at a time; several books are switched between. In a multi-root workspace every folder has its own.
-- The path has to stay inside the workspace folder. An absolute path or one with `..` is not followed: the sidebar says so, and nothing outside the workspace is read.
+- The path has to stay inside the workspace folder. An absolute path or one with `..` is not followed: the sidebar says so, and nothing outside the workspace is read. When a folder or book name in the `novelHelper.files` settings has a `..` that would put a file outside the story folder, initializing, creating and renaming do nothing and name the path. All of this goes by the text of the path: symbolic links are not resolved.
 - Initializing first asks where the story goes (a folder that is not there is made) and whether its folders get Chinese or English names (by default the language VS Code is shown in; `正文, 大纲, 摘要, 设定, 人物, 资料` or `chapters, outlines, summaries, lore, characters, worldbuilding`, and the default settings recognize both), then points the story folder there.
 
 Initializing leaves a marker file, `.novel-helper/project.json`, in the story folder. It holds the format version and the names the story was set up with, nothing else:
@@ -86,7 +86,7 @@ Initializing leaves a marker file, `.novel-helper/project.json`, in the story fo
 
 That is how an initialized story folder is recognized. What the sidebar shows goes by the state of the story folder:
 
-- **Usable**: it has the marker; or it has none but chapters, outlines or lore are there (set up by an earlier version, or by hand). The trees show as usual. The second kind is never prompted about; to add the marker, pick **Mark this folder as initialized** from the **Story folder** row.
+- **Usable**: it has the marker; or it has none but chapters, outlines or lore are there (set up by an earlier version, or by hand). The trees show as usual. The second kind reads "in use" in the **Story folder** row and is never prompted about; to add the marker, pick **Mark this folder as initialized** from the **Story folder** row.
 - **Not initialized**: the folder does not exist, or has nothing in it. The views explain and offer **Initialize Here**.
 - **Not usable, with other story folders in the workspace**: they are found by their markers (up to four folders deep, not in `node_modules`, `.git` or other hidden folders) and listed under **Book**; click one to switch the story folder to it.
 
@@ -276,7 +276,7 @@ npm test
 npx @vscode/vsce package
 ```
 
-`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, the story folder's path and state, the marker file, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, sentence cutting, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), and the model client against a local fake server.
+`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, the story folder's path and state, the marker file, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, sentence cutting, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), the model client against a local fake server, and the extension as a whole, run in a temporary folder against a stand-in for the `vscode` module (renaming, initializing, paths that lead out, lore fields, the story folder, switching ghost text off during a wait).
 
 ## License
 

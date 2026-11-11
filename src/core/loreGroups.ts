@@ -1,10 +1,10 @@
 // How the sidebar lays out lore entries and starts new ones: entries grouped
 // by type, a template per type, and the folder a new entry goes in.
 
-import { setField } from './frontmatter';
+import { inline, setField } from './frontmatter';
 import { type LoreEntry, parseLoreEntry } from './library';
 import type { Translate } from './report';
-import { dirSegments } from './text';
+import { dirSegments, frontmatterLength } from './text';
 
 /** The group an entry is listed under: its `type`, else the first folder of its path. */
 export function groupOf(entry: LoreEntry): string {
@@ -88,11 +88,33 @@ export function builtinTemplate(type: string, t: Translate): string {
 }
 
 /**
+ * The names (extension aside) of the workspace's templates to try for a
+ * type, in order: the type's own, then `default`. A type that is not a
+ * plain file name (it has a path separator, or is all dots) has no template
+ * of its own: a type is whatever a frontmatter says, and must not walk out
+ * of the templates folder.
+ */
+export function templateNames(type: string): string[] {
+	return /[\\/]/.test(type) || /^\.*$/.test(type) ? ['default'] : [...new Set([type, 'default'])];
+}
+
+/**
  * The content of a new entry at `path` from a template of the workspace:
  * `{{name}}` and `{{type}}` replaced, and `type` set in the frontmatter
- * unless the entry would be listed under that type anyway.
+ * unless the entry would be listed under that type anyway. Inside the
+ * frontmatter the two are written as YAML values, quoted where needed
+ * (`name: {{name}}` with the name 风: 雨). Throws when the frontmatter of
+ * the result is not valid YAML, rather than start an entry with a broken one.
  */
 export function fillTemplate(template: string, path: string, name: string, type: string): string {
-	const content = template.replaceAll('{{name}}', name).replaceAll('{{type}}', type);
-	return groupOf(parseLoreEntry(path, content)) === type ? content : setField(content, 'type', type);
+	const head = frontmatterLength(template);
+	// A function as the replacement: `$&` in a name is a name, not a pattern.
+	const fill = (text: string, write: (value: string) => string) =>
+		text.replaceAll('{{name}}', () => write(name)).replaceAll('{{type}}', () => write(type));
+	const content = fill(template.slice(0, head), inline) + fill(template.slice(head), (value) => value);
+	const entry = parseLoreEntry(path, content);
+	if (entry.error) {
+		throw new Error(entry.error);
+	}
+	return groupOf(entry) === type ? content : setField(content, 'type', type);
 }

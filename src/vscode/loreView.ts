@@ -4,9 +4,9 @@
 
 import * as vscode from 'vscode';
 import { nameProblem } from '../core/book';
-import { type FieldValue, setField } from '../core/frontmatter';
+import { type FieldValue, FrontmatterError, setField } from '../core/frontmatter';
 import type { LoreEntry } from '../core/library';
-import { builtinTemplate, fillTemplate, folderForNew, groupLore, parseAliases } from '../core/loreGroups';
+import { builtinTemplate, fillTemplate, folderForNew, groupLore, parseAliases, templateNames } from '../core/loreGroups';
 import { dirSegments, stem } from '../core/text';
 import { createAndOpen, joinPath, pickIndex, problemText } from './files';
 import type { FolderIndex, WorkspaceIndexes } from './workspaceIndex';
@@ -90,12 +90,15 @@ export class LoreView implements vscode.TreeDataProvider<LoreItem>, vscode.Dispo
 		try {
 			after = setField(before, key, value);
 		} catch (error) {
+			const why = (error instanceof Error ? error.message : String(error)).split('\n')[0];
 			void vscode.window.showErrorMessage(
-				vscode.l10n.t(
-					'Could not change {0}: its frontmatter is not valid YAML. Open the file and fix it first. ({1})',
-					item.entry.id,
-					(error instanceof Error ? error.message : String(error)).split('\n')[0],
-				),
+				error instanceof FrontmatterError && error.kind === 'unsupported'
+					? vscode.l10n.t(
+							'{0} was not changed: the way its frontmatter is written, this field cannot be set from here without touching a comment or another field. Change it in the file. ({1})',
+							item.entry.id,
+							why,
+						)
+					: vscode.l10n.t('Could not change {0}: its frontmatter is not valid YAML. Open the file and fix it first. ({1})', item.entry.id, why),
 			);
 			return;
 		}
@@ -159,14 +162,31 @@ export class LoreView implements vscode.TreeDataProvider<LoreItem>, vscode.Dispo
 		}
 	}
 
-	/** The content of a new entry: from the workspace's own template for its type, else its `default.md`, else the built-in one. */
-	private async content(index: FolderIndex, path: string, name: string, type: string): Promise<string> {
-		for (const template of [type, 'default']) {
+	/**
+	 * The content of a new entry: from the story folder's own template for its type, else its `default.md`, else the
+	 * built-in one. Undefined, after saying why, when a template is there but cannot be filled in.
+	 */
+	private async content(index: FolderIndex, path: string, name: string, type: string): Promise<string | undefined> {
+		for (const template of templateNames(type)) {
+			const file = `${TEMPLATES_FOLDER}/${template}.md`;
+			let text: string;
 			try {
-				const bytes = await vscode.workspace.fs.readFile(index.uri(`${TEMPLATES_FOLDER}/${template}.md`));
-				return fillTemplate(new TextDecoder('utf-8').decode(bytes), path, name, type);
+				text = new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(index.uri(file)));
 			} catch {
 				// No such template: try the next.
+				continue;
+			}
+			try {
+				return fillTemplate(text, path, name, type);
+			} catch (error) {
+				void vscode.window.showErrorMessage(
+					vscode.l10n.t(
+						'No entry was created: with the name and type filled in, the frontmatter of the template {0} is not valid YAML. ({1})',
+						file,
+						(error instanceof Error ? error.message : String(error)).split('\n')[0],
+					),
+				);
+				return undefined;
 			}
 		}
 		return builtinTemplate(type, vscode.l10n.t);
@@ -194,7 +214,10 @@ export class LoreView implements vscode.TreeDataProvider<LoreItem>, vscode.Dispo
 			return;
 		}
 		const path = joinPath(folder, `${name.trim()}.md`);
-		await createAndOpen(index.uri(path), await this.content(index, path, name.trim(), type));
+		const content = await this.content(index, path, name.trim(), type);
+		if (content !== undefined) {
+			await createAndOpen(index, path, content);
+		}
 	}
 
 	dispose(): void {

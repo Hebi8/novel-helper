@@ -8,7 +8,7 @@ import { DEFAULT_BOOK_NAMES } from '../core/library';
 import { markerOf, scaffold, type ScaffoldItem, storyNames } from '../core/scaffold';
 import { type NamesLanguage, normalizeStoryFolder } from '../core/story';
 import { filePatterns, setStoryFolder } from './config';
-import { pickFolder } from './files';
+import { pickFolder, staysInside } from './files';
 import { displayNamesLanguage, readMarker, storyLabel, writeMarker } from './story';
 import type { WorkspaceIndexes } from './workspaceIndex';
 
@@ -74,6 +74,9 @@ export async function initWorkspace(indexes: WorkspaceIndexes): Promise<void> {
 		language,
 	);
 	const all = scaffold(names, t);
+	if (!staysInside(all.map((item) => item.path))) {
+		return;
+	}
 	const present = await Promise.all(all.map((item) => exists(uri(item.path))));
 	const missing = all.filter((_, i) => !present[i]);
 	let chosen: ScaffoldItem[] = [];

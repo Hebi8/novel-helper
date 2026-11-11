@@ -29,6 +29,17 @@ export function normalizeStoryFolder(setting: string): string | undefined {
 	return segments.includes('..') ? undefined : segments.join('/');
 }
 
+/**
+ * Whether a path that is meant to be inside the story folder has a `..`
+ * step, which could lead out of it. Folder and file names come from
+ * settings as well as from the writer, so every path the extension is about
+ * to create or rename goes through this. By the text of the path: links
+ * are not followed.
+ */
+export function leadsOut(path: string): boolean {
+	return path.split(/[\\/]/).includes('..');
+}
+
 /** `path` relative to `folder` (both absolute, `/`-separated): '' for the folder itself, undefined outside it. */
 export function relativeInside(folder: string, path: string): string | undefined {
 	const base = folder.replace(/\/+$/, '');
@@ -127,6 +138,14 @@ export function isUsable(state: StoryState): boolean {
 export const SCAN_DEPTH = 4;
 /** Folders that are not looked into: dependencies, build output, anything hidden. */
 const SKIPPED = /^(node_modules|out|dist|build|target|vendor)$|^\./;
+/**
+ * What to search for and what to leave out, so that the depth limit and the
+ * big folders are part of the search itself: one glob per depth, and the
+ * folders that are never looked into. Hidden folders cannot be excluded
+ * here (the marker is in one); `storiesFromMarkers` drops those.
+ */
+export const MARKER_GLOBS: readonly string[] = Array.from({ length: SCAN_DEPTH + 1 }, (_, depth) => '*/'.repeat(depth) + MARKER_FILE);
+export const SCAN_EXCLUDE = '**/{node_modules,.git,out,dist,build,target,vendor}/**';
 
 /**
  * The story folders that marker files point to. `markers` are paths of

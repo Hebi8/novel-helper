@@ -1,11 +1,12 @@
 // The usage totals, kept in a file in the extension's global storage so that
 // every window on this machine adds to the same numbers.
 
+import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { dayKey, type Ledger, overDailyLimit, prune, record, sum, totalsFor, type Totals, type Usage } from '../core/usage';
 
-/** A lock this old was left behind by a window that died holding it; adding to the file takes milliseconds. */
+/** A lock this old is taken over: adding to the file takes milliseconds, so its holder died or was put to sleep. */
 const STALE_LOCK_MS = 5000;
 const LOCK_RETRY_MS = 20;
 
@@ -27,24 +28,28 @@ export class UsageStore {
 		return { dispose: () => this.listeners.delete(listener) };
 	}
 
-	private async read(): Promise<void> {
+	/** The ledger on disk; undefined when there is no file yet. */
+	private async read(): Promise<Ledger | undefined> {
 		try {
-			this.ledger = JSON.parse(await fs.readFile(this.file, 'utf8')) as Ledger;
+			return JSON.parse(await fs.readFile(this.file, 'utf8')) as Ledger;
 		} catch {
-			// No file yet: keep what this window has.
+			return undefined;
 		}
 	}
 
 	/**
-	 * Runs `work` while holding the lock file, which only one window (of any
-	 * VS Code process) can create at a time.
+	 * Takes the lock file, which only one window (of any VS Code process)
+	 * can create at a time, and returns what this holder wrote into it. A
+	 * lock older than `STALE_LOCK_MS` is taken over: its holder died, or was
+	 * asleep that long (a closed laptop lid) and will find out in `holds`.
 	 */
-	private async locked(work: () => Promise<void>): Promise<void> {
+	private async acquire(): Promise<string> {
+		const id = randomUUID();
 		await fs.mkdir(this.directory, { recursive: true });
 		for (;;) {
 			try {
-				await (await fs.open(this.lock, 'wx')).close();
-				break;
+				await fs.writeFile(this.lock, id, { flag: 'wx' });
+				return id;
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
 					throw error;
@@ -57,16 +62,28 @@ export class UsageStore {
 				await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
 			}
 		}
-		try {
-			await work();
-		} finally {
+	}
+
+	/** Whether the lock is still the one this holder took: not taken over in the meantime. */
+	private async holds(id: string): Promise<boolean> {
+		return (await fs.readFile(this.lock, 'utf8').catch(() => undefined)) === id;
+	}
+
+	/** Gives the lock back, if it is still this holder's: a lock someone else took over is theirs to remove. */
+	private async release(id: string): Promise<void> {
+		if (await this.holds(id)) {
 			await fs.rm(this.lock, { force: true });
 		}
 	}
 
 	/** Reads the file again: other windows may have added to it. Waits for an addition that is being written. */
 	async load(): Promise<Ledger> {
-		await this.locked(() => this.read());
+		const id = await this.acquire();
+		try {
+			this.ledger = (await this.read()) ?? this.ledger;
+		} finally {
+			await this.release(id);
+		}
 		this.listeners.forEach((listener) => listener());
 		return this.ledger;
 	}
@@ -74,17 +91,27 @@ export class UsageStore {
 	/**
 	 * Adds one request to the totals on disk, on top of what other windows
 	 * have written: reading, adding and writing happen under the lock, so two
-	 * windows adding at once both count. `cost` is undefined when the price
-	 * is not known.
+	 * windows adding at once both count. If the lock was taken over while
+	 * this window held it, what it read may be out of date: it starts over
+	 * instead of writing. `cost` is undefined when the price is not known.
 	 */
 	async add(model: string, usage: Usage, cost: number | undefined): Promise<void> {
-		await this.locked(async () => {
-			const now = new Date();
-			await this.read();
-			record(this.ledger, dayKey(now), model, usage, cost);
-			prune(this.ledger, now);
-			await fs.writeFile(this.file, JSON.stringify(this.ledger));
-		});
+		for (let written = false; !written; ) {
+			const id = await this.acquire();
+			try {
+				const now = new Date();
+				const ledger = (await this.read()) ?? structuredClone(this.ledger);
+				record(ledger, dayKey(now), model, usage, cost);
+				prune(ledger, now);
+				if (await this.holds(id)) {
+					await fs.writeFile(this.file, JSON.stringify(ledger));
+					this.ledger = ledger;
+					written = true;
+				}
+			} finally {
+				await this.release(id);
+			}
+		}
 		this.listeners.forEach((listener) => listener());
 	}
 

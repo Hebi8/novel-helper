@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { renderReport, renderUsage, type RunRecord } from './core/report';
-import { isUsable } from './core/story';
+import { isUsable, MARKER_FILE } from './core/story';
 import { costOf, ratesFor } from './core/usage';
 import { PROVIDERS, type ProviderId } from './llm/providers';
 import { BookView } from './vscode/bookView';
@@ -91,6 +91,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		const state = all.some((index) => isUsable(index.state)) ? 'ready' : all.some((index) => index.others.length) ? 'elsewhere' : 'empty';
 		await vscode.commands.executeCommand('setContext', 'novelHelper.workspace', state);
 	};
+	const markers = vscode.workspace.createFileSystemWatcher(`**/${MARKER_FILE}`);
 	void usage.load();
 	void describeWorkspace();
 
@@ -144,6 +145,11 @@ export function activate(context: vscode.ExtensionContext): void {
 		// Renaming or deleting a folder (a volume, an arc) moves many files at once: index again on next use.
 		vscode.workspace.onDidRenameFiles(() => indexes.reset()),
 		vscode.workspace.onDidCreateFiles(() => indexes.resetMissing()),
+		// A marker made or removed outside VS Code (a checkout, the terminal) changes which story folders there are.
+		markers,
+		markers.onDidCreate(() => indexes.reset()),
+		markers.onDidDelete(() => indexes.reset()),
+		markers.onDidChange(() => indexes.reset()),
 		vscode.workspace.onDidDeleteFiles(() => indexes.reset()),
 		context.secrets.onDidChange(() => status.setProblem(undefined)),
 	);

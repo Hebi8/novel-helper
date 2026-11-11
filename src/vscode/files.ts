@@ -3,6 +3,7 @@
 
 import * as vscode from 'vscode';
 import type { NameProblem } from '../core/book';
+import { leadsOut } from '../core/story';
 import type { FolderIndex, WorkspaceIndexes } from './workspaceIndex';
 
 /** The only open folder, or the one the writer is in or picks; tells them to open one if there is none. */
@@ -35,8 +36,28 @@ export function joinPath(...parts: string[]): string {
 	return parts.filter(Boolean).join('/');
 }
 
-/** Opens the file, making it with `content` first if it is not there. Undo takes the new file away again. */
-export async function createAndOpen(uri: vscode.Uri, content = ''): Promise<void> {
+/**
+ * Whether every path, relative to the story folder, stays inside it. Folder
+ * and file names come from settings as well as from the writer, so whatever
+ * the extension is about to create or rename is checked here first; when a
+ * path would lead out, this says so and nothing is to be done.
+ */
+export function staysInside(paths: readonly string[]): boolean {
+	const out = paths.find(leadsOut);
+	if (out !== undefined) {
+		void vscode.window.showErrorMessage(
+			vscode.l10n.t('Nothing was changed: {0} would be outside the story folder. Check the folder and file names in the settings under novelHelper.files.', out),
+		);
+	}
+	return out === undefined;
+}
+
+/** Opens a file of the story folder, making it with `content` first if it is not there. Undo takes the new file away again. */
+export async function createAndOpen(index: FolderIndex, path: string, content = ''): Promise<void> {
+	if (!staysInside([path])) {
+		return;
+	}
+	const uri = index.uri(path);
 	const edit = new vscode.WorkspaceEdit();
 	edit.createFile(uri, { ignoreIfExists: true, contents: new TextEncoder().encode(content) });
 	await vscode.workspace.applyEdit(edit);

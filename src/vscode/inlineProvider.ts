@@ -169,7 +169,8 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 		};
 
 		// Other windows may have spent up to the limit since this one last looked, or this one while the request was being prepared.
-		if (!manual && ((await this.hooks.status.overLimitNow()) || token.isCancellationRequested)) {
+		// That was a wait too: the writer may have typed on, or switched ghost text off, and this request is not in `running` yet.
+		if (!manual && ((await this.hooks.status.overLimitNow()) || token.isCancellationRequested || !completionSettings().enabled)) {
 			return undefined;
 		}
 

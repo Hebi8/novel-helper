@@ -1,6 +1,6 @@
 import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { setField } from '../core/frontmatter';
+import { type FieldValue, FrontmatterError, setField } from '../core/frontmatter';
 import { parseLoreEntry } from '../core/library';
 
 const FILE = `---
@@ -73,7 +73,56 @@ describe('setField', () => {
 	});
 
 	test('frontmatter that is not valid YAML, or not a list of fields, is refused', () => {
-		assert.throws(() => setField('---\naliases: [小满\n---\n正文', 'always', true));
-		assert.throws(() => setField('---\n- 小满\n- 林姑娘\n---\n正文', 'always', true), /not a list of fields/);
+		assert.throws(() => setField('---\naliases: [小满\n---\n正文', 'always', true), (e: FrontmatterError) => e.kind === 'invalid');
+		assert.throws(() => setField('---\n- 小满\n- 林姑娘\n---\n正文', 'always', true), (e: FrontmatterError) => e.kind === 'unsupported');
+	});
+
+	test('frontmatter written as {…}: a field it has is changed in place, one it lacks is not squeezed in after it', () => {
+		const file = '---\n{type: 人物, always: false}\n---\n正文\n';
+		assert.equal(setField(file, 'always', true), '---\n{type: 人物, always: true}\n---\n正文\n');
+		assert.equal(setField(file, 'type', '主角'), '---\n{type: 主角, always: false}\n---\n正文\n');
+		assert.throws(() => setField(file, 'aliases', ['小满']), (e: FrontmatterError) => e.kind === 'unsupported');
+	});
+
+	test('a comment inside the value that would be replaced: refused, not dropped', () => {
+		const file = '---\ntype: 人物\naliases: # 角色别称\n  - 小满 # 镇上的人这么叫\n  - 林姑娘\nsummary: > # 一句话\n  十七岁，\n  送信员。\nalways: false # 先不常驻\n---\n正文';
+		assert.throws(() => setField(file, 'aliases', ['阿满']), (e: FrontmatterError) => e.kind === 'unsupported' && /comment/.test(e.message));
+		assert.throws(() => setField(file, 'summary', '送信员'), (e: FrontmatterError) => e.kind === 'unsupported');
+		// The other fields of the same file can still be set, and every comment is still there.
+		const pinned = setField(file, 'always', true);
+		assert.equal(pinned, file.replace('always: false # 先不常驻', 'always: true # 先不常驻'));
+		assert.equal(setField(file, 'type', '主角'), file.replace('type: 人物', 'type: 主角'));
+		// A comment on the last item of a list is part of the list too.
+		const trailing = '---\naliases:\n  - 小满\n  - 林姑娘 # 邮局的人这么叫\ntype: 人物\n---\n';
+		assert.throws(() => setField(trailing, 'aliases', ['阿满']), (e: FrontmatterError) => e.kind === 'unsupported');
+		assert.equal(setField(trailing, 'type', '主角'), trailing.replace('type: 人物', 'type: 主角'));
+	});
+
+	test('fields that are indented, or nested: a new field is not added where it would land somewhere else', () => {
+		assert.throws(() => setField('---\n  type: 人物\n  always: false\n---\n', 'aliases', ['小满']), (e: FrontmatterError) => e.kind === 'unsupported');
+		assert.equal(setField('---\n  type: 人物\n  always: false\n---\n', 'always', true), '---\n  type: 人物\n  always: true\n---\n');
+		const nested = '---\ntype: 人物\nextra:\n  always: false\n  note: x\n---\n';
+		assert.equal(setField(nested, 'always', true), '---\ntype: 人物\nextra:\n  always: false\n  note: x\nalways: true\n---\n');
+	});
+
+	test('whatever it returns reads back as the same fields with the one change', () => {
+		const files = [FILE, '---\n{type: 人物, always: false}\n---\n', '---\ntype: 地点\n# 备注\n---\n', '---\nsummary: |\n  第一行\n  第二行\n---\n', '---\n"always": false\n? type\n: 人物\n---\n'];
+		for (const file of files) {
+			for (const [key, value] of [['always', true], ['aliases', ['阿满', 'a: b']], ['type', '主角 #1']] as const) {
+				const before = parseLoreEntry('人物/x.md', file);
+				let after: string;
+				try {
+					after = setField(file, key, value as FieldValue);
+				} catch (error) {
+					assert.ok(error instanceof FrontmatterError, String(error));
+					continue;
+				}
+				const entry = parseLoreEntry('人物/x.md', after);
+				assert.equal(entry.error, undefined, after);
+				assert.deepEqual({ ...entry, [key]: undefined }, { ...before, ...entry, [key]: undefined });
+				assert.deepEqual((entry as unknown as Record<string, unknown>)[key], value, after);
+				assert.equal(entry.body, before.body);
+			}
+		}
 	});
 });

@@ -8,7 +8,7 @@ import type { BookNode } from '../core/library';
 import { firstNames } from '../core/scaffold';
 import { isUsable } from '../core/story';
 import { setStoryFolder } from './config';
-import { createAndOpen, joinPath, pickIndex, problemText } from './files';
+import { createAndOpen, joinPath, pickIndex, problemText, staysInside } from './files';
 import { displayNamesLanguage, storyLabel } from './story';
 import type { FolderIndex, WorkspaceIndexes } from './workspaceIndex';
 
@@ -243,7 +243,7 @@ export class BookView implements vscode.TreeDataProvider<Item>, vscode.Disposabl
 			return;
 		}
 		const { index, node } = item;
-		await createAndOpen(index.uri(node[kind] ?? joinPath(index.root(kind), ...node.dirs, `${node.name}.md`)));
+		await createAndOpen(index, node[kind] ?? joinPath(index.root(kind), ...node.dirs, `${node.name}.md`));
 	}
 
 	/**
@@ -274,7 +274,7 @@ export class BookView implements vscode.TreeDataProvider<Item>, vscode.Disposabl
 			return;
 		}
 		const folder = level.node.kind === 'book' ? level.index.root('chapter') : level.node.path;
-		await createAndOpen(level.index.uri(joinPath(folder, `${name.trim()}.md`)));
+		await createAndOpen(level.index, joinPath(folder, `${name.trim()}.md`));
 	}
 
 	/**
@@ -311,7 +311,7 @@ export class BookView implements vscode.TreeDataProvider<Item>, vscode.Disposabl
 			return;
 		}
 		const folder = parent.node.kind === 'book' ? parent.index.root('chapter') : parent.node.path;
-		await createAndOpen(parent.index.uri(joinPath(folder, level.trim(), `${chapter.trim()}.md`)));
+		await createAndOpen(parent.index, joinPath(folder, level.trim(), `${chapter.trim()}.md`));
 	}
 
 	/** Renames a chapter or a level together with its outline and summary, as one edit that Undo takes back. */
@@ -330,8 +330,26 @@ export class BookView implements vscode.TreeDataProvider<Item>, vscode.Disposabl
 		if (name === undefined || name.trim() === node.name) {
 			return;
 		}
+		const plan = index.library.renames(node, name.trim());
+		if (plan.blocked) {
+			const { path, sharedBy } = plan.blocked;
+			void vscode.window.showErrorMessage(
+				sharedBy.length
+					? vscode.l10n.t(
+							'{0} was not renamed, and nothing was changed: {1} is shared by {2}, and renaming it for one would take it from the others. Give each its own first, or rename by hand.',
+							node.name,
+							path,
+							sharedBy.join(vscode.l10n.t(', ')),
+						)
+					: vscode.l10n.t('{0} was not renamed, and nothing was changed: {1} is inside a folder that would be renamed too.', node.name, path),
+			);
+			return;
+		}
+		if (!staysInside(plan.renames.flatMap(({ from, to }) => [from, to]))) {
+			return;
+		}
 		const edit = new vscode.WorkspaceEdit();
-		for (const { from, to } of index.library.renames(node, name.trim())) {
+		for (const { from, to } of plan.renames) {
 			edit.renameFile(index.uri(from), index.uri(to));
 		}
 		if (!(await vscode.workspace.applyEdit(edit))) {

@@ -112,7 +112,7 @@ export class SettingsView implements vscode.TreeDataProvider<Row>, vscode.Dispos
 			totals.requests ? t('{0} requests, about {1}', totals.requests, dollars(totals.cost)) : t('no requests yet');
 		const states: Record<StoryState, string> = {
 			ready: t('initialized'),
-			unmarked: t('in use, no marker'),
+			unmarked: t('in use'),
 			empty: t('not initialized'),
 			missing: t('does not exist'),
 			invalid: t('not a path inside the workspace folder'),

@@ -2,10 +2,13 @@
 // initialized, reading and writing their marker, and switching between them.
 
 import * as vscode from 'vscode';
-import { type Marker, MARKER_FILE, MARKER_VERSION, type NamesLanguage, namesLanguageOf, normalizeStoryFolder, parseMarker, relativeInside, serializeMarker, storiesFromMarkers } from '../core/story';
+import { type Marker, MARKER_FILE, MARKER_GLOBS, MARKER_VERSION, type NamesLanguage, namesLanguageOf, normalizeStoryFolder, parseMarker, relativeInside, SCAN_EXCLUDE, serializeMarker, storiesFromMarkers } from '../core/story';
 import { setStoryFolder } from './config';
 import { pickFolder } from './files';
 import type { FolderIndex, WorkspaceIndexes } from './workspaceIndex';
+
+/** More story folders than this in one workspace folder are not listed. */
+const MAX_STORIES = 50;
 
 function markerUri(story: vscode.Uri): vscode.Uri {
 	return vscode.Uri.joinPath(story, ...MARKER_FILE.split('/'));
@@ -32,8 +35,9 @@ export async function writeMarker(story: vscode.Uri, marker: Marker): Promise<vo
  */
 export async function findStories(folder: vscode.WorkspaceFolder, current?: string): Promise<string[]> {
 	const base = folder.uri.path.replace(/\/$/, '');
-	const found = await vscode.workspace.findFiles(new vscode.RelativePattern(folder, `**/${MARKER_FILE}`), '**/{node_modules,.git}/**', 200);
-	const stories = storiesFromMarkers(found.map((uri) => uri.path.slice(base.length + 1)), current);
+	// The depth limit and the folders to stay out of are part of the search; the cap is on what is left after filtering.
+	const found = (await Promise.all(MARKER_GLOBS.map((glob) => vscode.workspace.findFiles(new vscode.RelativePattern(folder, glob), SCAN_EXCLUDE)))).flat();
+	const stories = storiesFromMarkers(found.map((uri) => uri.path.slice(base.length + 1)), current).slice(0, MAX_STORIES);
 	const marked = await Promise.all(stories.map((story) => readMarker(story ? vscode.Uri.joinPath(folder.uri, ...story.split('/')) : folder.uri)));
 	return stories.filter((_, i) => marked[i] !== undefined);
 }

@@ -2,11 +2,14 @@ import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
 	isUsable,
+	leadsOut,
 	MARKER_FILE,
+	MARKER_GLOBS,
 	namesLanguageOf,
 	normalizeStoryFolder,
 	parseMarker,
 	relativeInside,
+	SCAN_EXCLUDE,
 	serializeMarker,
 	storiesFromMarkers,
 	storyState,
@@ -28,6 +31,17 @@ describe('normalizeStoryFolder', () => {
 	test('nothing that could lead out of the workspace folder', () => {
 		for (const setting of ['..', '../x', 'a/../../x', 'a/..', '书/../..', '/', '/home/x', '\\\\server\\share', 'C:\\novel', 'c:/novel', '~', '~/novel', 'a\\..\\b']) {
 			assert.equal(normalizeStoryFolder(setting), undefined, setting);
+		}
+	});
+});
+
+describe('leadsOut', () => {
+	test('a step up anywhere in the path', () => {
+		for (const path of ['..', '../x', '大纲/../../escaped-book.md', 'a/b/..', 'a\\..\\b', '正文/../../x/第1章.md']) {
+			assert.equal(leadsOut(path), true, path);
+		}
+		for (const path of ['', '正文/第1章.md', '正文/第1章…….md', '..书/第1.5稿.md', '~草稿/a.md', '.novel-helper/project.json']) {
+			assert.equal(leadsOut(path), false, path);
 		}
 	});
 });
@@ -117,6 +131,16 @@ describe('storiesFromMarkers', () => {
 			]),
 			['a/b/c/d'],
 		);
+	});
+});
+
+describe('what the search for markers asks for', () => {
+	test('one glob per depth down to the limit, and the big folders left out by the search itself', () => {
+		assert.deepEqual(MARKER_GLOBS, [MARKER_FILE, `*/${MARKER_FILE}`, `*/*/${MARKER_FILE}`, `*/*/*/${MARKER_FILE}`, `*/*/*/*/${MARKER_FILE}`]);
+		assert.ok(MARKER_GLOBS.every((glob) => !glob.includes('**')));
+		for (const folder of ['node_modules', '.git', 'build', 'dist', 'out', 'target', 'vendor']) {
+			assert.ok(SCAN_EXCLUDE.includes(folder), folder);
+		}
 	});
 });
 

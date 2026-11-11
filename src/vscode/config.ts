@@ -133,10 +133,12 @@ export function storyFolderSetting(scope: vscode.Uri): string {
 /**
  * Points a workspace folder's story folder at `path` ('' for the folder
  * itself). Where the story is belongs to the workspace, so this is written
- * to its settings, never to the user's.
+ * to its settings, never to the user's. The empty path is written out too:
+ * removing the value would bring back whatever the user settings, or the
+ * workspace above a folder, say.
  */
 export async function setStoryFolder(folder: vscode.WorkspaceFolder, path: string): Promise<void> {
 	const target =
 		(vscode.workspace.workspaceFolders ?? []).length > 1 ? vscode.ConfigurationTarget.WorkspaceFolder : vscode.ConfigurationTarget.Workspace;
-	await vscode.workspace.getConfiguration(`${SECTION}.files`, folder.uri).update('storyFolder', path || undefined, target);
+	await vscode.workspace.getConfiguration(`${SECTION}.files`, folder.uri).update('storyFolder', path, target);
 }

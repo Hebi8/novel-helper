@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.2 (2026-11-12)
+
+Fixes from a review of 0.3.0 and 0.3.1. Where it is not certain that a file can be rewritten or renamed without loss, nothing is touched and you are told why.
+
+- Renaming a volume, arc or chapter no longer takes along an outline or summary folder (or file) that another volume or chapter uses too: then nothing is renamed. A level named like the one it is in is renamed in full instead of failing half-way.
+- Setting always-on, aliases or the type no longer breaks frontmatter written as `{…}` or drops a comment inside the value it replaces; what cannot be changed in place is left alone.
+- A `..` in the folder and book names of the settings can no longer make initializing, creating or renaming write outside the story folder, and a lore type is no longer followed out of the templates folder. Paths are checked as written; symbolic links are not resolved.
+- Templates: a `$` in a name is kept, and names are filled into the frontmatter as YAML values.
+- Usage: a window that was slow while holding the lock no longer overwrites what the window that took over wrote; ghost text switched off while a request waited for the usage file is no longer sent.
+- Story folder: "Back to the workspace folder" works when a setting further up names another folder; story folders are found even with many markers in build output; a marker made or removed outside VS Code shows without a reload; a story folder without a marker reads "in use"; an index dropped while loading leaves no file watchers behind.
+
 ## 0.3.1 (2026-11-12)
 
 - The story can live in a sub-folder: `novelHelper.files.storyFolder` (a path inside the workspace folder; empty is the folder itself). Everything works from there; the **Story folder** row in the sidebar switches it.
