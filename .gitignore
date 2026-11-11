@@ -1,8 +1,4 @@
 out
 dist
 node_modules
-.vscode-test/
 *.vsix
-
-# logs
-dev_logs/

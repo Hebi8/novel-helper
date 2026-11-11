@@ -1,23 +1,274 @@
 {
   "name": "novel-helper",
-  "displayName": "novel-helper",
-  "description": "a nevel write helper in vscode",
-  "version": "0.0.1",
+  "displayName": "%displayName%",
+  "description": "%description%",
+  "version": "0.1.0",
+  "publisher": "dreaife",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hebi8/novel-helper"
+  },
   "engines": {
     "vscode": "^1.97.0"
   },
   "categories": [
+    "AI",
     "Other"
   ],
-  "activationEvents": [],
+  "keywords": [
+    "novel",
+    "fiction",
+    "writing",
+    "lore",
+    "小说",
+    "写作",
+    "续写",
+    "设定"
+  ],
+  "l10n": "./l10n",
+  "activationEvents": [
+    "onLanguage:markdown",
+    "onLanguage:plaintext"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "%untrustedWorkspaces%",
+      "restrictedConfigurations": [
+        "novelHelper.provider",
+        "novelHelper.anthropic.model",
+        "novelHelper.openai.model",
+        "novelHelper.deepseek.model",
+        "novelHelper.gemini.model",
+        "novelHelper.openaiCompatible.baseUrl",
+        "novelHelper.openaiCompatible.model",
+        "novelHelper.extraRequestBody"
+      ]
+    }
+  },
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "novel-helper.helloWorld",
-        "title": "Hello World"
+        "command": "novelHelper.toggle",
+        "title": "%command.toggle%",
+        "category": "Novel Helper"
+      },
+      {
+        "command": "novelHelper.setApiKey",
+        "title": "%command.setApiKey%",
+        "category": "Novel Helper"
+      },
+      {
+        "command": "novelHelper.showLastRequest",
+        "title": "%command.showLastRequest%",
+        "category": "Novel Helper"
       }
-    ]
+    ],
+    "keybindings": [
+      {
+        "command": "editor.action.inlineSuggest.trigger",
+        "key": "alt+\\",
+        "when": "editorTextFocus && !editorReadonly && !inlineSuggestionVisible && editorLangId =~ /^(markdown|plaintext)$/"
+      }
+    ],
+    "configuration": {
+      "title": "Novel Helper",
+      "properties": {
+        "novelHelper.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "%config.enabled%"
+        },
+        "novelHelper.trigger": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "manual"
+          ],
+          "enumDescriptions": [
+            "%config.trigger.auto%",
+            "%config.trigger.manual%"
+          ],
+          "default": "auto",
+          "markdownDescription": "%config.trigger%"
+        },
+        "novelHelper.debounceMs": {
+          "type": "number",
+          "default": 750,
+          "minimum": 100,
+          "markdownDescription": "%config.debounceMs%"
+        },
+        "novelHelper.maxSuggestionChars": {
+          "type": "number",
+          "default": 60,
+          "minimum": 10,
+          "markdownDescription": "%config.maxSuggestionChars%"
+        },
+        "novelHelper.provider": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai",
+            "deepseek",
+            "gemini",
+            "openaiCompatible"
+          ],
+          "enumDescriptions": [
+            "%config.provider.anthropic%",
+            "%config.provider.openai%",
+            "%config.provider.deepseek%",
+            "%config.provider.gemini%",
+            "%config.provider.openaiCompatible%"
+          ],
+          "default": "anthropic",
+          "markdownDescription": "%config.provider%"
+        },
+        "novelHelper.anthropic.model": {
+          "type": "string",
+          "default": "claude-haiku-5-5",
+          "markdownDescription": "%config.anthropic.model%"
+        },
+        "novelHelper.openai.model": {
+          "type": "string",
+          "default": "gpt-6-luna",
+          "markdownDescription": "%config.openai.model%"
+        },
+        "novelHelper.deepseek.model": {
+          "type": "string",
+          "default": "deepseek-flash",
+          "markdownDescription": "%config.deepseek.model%"
+        },
+        "novelHelper.gemini.model": {
+          "type": "string",
+          "default": "gemini-3.5-flash-lite",
+          "markdownDescription": "%config.gemini.model%"
+        },
+        "novelHelper.openaiCompatible.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434/v1",
+          "markdownDescription": "%config.openaiCompatible.baseUrl%"
+        },
+        "novelHelper.openaiCompatible.model": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "%config.openaiCompatible.model%"
+        },
+        "novelHelper.extraRequestBody": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "%config.extraRequestBody%"
+        },
+        "novelHelper.files.lore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "{设定,人物,角色,资料,世界观,lore,characters,worldbuilding}/**/*.{md,txt}"
+          ],
+          "scope": "resource",
+          "markdownDescription": "%config.files.lore%"
+        },
+        "novelHelper.files.chapters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "{正文,章节,chapters,manuscript}/**/*.{md,txt}"
+          ],
+          "scope": "resource",
+          "markdownDescription": "%config.files.chapters%"
+        },
+        "novelHelper.files.outlines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "{大纲,细纲,outline,outlines}/**/*.{md,txt}"
+          ],
+          "scope": "resource",
+          "markdownDescription": "%config.files.outlines%"
+        },
+        "novelHelper.files.summaries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "{摘要,summary,summaries}/**/*.{md,txt}"
+          ],
+          "scope": "resource",
+          "markdownDescription": "%config.files.summaries%"
+        },
+        "novelHelper.context.beforeChars": {
+          "type": "number",
+          "default": 1500,
+          "minimum": 0,
+          "markdownDescription": "%config.context.beforeChars%",
+          "scope": "resource"
+        },
+        "novelHelper.context.afterChars": {
+          "type": "number",
+          "default": 200,
+          "minimum": 0,
+          "markdownDescription": "%config.context.afterChars%",
+          "scope": "resource"
+        },
+        "novelHelper.context.scanChars": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 0,
+          "markdownDescription": "%config.context.scanChars%",
+          "scope": "resource"
+        },
+        "novelHelper.context.alwaysChars": {
+          "type": "number",
+          "default": 1500,
+          "minimum": 0,
+          "markdownDescription": "%config.context.alwaysChars%",
+          "scope": "resource"
+        },
+        "novelHelper.context.matchedChars": {
+          "type": "number",
+          "default": 2500,
+          "minimum": 0,
+          "markdownDescription": "%config.context.matchedChars%",
+          "scope": "resource"
+        },
+        "novelHelper.context.entryChars": {
+          "type": "number",
+          "default": 500,
+          "minimum": 0,
+          "markdownDescription": "%config.context.entryChars%",
+          "scope": "resource"
+        },
+        "novelHelper.context.outlineChars": {
+          "type": "number",
+          "default": 800,
+          "minimum": 0,
+          "markdownDescription": "%config.context.outlineChars%",
+          "scope": "resource"
+        },
+        "novelHelper.context.previousChapters": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "markdownDescription": "%config.context.previousChapters%",
+          "scope": "resource"
+        },
+        "novelHelper.context.previousChapterChars": {
+          "type": "number",
+          "default": 400,
+          "minimum": 0,
+          "markdownDescription": "%config.context.previousChapterChars%",
+          "scope": "resource"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
@@ -26,24 +277,23 @@
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "package": "npm run check-types && npm run lint && node esbuild.js --production",
-    "compile-tests": "tsc -p . --outDir out",
-    "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "pretest": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\" && tsc -p . --outDir out",
+    "test": "node --test \"out/test/**/*.test.js\"",
+    "watch-tests": "tsc -p . -w --outDir out"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
-    "@types/vscode": "^1.97.0",
-    "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
+    "@types/vscode": "^1.97.0",
     "@typescript-eslint/eslint-plugin": "^8.25.0",
     "@typescript-eslint/parser": "^8.25.0",
-    "eslint": "^9.21.0",
     "esbuild": "^0.25.0",
+    "eslint": "^9.21.0",
     "npm-run-all": "^4.1.5",
-    "typescript": "^5.7.3",
-    "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1"
+    "typescript": "^5.7.3"
   }
 }
