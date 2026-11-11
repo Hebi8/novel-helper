@@ -47,9 +47,18 @@ export interface ProviderHooks {
 }
 
 export class ContinuationProvider implements vscode.InlineCompletionItemProvider {
+	/** The last suggestion shown, keyed by the request that produced it. */
 	private lastShown?: { key: string; text: string };
+	private readonly running = new Set<AbortController>();
 
 	constructor(private readonly hooks: ProviderHooks) {}
+
+	/** Stops the requests still in flight, e.g. when ghost text is switched off. */
+	cancelRunning(): void {
+		for (const controller of this.running) {
+			controller.abort();
+		}
+	}
 
 	async provideInlineCompletionItems(
 		document: vscode.TextDocument,
@@ -62,27 +71,19 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 		if (!settings.enabled || (!manual && settings.trigger === 'manual')) {
 			return undefined;
 		}
-		const located = await this.hooks.indexes.locate(document);
-		const lineBefore = document.lineAt(position.line).text.slice(0, position.character);
-		const lineAfter = document.lineAt(position.line).text.slice(position.character);
-		if (!manual) {
-			if (!located || !located.index.library.isChapter(located.path)) {
-				return undefined;
-			}
-			if (!LINE_END_REST.test(lineAfter) || COMPOSING.test(lineBefore)) {
-				return undefined;
-			}
-		}
-
+		// Take the text now: the document can change while the index is loading.
 		const text = document.getText();
 		const offset = document.offsetAt(position);
 		const before = text.slice(0, offset);
 		const after = text.slice(offset);
-		const key = `${document.uri.toString()}\n${before.slice(-500)}\n${after.slice(0, 200)}`;
-		const item = (suggestion: string) => [new vscode.InlineCompletionItem(suggestion, new vscode.Range(position, position))];
+		const lineAfter = after.split('\n', 1)[0];
+		if (!manual && (!LINE_END_REST.test(lineAfter) || COMPOSING.test(before.slice(before.lastIndexOf('\n') + 1)))) {
+			return undefined;
+		}
+		const located = await this.hooks.indexes.locate(document);
 		if (!manual) {
-			if (this.lastShown?.key === key) {
-				return item(this.lastShown.text);
+			if (!located || !located.index.library.isChapter(located.path)) {
+				return undefined;
 			}
 			if (!(await sleep(settings.debounceMs, token))) {
 				return undefined;
@@ -91,11 +92,6 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 
 		const model = modelSettings();
 		const apiKey = await this.hooks.secrets.get(secretKey(model.provider));
-		if (model.keyRequired && !apiKey) {
-			this.hooks.missingKey(model.provider);
-			return undefined;
-		}
-
 		const limits = contextSettings(document.uri);
 		const library = located?.index.library;
 		let outline: { path: string; content: string } | undefined;
@@ -113,7 +109,12 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 				}),
 			);
 		}
-		if (token.isCancellationRequested) {
+		// The user typed on, or switched ghost text off, while this was waiting.
+		if (token.isCancellationRequested || !completionSettings().enabled) {
+			return undefined;
+		}
+		if (model.keyRequired && !apiKey) {
+			this.hooks.missingKey(model.provider);
 			return undefined;
 		}
 
@@ -130,6 +131,12 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 		});
 		const request = { ...model, apiKey, ...prompt };
 		const { url, body } = buildHttpRequest(request);
+		const item = (suggestion: string) => [new vscode.InlineCompletionItem(suggestion, new vscode.Range(position, position))];
+		// VS Code asks again when the cursor comes back to a spot; the same request gets the same answer.
+		const key = JSON.stringify([url, body, settings.maxSuggestionChars]);
+		if (!manual && this.lastShown?.key === key) {
+			return item(this.lastShown.text);
+		}
 		const run: RunRecord = {
 			time: new Date(),
 			document: documentPath,
@@ -144,6 +151,7 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 
 		const controller = new AbortController();
 		const cancel = token.onCancellationRequested(() => controller.abort());
+		this.running.add(controller);
 		this.hooks.status.begin();
 		const outcome = await complete(request, {
 			signal: controller.signal,
@@ -151,6 +159,7 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 			after: lineAfter,
 			maxChars: settings.maxSuggestionChars,
 		});
+		this.running.delete(controller);
 		cancel.dispose();
 		this.hooks.status.end(outcome.status === 'error' ? outcome.error : undefined);
 		if (outcome.status === 'cancelled') {

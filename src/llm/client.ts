@@ -138,9 +138,8 @@ function describe(error: unknown): string {
 
 /** Removes the key, and anything shaped like one, from text that will be shown or logged. */
 export function redact(text: string, apiKey?: string): string {
-	let out = apiKey && apiKey.length >= 8 ? text.split(apiKey).join('***') : text;
-	out = out.replace(/sk-[A-Za-z0-9_*.-]{6,}/g, 'sk-***').replace(/AIza[A-Za-z0-9_-]{10,}/g, 'AIza***');
-	return out;
+	const out = apiKey ? text.split(apiKey).join('***') : text;
+	return out.replace(/sk-[A-Za-z0-9_*.-]{6,}/g, 'sk-***').replace(/AIza[A-Za-z0-9_-]{10,}/g, 'AIza***');
 }
 
 export interface CompletionOutcome {

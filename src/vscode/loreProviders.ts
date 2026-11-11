@@ -22,12 +22,14 @@ export class LoreProviders implements vscode.HoverProvider, vscode.DefinitionPro
 	constructor(private readonly indexes: WorkspaceIndexes) {}
 
 	private async find(document: vscode.TextDocument, position: vscode.Position): Promise<Found | undefined> {
+		// Take the line now: the document can change while the index is loading.
+		const line = document.lineAt(position.line).text;
 		const located = await this.indexes.locate(document);
 		if (!located) {
 			return undefined;
 		}
 		const library = located.index.library;
-		const match = library.matcher().at(document.lineAt(position.line).text, position.character);
+		const match = library.matcher().at(line, position.character);
 		if (!match) {
 			return undefined;
 		}

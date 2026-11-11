@@ -33,7 +33,7 @@ describe('first sentence', () => {
 	});
 
 	test('English: a period followed by a space ends the sentence, a decimal point does not', () => {
-		assert.deepEqual(run(' and stepped inside. The room was dark.', 'He opened the door'), ok('and stepped inside.'));
+		assert.deepEqual(run(' and stepped inside. The room was dark.', 'He opened the door'), ok(' and stepped inside.'));
 		assert.deepEqual(run('Version 3.5 was out. Next.', 'x '), ok('Version 3.5 was out.'));
 	});
 
@@ -116,8 +116,24 @@ describe('replies that are not prose', () => {
 });
 
 describe('cleanup', () => {
-	test('closing punctuation already after the cursor is not repeated', () => {
-		assert.deepEqual(run('你好。」他笑了，转身走了。', '他说：「', { after: '」' }), ok('你好。'));
+	test('punctuation already after the cursor is not repeated', () => {
+		const accept = (before: string, raw: string, after: string) => before + run(raw, before, { after }).text + after;
+		assert.equal(accept('他说：「', '你好。」他笑了，转身走了。', '」'), '他说：「你好。」');
+		assert.equal(accept('他说：“', '你好。”他转过身去。', '。”'), '他说：“你好。”');
+		assert.equal(accept('（他说：“', '你好。”他转过身去。', '”）'), '（他说：“你好。”）');
+		assert.equal(accept('她犹豫着', '要不要开口……”她低下头。', '……”'), '她犹豫着要不要开口……”');
+		assert.equal(accept('He said, "', 'Come in." She smiled.', '"'), 'He said, "Come in."');
+		assert.equal(accept('他说：“', '你好。', '”'), '他说：“你好。”', 'a different closer is kept');
+	});
+
+	test('the space between English words is kept; none is added to Chinese or inside a word', () => {
+		const accept = (before: string, raw: string) => before + run(raw, before).text;
+		assert.equal(accept('He opened the door', ' and stepped inside. It was dark.'), 'He opened the door and stepped inside.');
+		assert.equal(accept('He opened the door', 'the door and stepped inside.'), 'He opened the door and stepped inside.');
+		assert.equal(accept('He said,', ' “Come in.” She smiled.'), 'He said, “Come in.”');
+		assert.equal(accept('He opened the do', 'or and stepped inside.'), 'He opened the door and stepped inside.');
+		assert.equal(accept('他推开门', ' 走了进去。'), '他推开门走了进去。');
+		assert.equal(accept('他说：', ' “走吧。”'), '他说：“走吧。”');
 	});
 
 	test('leading whitespace is dropped mid-line; a full-width indent is kept at a line start', () => {

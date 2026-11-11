@@ -65,9 +65,9 @@ describe('renderReport', () => {
 		assert.match(report, /\| Time \| 2026-11-11 23:05:09 \|/);
 		assert.match(report, /\| File \| 正文\/第2章\.md, line 3 \|/);
 		assert.match(report, /first text after 310 ms, 520 ms in total \(stopped once the first sentence arrived\)/);
-		assert.match(report, /\| 文风 \|  \| always on \| 3 \| body \|/);
-		assert.match(report, /\| 张三 \| 人物 \| 「三哥」×1; nearest 1 chars before the cursor; named in the outline \| 13 \| body \|/);
-		assert.match(report, /## Left out: over budget \(1\)\n\n.*\n.*\n\| 李四 \|  \| 「李四」×1; nearest 6 chars before the cursor \| 30 \|/);
+		assert.match(report, /\| 文风 \|  \| always on \| 8 \| body \|/);
+		assert.match(report, /\| 张三 \| 人物 \| 「三哥」×1; nearest 1 chars before the cursor; named in the outline \| 28 \| body \|/);
+		assert.match(report, /## Left out: over budget \(1\)\n\n.*\n.*\n\| 李四 \|  \| 「李四」×1; nearest 6 chars before the cursor \| 39 \|/);
 		assert.match(report, /- Outline: 大纲\/第2章\.md, 4 chars/);
 		assert.match(report, /- 正文\/第1章\.md: ending \(no summary\), 6 chars/);
 		assert.match(report, /POST https:\/\/api\.anthropic\.com\/v1\/messages/);

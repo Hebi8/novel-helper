@@ -72,6 +72,10 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (event.affectsConfiguration(`${SECTION}.files`)) {
 				indexes.reset();
 			}
+			if (event.affectsConfiguration(`${SECTION}.enabled`) && !completionSettings().enabled) {
+				continuation.cancelRunning();
+				void vscode.commands.executeCommand('editor.action.inlineSuggest.hide');
+			}
 			if (event.affectsConfiguration(SECTION)) {
 				status.setProblem(undefined);
 			}

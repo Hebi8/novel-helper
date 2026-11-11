@@ -222,6 +222,15 @@ describe('stopping and failing', () => {
 		assert.ok(!outcome.error!.includes(KEY));
 	});
 
+	test('a short key echoed back by a local server is removed too', async () => {
+		const server = await serve((res) => {
+			res.writeHead(401, { 'content-type': 'application/json' });
+			res.end(JSON.stringify({ error: { message: 'Incorrect API key: localpw' } }));
+		});
+		const outcome = await complete(request('openai', server.baseUrl, { apiKey: 'localpw' }), options());
+		assert.equal(outcome.error, 'HTTP 401: Incorrect API key: ***');
+	});
+
 	test('a non-JSON error body is shown as text', async () => {
 		const server = await serve((res) => {
 			res.writeHead(502, { 'content-type': 'text/html' });

@@ -46,8 +46,8 @@ describe('buildContext: entries and budgets', () => {
 		assert.match(prompt.system, /<常驻资料>\n【文风】（文风）\n第三人称，短句。\n<\/常驻资料>/);
 		assert.deepEqual(trace.always.map((e) => e.name), ['文风']);
 		const skipped = trace.skipped.find((e) => e.name === '世界观');
-		assert.ok(skipped?.always, 'cut to 40 chars, it does not fit the 30-char budget');
-		assert.equal(skipped.chars, 40);
+		assert.ok(skipped?.always, 'cut to 40 chars, with its name line it does not fit the 30-char budget');
+		assert.equal(skipped.chars, '【世界观】\n'.length + 40 + '（后略）'.length);
 	});
 
 	test('matched entries: nearest first, longest match, budget enforced', () => {
@@ -57,7 +57,7 @@ describe('buildContext: entries and budgets', () => {
 		assert.equal(zhang.source, 'summary');
 		assert.deepEqual([...zhang.hit!.keys], [['三哥', 1]], '「张三丰」 does not count as a mention of 张三');
 		const fung = trace.skipped.find((e) => e.name === '张三丰');
-		assert.ok(fung && !fung.always && fung.hit, 'over budget: 40 chars, 20 left');
+		assert.ok(fung && !fung.always && fung.hit, 'over budget: 李四 and 张三 used all 30 chars');
 		assert.match(prompt.dynamic, /<本章涉及的资料>\n【李四】\n李四的正文\n\n【张三】（人物；别名：三哥）\n张三的摘要\n<\/本章涉及的资料>/);
 		assert.ok(!prompt.dynamic.includes('丰丰'));
 	});
@@ -66,8 +66,23 @@ describe('buildContext: entries and budgets', () => {
 		const { prompt, trace } = buildContext(input({ limits: { ...LIMITS, matchedChars: 100 } }));
 		const fung = trace.matched.find((e) => e.name === '张三丰')!;
 		assert.equal(fung.truncated, true);
-		assert.equal(fung.chars, 40);
+		assert.equal(fung.chars, '【张三丰】（人物）\n'.length + 40 + '（后略）'.length);
 		assert.ok(prompt.dynamic.includes(`${'丰'.repeat(40)}（后略）`));
+	});
+
+	test('the name line counts against the budget: many aliases take room, a zero budget sends nothing', () => {
+		const lib = library();
+		const aliases = Array.from({ length: 20 }, (_, i) => `王五${i}号`).join(', ');
+		lib.setLore('人物/王五.md', `---\naliases: [${aliases}]\n---\n短。`);
+		const { trace } = buildContext(
+			input({ before: '王五来了。', entries: lib.entries(), matcher: lib.matcher(), limits: { ...LIMITS, matchedChars: 100 } }),
+		);
+		const wang = trace.skipped.find((e) => e.name === '王五');
+		assert.ok(wang && wang.chars > 100, `${wang?.chars} chars with its aliases`);
+
+		const none = buildContext(input({ limits: { ...LIMITS, alwaysChars: 0, matchedChars: 0 } }));
+		assert.deepEqual([none.trace.always, none.trace.matched], [[], []]);
+		assert.ok(!none.prompt.system.includes('<常驻资料>') && !none.prompt.dynamic.includes('<本章涉及的资料>'));
 	});
 
 	test('always-on entries are not repeated among matches', () => {

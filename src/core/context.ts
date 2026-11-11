@@ -73,6 +73,7 @@ export interface UsedEntry {
 	id: string;
 	name: string;
 	type?: string;
+	/** Characters the entry takes in the prompt, its name line included. */
 	chars: number;
 	truncated: boolean;
 	source: 'summary' | 'body';
@@ -116,16 +117,13 @@ function entryHeader(entry: LoreEntry): string {
 	return meta ? `【${entry.name}】（${meta}）` : `【${entry.name}】`;
 }
 
+/** `max` caps the summary or body; the budget is charged for the whole block, name line included. */
 function entryPiece(entry: LoreEntry, max: number): Piece {
 	const source = entry.summary ? 'summary' : 'body';
 	const cut = headChars(entry.summary ?? entry.body, max);
 	const text = cut.truncated ? `${cut.text}（后略）` : cut.text;
-	return {
-		block: text ? `${entryHeader(entry)}\n${text}` : entryHeader(entry),
-		chars: cut.text.length,
-		truncated: cut.truncated,
-		source,
-	};
+	const block = text ? `${entryHeader(entry)}\n${text}` : entryHeader(entry);
+	return { block, chars: block.length, truncated: cut.truncated, source };
 }
 
 function tagged(tag: string, body: string, attrs = ''): string {

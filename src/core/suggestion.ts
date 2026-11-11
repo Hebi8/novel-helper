@@ -26,9 +26,13 @@ const SENTENCE_END = '。！？!?…';
 /** May follow a sentence end and still belong to the sentence: 。」 ！』 ……） */
 const TRAILING = '。！？!?…」』”’）)】》〉"\'～~';
 const CLOSERS = '」』”’）)】》〉"\'';
+/** Ending punctuation that may already follow the cursor and must not be written twice. */
+const ENDING = `${TRAILING}.`;
 const SOFT_BREAK = '，、；：,;: —';
 const OPENING_QUOTES = '「『“';
 const CLOSING_QUOTES = '」』”';
+/** Characters of scripts written without spaces between words. */
+const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\u3000-\u303f\uff00-\uffef]/u;
 
 /** Output shorter than this is not judged yet: 「好的。」 might be the start of 「好的。以下是续写……」. */
 const MIN_JUDGED_CHARS = 12;
@@ -104,6 +108,27 @@ function sentenceEnd(text: string, final: boolean): number {
 	return NO_END;
 }
 
+/** Drops the end of `sentence` that already follows the cursor: 「你好|。」」 plus 「你好。」」 becomes 「你好」. */
+function dropRepeatedEnding(sentence: string, after: string): string {
+	let n = 0;
+	while (n < after.length && ENDING.includes(after[n])) {
+		n++;
+	}
+	for (let k = n; k > 0; k--) {
+		if (sentence.endsWith(after.slice(0, k))) {
+			return sentence.slice(0, -k);
+		}
+	}
+	return sentence;
+}
+
+/** True when the space the model wrote belongs between `before` and `text`: 「the door」 and 「and」, not 「推开门」 and 「走了」. */
+function keepsSpace(before: string, text: string): boolean {
+	const last = Array.from(before.slice(-2)).pop() ?? '';
+	const first = Array.from(text.slice(0, 2))[0] ?? '';
+	return last !== '' && !/\s/.test(last) && !UNSPACED.test(last) && !UNSPACED.test(first);
+}
+
 /** Cuts to `max` characters, preferring to end right after a comma-like break. */
 function clip(text: string, max: number): string {
 	const cut = headChars(text, max).text;
@@ -121,12 +146,15 @@ export function extractSuggestion(raw: string, options: SuggestionOptions): Sugg
 	// At a line start keep a full-width indent (　　) the model may have written.
 	const trimStart = (s: string) => (atLineStart ? s.replace(/^[\n\r\t ]+/, '') : s.replace(/^\s+/, ''));
 
-	let text = trimStart(raw.replaceAll(CURSOR, '').replace(/\r/g, ''));
+	let text = raw.replaceAll(CURSOR, '').replace(/\r/g, '');
+	let spaced = /^[ \t]/.test(text);
+	text = trimStart(text);
 	const echo = echoLength(before, text);
 	if (text && echo === text.length && !final) {
 		return PENDING;
 	}
 	if (echo >= 2 || (echo === 1 && !isContent(text[0]))) {
+		spaced = /^[ \t]/.test(text.slice(echo));
 		text = trimStart(text.slice(echo));
 	}
 	if (!text) {
@@ -155,11 +183,9 @@ export function extractSuggestion(raw: string, options: SuggestionOptions): Sugg
 		sentence = end > maxChars ? clip(text.slice(0, end), maxChars) : text.slice(0, end);
 	}
 
-	// Don't repeat closing punctuation that already follows the cursor: 「你好。|」
-	const closers = /^[」』”’）)】》〉"']+/.exec(after)?.[0];
-	if (closers && sentence.endsWith(closers)) {
-		sentence = sentence.slice(0, -closers.length);
+	sentence = dropRepeatedEnding(sentence, after).trimEnd();
+	if (!sentence) {
+		return { status: 'empty', text: '' };
 	}
-	sentence = sentence.trimEnd();
-	return sentence ? { status: 'ok', text: sentence } : { status: 'empty', text: '' };
+	return { status: 'ok', text: spaced && keepsSpace(before, sentence) ? ` ${sentence}` : sentence };
 }

@@ -20,6 +20,8 @@ export class FolderIndex implements vscode.Disposable {
 	readonly library = new Library();
 	readonly ready: Promise<void>;
 	private readonly disposables: vscode.Disposable[] = [];
+	/** Counts events per lore file, so a slow read cannot undo a later change or deletion. */
+	private readonly loreEvents = new Map<string, number>();
 
 	constructor(
 		readonly folder: vscode.WorkspaceFolder,
@@ -74,8 +76,13 @@ export class FolderIndex implements vscode.Disposable {
 			this.library.addFile(kind, path);
 			return;
 		}
+		const event = this.loreEvent(path);
 		try {
-			const entry = this.library.setLore(path, await readText(uri));
+			const content = await readText(uri);
+			if (this.loreEvents.get(path) !== event) {
+				return;
+			}
+			const entry = this.library.setLore(path, content);
 			if (entry.error) {
 				this.log.warn(`${path}: frontmatter ignored: ${entry.error}`);
 			}
@@ -87,10 +94,17 @@ export class FolderIndex implements vscode.Disposable {
 	private remove(kind: Kind, uri: vscode.Uri): void {
 		const path = this.relative(uri);
 		if (kind === 'lore') {
+			this.loreEvent(path);
 			this.library.deleteLore(path);
 		} else {
 			this.library.deleteFile(kind, path);
 		}
+	}
+
+	private loreEvent(path: string): number {
+		const event = (this.loreEvents.get(path) ?? 0) + 1;
+		this.loreEvents.set(path, event);
+		return event;
 	}
 
 	dispose(): void {
