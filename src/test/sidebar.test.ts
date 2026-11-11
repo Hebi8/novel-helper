@@ -7,7 +7,7 @@ import { nameProblem, suggestChapterName, suggestLevelName } from '../core/book'
 import { type BookNode, globFolders, Library, parseLoreEntry } from '../core/library';
 import { builtinTemplate, fillTemplate, folderForNew, groupLore, groupOf, parseAliases } from '../core/loreGroups';
 import type { Translate } from '../core/report';
-import { scaffold } from '../core/scaffold';
+import { firstNames, markerOf, scaffold, storyNames } from '../core/scaffold';
 
 const t: Translate = (message, ...args) => message.replace(/\{(\d+)\}/g, (_, i: string) => String(args[Number(i)]));
 
@@ -239,53 +239,94 @@ describe('lore groups', () => {
 
 describe('scaffold', () => {
 	const folders = {
-		chapters: ['正文', '章节'],
-		outlines: ['大纲', '细纲'],
-		summaries: ['摘要'],
-		lore: ['设定', '人物', '角色', '资料', 'lore'],
+		chapters: ['正文', '章节', 'chapters', 'manuscript'],
+		outlines: ['大纲', '细纲', 'outline', 'outlines'],
+		summaries: ['摘要', 'summary', 'summaries'],
+		lore: ['设定', '人物', '角色', '资料', '世界观', 'lore', 'characters', 'worldbuilding'],
 	};
+	const bookNames = ['全书', '总纲', 'book'];
+	const shape = (items: ReturnType<typeof scaffold>) =>
+		items.map((item) => `${item.path}${item.content === undefined ? '/' : ''}${item.firstVolume ? ' (first volume)' : ''}`);
 
-	test('the first folder of each setting, 人物 and 资料, the book outline, a style entry, a first volume', () => {
-		const items = scaffold(folders, '全书', t);
-		assert.deepEqual(items.map((item) => [item.path, item.content === undefined ? 'folder' : 'file', item.firstVolume ?? false]), [
-			['正文', 'folder', false],
-			['大纲', 'folder', false],
-			['摘要', 'folder', false],
-			['设定', 'folder', false],
-			['人物', 'folder', false],
-			['资料', 'folder', false],
-			['大纲/全书.md', 'file', false],
-			['设定/Style.md', 'file', false],
-			['正文/Volume 1/Chapter 1.md', 'file', true],
-			['大纲/Volume 1.md', 'file', true],
+	test('Chinese names: 正文, 大纲, 摘要, 设定 with 人物 and 资料, the book outline, a style entry, a first volume', () => {
+		const names = storyNames(folders, bookNames, 'zh');
+		assert.deepEqual(names, { language: 'zh', chapters: '正文', outlines: '大纲', summaries: '摘要', lore: ['设定', '人物', '资料'], book: '全书' });
+		const items = scaffold(names, t);
+		assert.deepEqual(shape(items), [
+			'正文/',
+			'大纲/',
+			'摘要/',
+			'设定/',
+			'人物/',
+			'资料/',
+			'大纲/全书.md',
+			'设定/文风.md',
+			'正文/第一卷/第1章.md (first volume)',
+			'大纲/第一卷.md (first volume)',
 		]);
 		assert.ok(items.every((item) => item.about));
+		assert.equal(items[6].content, '# 全书大纲\n\n## 一句话\n\n## 主线\n\n## 分卷\n');
+		assert.equal(items[7].content, '---\ntype: 文风\nalways: true\n---\n\n## 人称和时态\n\n## 语言\n\n## 不要写的\n');
+	});
+
+	test('English names, out of the ones the default settings recognize', () => {
+		const names = storyNames(folders, bookNames, 'en');
+		assert.deepEqual(names, { language: 'en', chapters: 'chapters', outlines: 'outlines', summaries: 'summaries', lore: ['lore', 'characters', 'worldbuilding'], book: 'book' });
+		const items = scaffold(names, t);
+		assert.deepEqual(shape(items), [
+			'chapters/',
+			'outlines/',
+			'summaries/',
+			'lore/',
+			'characters/',
+			'worldbuilding/',
+			'outlines/book.md',
+			'lore/Style.md',
+			'chapters/Volume 1/Chapter 1.md (first volume)',
+			'outlines/Volume 1.md (first volume)',
+		]);
+		assert.equal(items[6].content, '# Outline of the whole book\n\n## In one sentence\n\n## Main plot\n\n## Volumes\n');
+		assert.match(items[7].content!, /^---\ntype: Style\nalways: true\n---\n\n## Person and tense\n/);
 	});
 
 	test('what it makes is read back as a book outline, an always-on entry, and a volume with its outline', () => {
-		const items = scaffold(folders, '全书', t);
-		const lib = new Library();
-		for (const item of items.filter((i) => i.content !== undefined)) {
-			const kind = item.path.startsWith('正文/') ? 'chapter' : item.path.startsWith('大纲/') ? 'outline' : undefined;
-			if (kind) {
-				lib.addFile(kind, item.path);
-			} else {
-				lib.setLore(item.path, item.content!);
+		for (const language of ['zh', 'en'] as const) {
+			const names = storyNames(folders, bookNames, language);
+			const lib = new Library(bookNames);
+			for (const item of scaffold(names, t).filter((i) => i.content !== undefined)) {
+				const kind = item.path.startsWith(`${names.chapters}/`) ? 'chapter' : item.path.startsWith(`${names.outlines}/`) ? 'outline' : undefined;
+				if (kind) {
+					lib.addFile(kind, item.path);
+				} else {
+					lib.setLore(item.path, item.content!);
+				}
 			}
+			const style = lib.entries()[0];
+			assert.deepEqual([style.always, style.error], [true, undefined]);
+			const tree = lib.tree();
+			assert.equal(tree.outline, `${names.outlines}/${names.book}.md`);
+			const { volume, chapter } = firstNames(language);
+			assert.deepEqual(tree.children.map((v) => [v.name, v.outline, v.children.map((c) => c.name)]), [[volume, `${names.outlines}/${volume}.md`, [chapter]]]);
 		}
-		const style = lib.entries()[0];
-		assert.deepEqual([style.name, style.type, style.always, style.error], ['Style', 'Style', true, undefined]);
-		const tree = lib.tree();
-		assert.equal(tree.outline, '大纲/全书.md');
-		assert.deepEqual(tree.children.map((v) => [v.name, v.outline, v.children.map((c) => c.name)]), [['Volume 1', '大纲/Volume 1.md', ['Chapter 1']]]);
 	});
 
-	test('settings with other folders; files rooted in the workspace folder itself', () => {
-		const custom = scaffold({ chapters: ['manuscript'], outlines: ['outline'], summaries: ['summary'], lore: ['lore'] }, 'book', t);
-		assert.deepEqual(custom.filter((i) => i.content === undefined).map((i) => i.path), ['manuscript', 'outline', 'summary', 'lore']);
-		assert.ok(custom.some((i) => i.path === 'outline/book.md'));
-		const rootless = scaffold({ chapters: [''], outlines: ['大纲'], summaries: [], lore: ['设定'] }, '全书', t);
-		assert.deepEqual(rootless.filter((i) => i.content === undefined).map((i) => i.path), ['大纲', '设定']);
-		assert.ok(rootless.some((i) => i.path === 'Volume 1/Chapter 1.md'));
+	test('settings with other names: the first of the wanted language, else the first', () => {
+		const custom = { chapters: ['稿子', 'draft'], outlines: ['plan'], summaries: ['梗概'], lore: ['百科', 'wiki'] };
+		assert.deepEqual(storyNames(custom, ['总纲'], 'zh'), { language: 'zh', chapters: '稿子', outlines: 'plan', summaries: '梗概', lore: ['百科'], book: '总纲' });
+		assert.deepEqual(storyNames(custom, ['总纲'], 'en'), { language: 'en', chapters: 'draft', outlines: 'plan', summaries: '梗概', lore: ['wiki'], book: '总纲' });
+	});
+
+	test('files rooted in the story folder itself have no folder to make', () => {
+		const names = storyNames({ chapters: [''], outlines: ['大纲'], summaries: [], lore: ['设定'] }, [], 'zh');
+		assert.deepEqual(shape(scaffold(names, t)), ['大纲/', '设定/', '大纲/全书.md', '设定/文风.md', '第一卷/第1章.md (first volume)', '大纲/第一卷.md (first volume)']);
+	});
+
+	test('the marker records the names and nothing else', () => {
+		assert.deepEqual(markerOf(storyNames(folders, bookNames, 'en')), {
+			version: 1,
+			language: 'en',
+			folders: { chapters: 'chapters', outlines: 'outlines', summaries: 'summaries', lore: ['lore', 'characters', 'worldbuilding'] },
+			book: 'book',
+		});
 	});
 });

@@ -6,6 +6,7 @@
   "command.showLastRequest": "Show Last Request to the Model",
   "command.showUsage": "Show Usage and Estimated Cost",
   "command.init": "Initialize Novel Workspace",
+  "command.selectStoryFolder": "Select Story Folder",
   "command.toggleTrigger": "Switch Between Automatic and Manual Trigger",
   "command.selectProvider": "Select Provider",
   "command.setModel": "Set Model",
@@ -41,7 +42,8 @@
   "config.extraRequestBody": "Fields merged into every request body after the provider's own. `null` removes a field the provider would send, e.g. `{\"thinking\": null}`.",
   "config.usage.prices": "Your own prices by model id, in US dollars per million tokens, for models the extension has no price for or whose price has changed: `{\"my-model\": {\"input\": 0.1, \"output\": 0.5, \"cacheRead\": 0.01, \"cacheWrite\": 0.125}}`. `cacheRead` and `cacheWrite` default to `input`. Without a price, only tokens are counted.",
   "config.usage.dailyLimitUsd": "Stop automatic requests once today's estimated cost reaches this many US dollars; **Alt+\\\\** still works. `0` means no limit. Requests without a known price add nothing to the cost.",
-  "config.files.lore": "Glob patterns, relative to the workspace folder, for lore files: one entry per file. The file name is the entry name; frontmatter can set `name`, `aliases`, `type`, `always` and `summary`.",
+  "config.files.storyFolder": "The folder the story is in, as a path relative to the workspace folder. Empty is the workspace folder itself. Chapters, outlines, summaries and lore (the globs below) and `.novel-helper/templates/` are looked for inside it; files outside it are not chapters. A value that leads out of the workspace folder (an absolute path, or one with `..`) is not followed. **Novel Helper: Select Story Folder** sets this, and so does initializing.",
+  "config.files.lore": "Glob patterns, relative to the story folder (`#novelHelper.files.storyFolder#`), for lore files: one entry per file. The file name is the entry name; frontmatter can set `name`, `aliases`, `type`, `always` and `summary`.",
   "config.files.chapters": "Glob patterns for chapter files, one chapter per file. Chapters are ordered by path with numbers compared by value: 第2章 before 第10章, 第九章 before 第十二章.",
   "config.files.outlines": "Glob patterns for outlines. A chapter's outline has the chapter's file name; a volume's (or any folder level's) has the folder's name: `大纲/第一卷.md` for the chapters in `正文/第一卷/`. The whole book's is named by `#novelHelper.files.bookNames#`.",
   "config.files.summaries": "Glob patterns for summaries. A summary belongs to the chapter with the same file name; a previous chapter without one contributes its last lines instead.",
@@ -62,6 +64,7 @@
   "view.lore": "Lore",
   "view.settings": "Settings and Usage",
   "welcome.noFolder": "Novel Helper works on the files of a folder: chapters, outlines and lore entries, one Markdown file each.\n[Open Folder](command:vscode.openFolder)",
-  "welcome.empty": "There is nothing of a novel in this folder yet.\n[Initialize Novel Workspace](command:novelHelper.init)\nThat makes the folders for chapters, outlines, summaries and lore, an outline of the whole book and an always-on style entry. You tick what to create, and nothing that exists is overwritten.\nIf the novel is here under other folder names, point the settings under `novelHelper.files` at them.",
+  "welcome.empty": "There is nothing of a novel here yet.\n[Initialize Here](command:novelHelper.init)\nThat asks where the story goes and whether its folders get Chinese or English names, then makes the folders for chapters, outlines, summaries and lore, an outline of the whole book and an always-on style entry. You tick what to create, and nothing that exists is overwritten.\nIs the story in another folder of this workspace?\n[Select Story Folder](command:novelHelper.selectStoryFolder)\nIf its folders have other names, point the settings under `novelHelper.files` at them.",
+  "welcome.elsewhere": "The story folder that is set cannot be used. Click one of the story folders listed under Book, or choose another.\n[Select Story Folder](command:novelHelper.selectStoryFolder)",
   "welcome.noLore": "No lore entries yet: characters, places, things, one file each.\n[New Lore Entry](command:novelHelper.lore.new)"
 }

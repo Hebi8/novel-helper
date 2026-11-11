@@ -124,3 +124,19 @@ export async function updateSetting(key: string, value: unknown): Promise<void> 
 		config.inspect(key)?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
 	await config.update(key, value, target);
 }
+
+/** The story folder setting of a workspace folder, as written. */
+export function storyFolderSetting(scope: vscode.Uri): string {
+	return vscode.workspace.getConfiguration(`${SECTION}.files`, scope).get<string>('storyFolder', '');
+}
+
+/**
+ * Points a workspace folder's story folder at `path` ('' for the folder
+ * itself). Where the story is belongs to the workspace, so this is written
+ * to its settings, never to the user's.
+ */
+export async function setStoryFolder(folder: vscode.WorkspaceFolder, path: string): Promise<void> {
+	const target =
+		(vscode.workspace.workspaceFolders ?? []).length > 1 ? vscode.ConfigurationTarget.WorkspaceFolder : vscode.ConfigurationTarget.Workspace;
+	await vscode.workspace.getConfiguration(`${SECTION}.files`, folder.uri).update('storyFolder', path || undefined, target);
+}

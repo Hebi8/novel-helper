@@ -3,10 +3,13 @@
 // it. The API key is never shown, only whether one is saved.
 
 import * as vscode from 'vscode';
+import { isUsable, type StoryState } from '../core/story';
 import { dollars, type Totals } from '../core/usage';
 import { PROVIDERS } from '../llm/providers';
 import type { UsageStore } from '../storage/usageStore';
 import { SECTION, completionSettings, currentProvider, modelSettings, secretKey, updateSetting, usageSettings } from './config';
+import { storyLabel } from './story';
+import type { WorkspaceIndexes } from './workspaceIndex';
 
 interface Row {
 	id: string;
@@ -77,12 +80,14 @@ export class SettingsView implements vscode.TreeDataProvider<Row>, vscode.Dispos
 	private readonly disposables: vscode.Disposable[];
 
 	constructor(
+		private readonly indexes: WorkspaceIndexes,
 		private readonly secrets: vscode.SecretStorage,
 		private readonly usage: UsageStore,
 	) {
 		this.disposables = [
 			this.changed,
 			vscode.window.registerTreeDataProvider('novelHelper.settings', this),
+			indexes.onDidChange(() => this.changed.fire()),
 			vscode.workspace.onDidChangeConfiguration((event) => {
 				if (event.affectsConfiguration(SECTION)) {
 					this.changed.fire();
@@ -105,7 +110,26 @@ export class SettingsView implements vscode.TreeDataProvider<Row>, vscode.Dispos
 		const { dailyLimitUsd } = usageSettings();
 		const spent = (totals: Totals) =>
 			totals.requests ? t('{0} requests, about {1}', totals.requests, dollars(totals.cost)) : t('no requests yet');
+		const states: Record<StoryState, string> = {
+			ready: t('initialized'),
+			unmarked: t('in use, no marker'),
+			empty: t('not initialized'),
+			missing: t('does not exist'),
+			invalid: t('not a path inside the workspace folder'),
+		};
+		const indexes = await this.indexes.all();
+		// One per workspace folder: each has its own story folder.
+		const stories = indexes.map((index): Row => ({
+			id: `story:${index.folder.uri.toString()}`,
+			label: indexes.length > 1 ? t('Story folder of {0}', index.folder.name) : t('Story folder'),
+			description: `${index.story === undefined ? index.storySetting : storyLabel(index.story)} · ${states[index.state]}`,
+			icon: isUsable(index.state) ? 'book' : 'warning',
+			command: 'novelHelper.selectStoryFolder',
+			arguments: [index.folder],
+			tooltip: t('Where the story is inside the workspace folder. Click to switch to another story folder, pick or type one, or go back to the workspace folder itself.'),
+		}));
 		return [
+			...stories,
 			{
 				id: 'enabled',
 				label: t('Inline continuation'),

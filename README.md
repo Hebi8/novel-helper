@@ -10,8 +10,8 @@ Built for long Chinese web novels first (one chapter per file, hundreds of chapt
 
 ## Install
 
-1. Build `novel-helper-0.3.0.vsix` (see [Build from source](#build-from-source)).
-2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.3.0.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
+1. Build `novel-helper-0.3.1.vsix` (see [Build from source](#build-from-source)).
+2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.3.1.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
 
 ## Set an API key
 
@@ -61,13 +61,40 @@ The activity bar has a Novel Helper icon with three views. The sidebar lays out 
 - Inline buttons toggle always-on and edit the aliases; the context menu also changes the type. Each changes that one frontmatter field and nothing else in the file: other fields, their order, comments and the body stay as they are. A file without frontmatter gets one.
 - **New Lore Entry**: pick a type (or type a new one), give a name, and the file is made from a template and opened. Templates hold the frontmatter to fill in and two or three headings. To use your own, put `.novel-helper/templates/<type>.md` in the workspace (`人物.md`, say), and `default.md` for every other type; `{{name}}` and `{{type}}` in it are replaced.
 
-**Settings and Usage**: one row each, click to change: ghost text on or off, automatic or manual trigger, provider, model, API key (shown only as saved or not set, never the key), today's and this month's requests and estimated cost (click for the details), the daily limit, and what was last sent to the model.
+**Settings and Usage**: one row each, click to change: [the story folder](#the-story-folder), ghost text on or off, automatic or manual trigger, provider, model, API key (shown only as saved or not set, never the key), today's and this month's requests and estimated cost (click for the details), the daily limit, and what was last sent to the model.
 
-**Starting a book**: in an empty folder the sidebar offers **Initialize Novel Workspace** (also in the Command Palette). It lists what it can create and you tick what you want: the folders for chapters, outlines, summaries and lore (named after the first folder of each setting, plus 人物 and 资料), an outline of the whole book with headings only, an always-on style entry, and optionally a first volume (`正文/第一卷/第1章.md` and `大纲/第一卷.md`). What exists is not listed and never overwritten.
+**Starting a book**: in an empty folder the sidebar offers **Initialize Here** (**Initialize Novel Workspace** in the Command Palette). It asks where the story goes and whether its folders get Chinese or English names (see [The story folder](#the-story-folder)), then lists what it can create and you tick what you want: the folders for chapters, outlines, summaries and lore, an outline of the whole book with headings only, an always-on style entry, and optionally a first volume (`正文/第一卷/第1章.md` and `大纲/第一卷.md`). What exists is not listed and never overwritten.
+
+## The story folder
+
+The story need not sit at the root of the workspace. `novelHelper.files.storyFolder` is the story folder: a path relative to the workspace folder, empty for the workspace folder itself. The folders for chapters, outlines, summaries and lore, and `.novel-helper/templates/`, are looked for inside it; ghost text, lore cards, the sidebar, creating and renaming all work from there, and files outside it are not chapters. There is no need to edit the setting by hand: click the **Story folder** row at the top of **Settings and Usage** to switch to a story folder that was found, pick one in a folder dialog, type a path, or go back to the workspace folder.
+
+- One story folder is in use per workspace folder at a time; several books are switched between. In a multi-root workspace every folder has its own.
+- The path has to stay inside the workspace folder. An absolute path or one with `..` is not followed: the sidebar says so, and nothing outside the workspace is read.
+- Initializing first asks where the story goes (a folder that is not there is made) and whether its folders get Chinese or English names (by default the language VS Code is shown in; `正文, 大纲, 摘要, 设定, 人物, 资料` or `chapters, outlines, summaries, lore, characters, worldbuilding`, and the default settings recognize both), then points the story folder there.
+
+Initializing leaves a marker file, `.novel-helper/project.json`, in the story folder. It holds the format version and the names the story was set up with, nothing else:
+
+```json
+{
+  "version": 1,
+  "language": "zh",
+  "folders": { "chapters": "正文", "outlines": "大纲", "summaries": "摘要", "lore": ["设定", "人物", "资料"] },
+  "book": "全书"
+}
+```
+
+That is how an initialized story folder is recognized. What the sidebar shows goes by the state of the story folder:
+
+- **Usable**: it has the marker; or it has none but chapters, outlines or lore are there (set up by an earlier version, or by hand). The trees show as usual. The second kind is never prompted about; to add the marker, pick **Mark this folder as initialized** from the **Story folder** row.
+- **Not initialized**: the folder does not exist, or has nothing in it. The views explain and offer **Initialize Here**.
+- **Not usable, with other story folders in the workspace**: they are found by their markers (up to four folders deep, not in `node_modules`, `.git` or other hidden folders) and listed under **Book**; click one to switch the story folder to it.
+
+The [`examples/`](examples) folder of this repository works that way too: open the repository root as the workspace and set the story folder to `examples`.
 
 ## Lay out the workspace
 
-Open the folder that holds the novel. The default layout, all of it adjustable in settings:
+Open the folder that holds the novel (or point [the story folder](#the-story-folder) at it). The default layout, all of it adjustable in settings:
 
 ```text
 my-novel/
@@ -213,7 +240,8 @@ The counts are what the provider reported for each request. Cost is tokens times
 | `novelHelper.extraRequestBody` | `{}` | Merged into every request body; `null` removes a field |
 | `novelHelper.usage.prices` | `{}` | Your own prices by model id, in US dollars per million tokens |
 | `novelHelper.usage.dailyLimitUsd` | `0` | Stop automatic requests once the day's estimated cost reaches this; `0` for no limit |
-| `novelHelper.files.lore` | `{设定,人物,角色,资料,世界观,lore,characters,worldbuilding}/**/*.{md,txt}` | Globs relative to the workspace folder |
+| `novelHelper.files.storyFolder` | | [The story folder](#the-story-folder), as a path relative to the workspace folder; empty is the workspace folder itself |
+| `novelHelper.files.lore` | `{设定,人物,角色,资料,世界观,lore,characters,worldbuilding}/**/*.{md,txt}` | Globs relative to the story folder |
 | `novelHelper.files.chapters` | `{正文,章节,chapters,manuscript}/**/*.{md,txt}` | |
 | `novelHelper.files.outlines` | `{大纲,细纲,outline,outlines}/**/*.{md,txt}` | |
 | `novelHelper.files.summaries` | `{摘要,summary,summaries}/**/*.{md,txt}` | |
@@ -248,7 +276,7 @@ npm test
 npx @vscode/vsce package
 ```
 
-`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, sentence cutting, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), and the model client against a local fake server.
+`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, the story folder's path and state, the marker file, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, sentence cutting, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), and the model client against a local fake server.
 
 ## License
 

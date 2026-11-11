@@ -6,6 +6,7 @@
   "command.showLastRequest": "查看上次发给模型的内容",
   "command.showUsage": "查看用量和估算花费",
   "command.init": "初始化小说工作区",
+  "command.selectStoryFolder": "选择故事目录",
   "command.toggleTrigger": "切换自动 / 手动触发",
   "command.selectProvider": "选择服务商",
   "command.setModel": "设置模型",
@@ -41,7 +42,8 @@
   "config.extraRequestBody": "合并进每次请求体的字段，在预设字段之后合并。值写 `null` 可以去掉预设会发的字段，比如 `{\"thinking\": null}`。",
   "config.usage.prices": "自己填的单价，按模型名，单位是每百万 token 多少美元。扩展不知道价格的模型、或者价格变了的模型用它：`{\"my-model\": {\"input\": 0.1, \"output\": 0.5, \"cacheRead\": 0.01, \"cacheWrite\": 0.125}}`。`cacheRead`、`cacheWrite` 不写就按 `input` 算。没有单价的模型只统计 token 数。",
   "config.usage.dailyLimitUsd": "今天的估算花费到这个数（美元）就停止自动请求，按 **Alt+\\\\** 仍然可以要一条。`0` 是不限。没有单价的请求不计入花费。",
-  "config.files.lore": "设定条目文件的 glob，相对于工作区文件夹，一条一个文件。条目名默认是文件名；frontmatter 里可以写 `name`、`aliases`、`type`、`always`、`summary`。",
+  "config.files.storyFolder": "故事放在哪个文件夹，写相对于工作区文件夹的路径。留空就是工作区文件夹本身。正文、大纲、摘要、设定（下面几个 glob）和 `.novel-helper/templates/` 都在它里面找；它外面的文件不算章节。会跳出工作区文件夹的值（绝对路径、带 `..` 的路径）不会被采用。用 **Novel Helper: 选择故事目录** 来设，初始化时也会设。",
+  "config.files.lore": "设定条目文件的 glob，相对于故事目录（`#novelHelper.files.storyFolder#`），一条一个文件。条目名默认是文件名；frontmatter 里可以写 `name`、`aliases`、`type`、`always`、`summary`。",
   "config.files.chapters": "章节文件的 glob，一章一个文件。按路径排序，数字按大小比：第2章 在 第10章 前面，第九章 在 第十二章 前面。",
   "config.files.outlines": "大纲文件的 glob。和章节同名的是那一章的大纲；和文件夹同名的是那一卷（或任何一层文件夹）的大纲：`大纲/第一卷.md` 对应 `正文/第一卷/` 里的章节。全书大纲的文件名见 `#novelHelper.files.bookNames#`。",
   "config.files.summaries": "章节摘要的 glob。摘要和同名的章节对应；前面的章节没有摘要时，用那一章的结尾代替。",
@@ -62,6 +64,7 @@
   "view.lore": "设定",
   "view.settings": "设置和用量",
   "welcome.noFolder": "小说助手管的是一个文件夹里的文件：章节、大纲、设定条目，各是一个 Markdown 文件。先打开一个文件夹。\n[打开文件夹](command:vscode.openFolder)",
-  "welcome.empty": "这个文件夹里还没有小说的东西。\n[初始化小说工作区](command:novelHelper.init)\n会建好正文、大纲、摘要、设定这些文件夹，一份全书大纲和一条常驻的文风条目。建哪些由你勾选，已经有的不会覆盖。\n如果小说已经在这里、只是文件夹名字不一样，去设置里改 `novelHelper.files` 下面的几项。",
+  "welcome.empty": "这里还没有小说的东西。\n[在这里初始化](command:novelHelper.init)\n会先问故事放在哪个目录、目录用中文名还是英文名，然后建好正文、大纲、摘要、设定这些文件夹，一份全书大纲和一条常驻的文风条目。建哪些由你勾选，已经有的不会覆盖。\n故事在这个工作区的别的文件夹里？\n[选择故事目录](command:novelHelper.selectStoryFolder)\n如果只是文件夹名字不一样，去设置里改 `novelHelper.files` 下面的几项。",
+  "welcome.elsewhere": "现在设的故事目录用不了。在「书的结构」里点一个列出来的故事空间，或者另选一个。\n[选择故事目录](command:novelHelper.selectStoryFolder)",
   "welcome.noLore": "还没有设定条目：人物、地点、物件，一条一个文件。\n[新建设定条目](command:novelHelper.lore.new)"
 }

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { renderReport, renderUsage, type RunRecord } from './core/report';
+import { isUsable } from './core/story';
 import { costOf, ratesFor } from './core/usage';
 import { PROVIDERS, type ProviderId } from './llm/providers';
 import { BookView } from './vscode/bookView';
@@ -10,6 +11,7 @@ import { LoreProviders } from './vscode/loreProviders';
 import { LoreView } from './vscode/loreView';
 import { SettingsView, selectProvider, setDailyLimit, setModel, toggleEnabled, toggleTrigger } from './vscode/settingsView';
 import { StatusBar } from './vscode/statusBar';
+import { selectStoryFolder } from './vscode/story';
 import { UsageStore } from './storage/usageStore';
 import { WorkspaceIndexes } from './vscode/workspaceIndex';
 
@@ -82,10 +84,12 @@ export function activate(context: vscode.ExtensionContext): void {
 			vscode.l10n.t,
 		);
 	};
-	// The sidebar's welcome text is for a folder with nothing of a novel in it; it waits for the first scan.
+	// What the sidebar's welcome text goes by, once the folders are scanned: `ready` when a story folder can be
+	// used, `elsewhere` when none can but initialized ones were found in the workspace, else `empty`.
 	const describeWorkspace = async () => {
 		const all = await indexes.all();
-		await vscode.commands.executeCommand('setContext', 'novelHelper.workspace', all.every((index) => index.library.empty) ? 'empty' : 'ready');
+		const state = all.some((index) => isUsable(index.state)) ? 'ready' : all.some((index) => index.others.length) ? 'elsewhere' : 'empty';
+		await vscode.commands.executeCommand('setContext', 'novelHelper.workspace', state);
 	};
 	void usage.load();
 	void describeWorkspace();
@@ -96,7 +100,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		status,
 		new BookView(indexes),
 		new LoreView(indexes),
-		new SettingsView(context.secrets, usage),
+		new SettingsView(indexes, context.secrets, usage),
 		indexes.onDidChange(describeWorkspace),
 		reportChanged,
 		usage.onDidChange(() => reportChanged.fire(USAGE_URI)),
@@ -114,6 +118,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand('novelHelper.setModel', setModel),
 		vscode.commands.registerCommand('novelHelper.setDailyLimit', setDailyLimit),
 		vscode.commands.registerCommand('novelHelper.init', () => initWorkspace(indexes)),
+		vscode.commands.registerCommand('novelHelper.selectStoryFolder', (folder?: vscode.WorkspaceFolder) => selectStoryFolder(indexes, folder)),
 		vscode.commands.registerCommand('novelHelper.setApiKey', (provider?: ProviderId) =>
 			setApiKey(context.secrets, provider),
 		),
@@ -138,6 +143,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.workspace.onDidChangeWorkspaceFolders(() => indexes.reset(vscode.workspace.workspaceFolders ?? [])),
 		// Renaming or deleting a folder (a volume, an arc) moves many files at once: index again on next use.
 		vscode.workspace.onDidRenameFiles(() => indexes.reset()),
+		vscode.workspace.onDidCreateFiles(() => indexes.resetMissing()),
 		vscode.workspace.onDidDeleteFiles(() => indexes.reset()),
 		context.secrets.onDidChange(() => status.setProblem(undefined)),
 	);

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 (2026-11-12)
+
+- The story can live in a sub-folder: `novelHelper.files.storyFolder` (a path inside the workspace folder; empty is the folder itself). Everything works from there; the **Story folder** row in the sidebar switches it.
+- Initializing asks where the story goes and whether its folders get Chinese or English names, and leaves a marker (`.novel-helper/project.json`) by which initialized story folders are found and offered when the current one cannot be used. Folders set up before work as they did, without a marker.
+
 ## 0.3.0 (2026-11-12)
 
 - A sidebar: a Novel Helper icon in the activity bar with three views. It lays out the structure and changes the fixed fields; the content is written in the Markdown files it opens.

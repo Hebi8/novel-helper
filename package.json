@@ -2,7 +2,7 @@
   "name": "novel-helper",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "dreaife",
   "license": "MIT",
   "repository": {
@@ -101,6 +101,11 @@
         "view": "novelHelper.lore",
         "contents": "%welcome.noLore%",
         "when": "workspaceFolderCount > 0 && novelHelper.workspace == ready"
+      },
+      {
+        "view": "novelHelper.lore",
+        "contents": "%welcome.elsewhere%",
+        "when": "workspaceFolderCount > 0 && novelHelper.workspace == elsewhere"
       }
     ],
     "commands": [
@@ -127,6 +132,11 @@
       {
         "command": "novelHelper.init",
         "title": "%command.init%",
+        "category": "Novel Helper"
+      },
+      {
+        "command": "novelHelper.selectStoryFolder",
+        "title": "%command.selectStoryFolder%",
         "category": "Novel Helper"
       },
       {
@@ -225,7 +235,12 @@
         {
           "command": "novelHelper.init",
           "when": "view == novelHelper.book",
-          "group": "1_init"
+          "group": "1_init@1"
+        },
+        {
+          "command": "novelHelper.selectStoryFolder",
+          "when": "view == novelHelper.book",
+          "group": "1_init@2"
         },
         {
           "command": "novelHelper.lore.new",
@@ -481,6 +496,12 @@
           "default": 0,
           "minimum": 0,
           "markdownDescription": "%config.usage.dailyLimitUsd%"
+        },
+        "novelHelper.files.storyFolder": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "%config.files.storyFolder%"
         },
         "novelHelper.files.lore": {
           "type": "array",

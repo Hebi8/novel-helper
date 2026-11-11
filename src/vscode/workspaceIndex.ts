@@ -1,9 +1,12 @@
 // Keeps one Library per workspace folder in sync with the files on disk:
-// a full scan when the folder is first needed, then file watchers.
+// a full scan when the folder is first needed, then file watchers. The files
+// are those of the folder's story folder, and paths are relative to it.
 
 import * as vscode from 'vscode';
 import { type FileKind, globFolders, globRootDepth, Library } from '../core/library';
-import { filePatterns } from './config';
+import { isUsable, type Marker, normalizeStoryFolder, storyState, type StoryState } from '../core/story';
+import { filePatterns, storyFolderSetting } from './config';
+import { findStories, readMarker } from './story';
 
 /** Text of a file: the editor's copy if it is open (possibly unsaved), else the file on disk. */
 export async function readText(uri: vscode.Uri): Promise<string> {
@@ -26,13 +29,37 @@ export class FolderIndex implements vscode.Disposable {
 	/** After the first scan, every change to the library is announced. */
 	private loaded = false;
 
+	/** The story folder setting as written. */
+	readonly storySetting: string;
+	/** The story folder below the workspace folder, '' for the folder itself; undefined when the setting is not a path inside it. */
+	readonly story: string | undefined;
+	/** The story folder: what every path of the library is relative to. */
+	readonly storyUri: vscode.Uri;
+	private exists = false;
+	/** What the story folder's marker file holds, if it has one. */
+	marker?: Marker;
+	/** Other initialized story folders of the workspace folder; looked for only while this one cannot be used. */
+	others: string[] = [];
+
 	constructor(
 		readonly folder: vscode.WorkspaceFolder,
 		private readonly log: vscode.LogOutputChannel,
 		private readonly onChange: () => void,
 	) {
 		this.library = new Library(filePatterns(folder.uri).bookNames);
+		this.storySetting = storyFolderSetting(folder.uri);
+		this.story = normalizeStoryFolder(this.storySetting);
+		this.storyUri = this.story ? vscode.Uri.joinPath(folder.uri, ...this.story.split('/')) : folder.uri;
 		this.ready = this.load();
+	}
+
+	get state(): StoryState {
+		return storyState({ valid: this.story !== undefined, exists: this.exists, marked: this.marker !== undefined, hasFiles: !this.library.empty });
+	}
+
+	/** The story folder was not there when it was looked for; it may have been made since. */
+	get missing(): boolean {
+		return this.loaded && this.state === 'missing';
 	}
 
 	/** The folders the settings root a kind of file in, in the order written: 正文, 章节… */
@@ -47,16 +74,41 @@ export class FolderIndex implements vscode.Disposable {
 		return this.library.roots(kind)[0] ?? this.folders(kind)[0] ?? '';
 	}
 
-	/** `/`-separated path relative to the folder root. */
-	relative(uri: vscode.Uri): string {
-		return uri.path.slice(this.folder.uri.path.replace(/\/$/, '').length + 1);
+	/** `/`-separated path relative to the story folder; undefined for a file that is not inside it. */
+	relative(uri: vscode.Uri): string | undefined {
+		const root = this.storyUri.path.replace(/\/$/, '');
+		return this.story !== undefined && uri.scheme === this.storyUri.scheme && uri.path.startsWith(`${root}/`)
+			? uri.path.slice(root.length + 1)
+			: undefined;
 	}
 
 	uri(relative: string): vscode.Uri {
-		return vscode.Uri.joinPath(this.folder.uri, ...relative.split('/'));
+		return vscode.Uri.joinPath(this.storyUri, ...relative.split('/'));
 	}
 
 	private async load(): Promise<void> {
+		// A setting that points out of the workspace folder is not followed: nothing is read.
+		if (this.story !== undefined) {
+			this.exists = await vscode.workspace.fs.stat(this.storyUri).then(
+				(stat) => stat.type === vscode.FileType.Directory,
+				() => false,
+			);
+		}
+		if (this.exists) {
+			this.marker = await readMarker(this.storyUri);
+			await this.scan();
+		}
+		if (!isUsable(this.state)) {
+			this.others = await findStories(this.folder, this.story);
+		}
+		this.loaded = true;
+		this.log.info(
+			`Indexed ${this.folder.name}${this.story ? `/${this.story}` : ''} (${this.state}): ` +
+				`${this.library.entries().length} lore entries, ${this.library.chapterList().length} chapters`,
+		);
+	}
+
+	private async scan(): Promise<void> {
 		const patterns = filePatterns(this.folder.uri);
 		const groups: Array<[Kind, string[]]> = [
 			['lore', patterns.lore],
@@ -67,7 +119,7 @@ export class FolderIndex implements vscode.Disposable {
 		await Promise.all(
 			groups.flatMap(([kind, globs]) =>
 				globs.map(async (glob) => {
-					const pattern = new vscode.RelativePattern(this.folder, glob);
+					const pattern = new vscode.RelativePattern(this.storyUri, glob);
 					const rootDepth = globRootDepth(glob);
 					const watcher = vscode.workspace.createFileSystemWatcher(pattern);
 					this.disposables.push(
@@ -83,10 +135,6 @@ export class FolderIndex implements vscode.Disposable {
 				}),
 			),
 		);
-		this.loaded = true;
-		this.log.info(
-			`Indexed ${this.folder.name}: ${this.library.entries().length} lore entries, ${this.library.chapterList().length} chapters`,
-		);
 	}
 
 	private changed(): void {
@@ -96,7 +144,8 @@ export class FolderIndex implements vscode.Disposable {
 	}
 
 	private async add(kind: Kind, uri: vscode.Uri, rootDepth: number): Promise<void> {
-		const path = this.relative(uri);
+		// The watchers are rooted in the story folder: what they report is inside it.
+		const path = this.relative(uri)!;
 		if (kind !== 'lore') {
 			this.library.addFile(kind, path, rootDepth);
 			this.changed();
@@ -119,7 +168,7 @@ export class FolderIndex implements vscode.Disposable {
 	}
 
 	private remove(kind: Kind, uri: vscode.Uri): void {
-		const path = this.relative(uri);
+		const path = this.relative(uri)!;
 		if (kind === 'lore') {
 			this.loreEvent(path);
 			this.library.deleteLore(path);
@@ -142,7 +191,7 @@ export class FolderIndex implements vscode.Disposable {
 
 export interface Located {
 	index: FolderIndex;
-	/** Path relative to the folder; for unsaved documents, their name. */
+	/** Path relative to the story folder; for unsaved documents and files outside it, their own path. */
 	path: string;
 }
 
@@ -188,7 +237,15 @@ export class WorkspaceIndexes implements vscode.Disposable {
 			return undefined;
 		}
 		const index = await this.get(folder);
-		return { index, path: document.isUntitled ? document.uri.path : index.relative(document.uri) };
+		// A file outside the story folder is no chapter: like an unsaved one, it goes by its own path.
+		return { index, path: (document.isUntitled ? undefined : index.relative(document.uri)) ?? document.uri.path };
+	}
+
+	/** After files were created: a story folder that was missing may be there now. */
+	resetMissing(): void {
+		if ([...this.folders.values()].some((index) => index.missing)) {
+			this.reset();
+		}
 	}
 
 	/** Drops indexes so they are rebuilt on next use (after settings change or folders are removed). */

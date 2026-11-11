@@ -5,19 +5,30 @@ import * as vscode from 'vscode';
 import type { NameProblem } from '../core/book';
 import type { FolderIndex, WorkspaceIndexes } from './workspaceIndex';
 
-/** The index of the only open folder, or of the folder the writer is in or picks; tells them to open one if there is none. */
-export async function pickIndex(indexes: WorkspaceIndexes): Promise<FolderIndex | undefined> {
+/** The only open folder, or the one the writer is in or picks; tells them to open one if there is none. */
+export async function pickFolder(): Promise<vscode.WorkspaceFolder | undefined> {
 	const folders = vscode.workspace.workspaceFolders ?? [];
 	if (folders.length === 0) {
 		void vscode.window.showInformationMessage(vscode.l10n.t('Open a folder first: Novel Helper works on the files of a folder.'));
 		return undefined;
 	}
 	const editor = vscode.window.activeTextEditor;
-	const folder =
-		folders.length === 1
-			? folders[0]
-			: ((editor && vscode.workspace.getWorkspaceFolder(editor.document.uri)) ?? (await vscode.window.showWorkspaceFolderPick()));
-	return folder && indexes.get(folder);
+	return folders.length === 1
+		? folders[0]
+		: ((editor && vscode.workspace.getWorkspaceFolder(editor.document.uri)) ?? (await vscode.window.showWorkspaceFolderPick()));
+}
+
+/** The index of that folder, to make files in. Not when its story folder setting is no place to write to. */
+export async function pickIndex(indexes: WorkspaceIndexes): Promise<FolderIndex | undefined> {
+	const folder = await pickFolder();
+	const index = folder && (await indexes.get(folder));
+	if (index?.state === 'invalid') {
+		void vscode.window.showErrorMessage(
+			vscode.l10n.t('The story folder setting "{0}" is not a path inside the workspace folder. Run "Novel Helper: Select Story Folder" first.', index.storySetting),
+		);
+		return undefined;
+	}
+	return index;
 }
 
 export function joinPath(...parts: string[]): string {

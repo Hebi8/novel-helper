@@ -5,7 +5,11 @@
 import * as vscode from 'vscode';
 import { nameProblem, suggestChapterName, suggestLevelName } from '../core/book';
 import type { BookNode } from '../core/library';
+import { firstNames } from '../core/scaffold';
+import { isUsable } from '../core/story';
+import { setStoryFolder } from './config';
 import { createAndOpen, joinPath, pickIndex, problemText } from './files';
+import { displayNamesLanguage, storyLabel } from './story';
 import type { FolderIndex, WorkspaceIndexes } from './workspaceIndex';
 
 export interface BookItem {
@@ -13,6 +17,27 @@ export interface BookItem {
 	node: BookNode;
 	/** Undefined for the book itself. */
 	parent?: BookItem;
+}
+
+/**
+ * Shown in place of a book while the story folder cannot be used: another
+ * story folder found in the workspace folder, to switch to; or, without
+ * `story`, the way to initialize the current one.
+ */
+interface StoryItem {
+	index: FolderIndex;
+	story?: string;
+}
+
+type Item = BookItem | StoryItem;
+
+function isBook(item: Item): item is BookItem {
+	return 'node' in item;
+}
+
+/** The names a story's first volume and first chapter get: in the language it was set up in, else the display language. */
+function firstNamesOf(index: FolderIndex): { volume: string; chapter: string } {
+	return firstNames(index.marker?.language ?? displayNamesLanguage());
 }
 
 function childrenOf(item: BookItem): BookItem[] {
@@ -46,10 +71,10 @@ function count(node: BookNode): number {
 	return node.kind === 'chapter' ? 1 : node.children.reduce((n, child) => n + count(child), 0);
 }
 
-export class BookView implements vscode.TreeDataProvider<BookItem>, vscode.Disposable {
+export class BookView implements vscode.TreeDataProvider<Item>, vscode.Disposable {
 	private readonly changed = new vscode.EventEmitter<void>();
 	readonly onDidChangeTreeData = this.changed.event;
-	private readonly view: vscode.TreeView<BookItem>;
+	private readonly view: vscode.TreeView<Item>;
 	private readonly disposables: vscode.Disposable[];
 	/** The chapter the tree last moved its selection to. */
 	private revealed?: string;
@@ -62,9 +87,11 @@ export class BookView implements vscode.TreeDataProvider<BookItem>, vscode.Dispo
 			this.view,
 			indexes.onDidChange(() => {
 				this.changed.fire();
+				void this.describe();
 				// A chapter just made is opened before the index has it.
 				void this.revealActive();
 			}),
+			vscode.commands.registerCommand('novelHelper.book.useStory', (item: StoryItem) => setStoryFolder(item.index.folder, item.story ?? '')),
 			vscode.window.onDidChangeActiveTextEditor(() => {
 				this.revealed = undefined;
 				return this.revealActive();
@@ -76,24 +103,78 @@ export class BookView implements vscode.TreeDataProvider<BookItem>, vscode.Dispo
 			command('novelHelper.book.newLevel', (item) => this.newLevel(item)),
 			command('novelHelper.book.rename', (item) => this.rename(item)),
 		];
+		void this.describe();
 	}
 
-	/** One book per open folder that has anything of a novel in it. */
+	/** One book per open folder whose story folder can be used. */
 	private async books(): Promise<BookItem[]> {
 		const indexes = await this.indexes.all();
-		return indexes.filter((index) => !index.library.empty).map((index) => ({ index, node: index.library.tree() }));
+		return indexes.filter((index) => isUsable(index.state)).map((index) => ({ index, node: index.library.tree() }));
 	}
 
-	async getChildren(item?: BookItem): Promise<BookItem[]> {
-		return item ? childrenOf(item) : this.books();
+	/**
+	 * A folder's book; or, while its story folder cannot be used, the story
+	 * folders found in it and the way to initialize; or nothing, which
+	 * leaves the view to its welcome text.
+	 */
+	async getChildren(item?: Item): Promise<Item[]> {
+		if (item) {
+			return isBook(item) ? childrenOf(item) : [];
+		}
+		const indexes = await this.indexes.all();
+		return indexes.flatMap((index): Item[] => {
+			if (isUsable(index.state)) {
+				return [{ index, node: index.library.tree() }];
+			}
+			return index.others.length ? [...index.others.map((story) => ({ index, story })), { index }] : [];
+		});
 	}
 
-	getParent(item: BookItem): BookItem | undefined {
-		return item.parent;
+	getParent(item: Item): Item | undefined {
+		return isBook(item) ? item.parent : undefined;
 	}
 
-	getTreeItem({ index, node }: BookItem): vscode.TreeItem {
+	/** Above the tree: which story folder cannot be used and why. Nothing while all is well. */
+	private async describe(): Promise<void> {
 		const t = vscode.l10n.t;
+		const lines = (await this.indexes.all()).flatMap((index) => {
+			const state = index.state;
+			const found = (why: string) =>
+				index.others.length ? t('{0} Story folders found in this workspace are listed below: click one to use it.', why) : why;
+			if (state === 'invalid') {
+				return [found(t('The story folder setting "{0}" is not a path inside the workspace folder.', index.storySetting))];
+			}
+			if (state === 'missing') {
+				return [found(t('The story folder {0} does not exist.', index.story!))];
+			}
+			// The workspace folder itself with nothing in it is what the welcome text is about.
+			return state === 'empty' && (index.story || index.others.length)
+				? [found(t('The story folder {0} has nothing of a novel in it yet.', storyLabel(index.story!)))]
+				: [];
+		});
+		this.view.message = lines.join(' ') || undefined;
+	}
+
+	getTreeItem(element: Item): vscode.TreeItem {
+		const t = vscode.l10n.t;
+		if (!isBook(element)) {
+			const folder = element.index.folder.uri.toString();
+			if (element.story === undefined) {
+				const item = new vscode.TreeItem(t('Initialize a story folder…'));
+				item.id = `${folder}#init`;
+				item.iconPath = new vscode.ThemeIcon('add');
+				item.command = { command: 'novelHelper.init', title: t('Initialize a story folder…') };
+				return item;
+			}
+			const item = new vscode.TreeItem(storyLabel(element.story));
+			item.id = `${folder}#story:${element.story}`;
+			item.iconPath = new vscode.ThemeIcon('book');
+			item.description = t('initialized story folder: click to use it');
+			item.contextValue = 'story';
+			item.command = { command: 'novelHelper.book.useStory', title: t('Use as Story Folder'), arguments: [element] };
+			return item;
+		}
+		const { index, node } = element;
 		const state =
 			node.kind === 'chapter'
 				? vscode.TreeItemCollapsibleState.None
@@ -121,7 +202,8 @@ export class BookView implements vscode.TreeDataProvider<BookItem>, vscode.Dispo
 		} else {
 			item.iconPath = new vscode.ThemeIcon('book');
 			const folders = vscode.workspace.workspaceFolders ?? [];
-			item.description = [folders.length > 1 ? index.folder.name : '', t('{0} chapters', count(node)), outline].filter(Boolean).join(' · ');
+			const place = [folders.length > 1 ? index.folder.name : '', index.story].filter(Boolean).join('/');
+			item.description = [place, t('{0} chapters', count(node)), outline].filter(Boolean).join(' · ');
 		}
 		item.tooltip = lines.join('\n');
 		return item;
@@ -137,8 +219,9 @@ export class BookView implements vscode.TreeDataProvider<BookItem>, vscode.Dispo
 			return;
 		}
 		for (const book of await this.books()) {
-			if (vscode.workspace.getWorkspaceFolder(uri) === book.index.folder) {
-				const chapter = findChapter(book, book.index.relative(uri));
+			const path = book.index.relative(uri);
+			if (path !== undefined && vscode.workspace.getWorkspaceFolder(uri) === book.index.folder) {
+				const chapter = findChapter(book, path);
 				if (chapter) {
 					this.revealed = uri.toString();
 					await this.view.reveal(chapter, { select: true, focus: false, expand: true });
@@ -174,11 +257,11 @@ export class BookView implements vscode.TreeDataProvider<BookItem>, vscode.Dispo
 			if (!book) {
 				return;
 			}
-			const editor = vscode.window.activeTextEditor;
-			item = (editor && findChapter(book, book.index.relative(editor.document.uri))) ?? lastLevel(book);
+			const active = vscode.window.activeTextEditor && book.index.relative(vscode.window.activeTextEditor.document.uri);
+			item = (active === undefined ? undefined : findChapter(book, active)) ?? lastLevel(book);
 		}
 		const level = item.node.kind === 'chapter' ? item.parent! : item;
-		const suggestion = suggestChapterName(bookOf(level).node, level.node, `${vscode.l10n.t('Chapter 1')} `);
+		const suggestion = suggestChapterName(bookOf(level).node, level.node, `${firstNamesOf(level.index).chapter} `);
 		const taken = level.node.children.filter((child) => child.kind === 'chapter').map((child) => child.name);
 		const name = await vscode.window.showInputBox({
 			title: vscode.l10n.t('New chapter in {0}', level.node.name),
@@ -204,7 +287,7 @@ export class BookView implements vscode.TreeDataProvider<BookItem>, vscode.Dispo
 			return;
 		}
 		const book = bookOf(parent).node;
-		const suggestion = suggestLevelName(book, parent.node, `${vscode.l10n.t('Volume 1')} `);
+		const suggestion = suggestLevelName(book, parent.node, `${firstNamesOf(parent.index).volume} `);
 		const taken = parent.node.children.filter((child) => child.kind === 'level').map((child) => child.name);
 		const level = await vscode.window.showInputBox({
 			title: vscode.l10n.t('New volume or arc in {0}', parent.node.name),
@@ -216,7 +299,7 @@ export class BookView implements vscode.TreeDataProvider<BookItem>, vscode.Dispo
 		if (level === undefined) {
 			return;
 		}
-		const first = suggestChapterName(book, { ...parent.node, children: [] }, `${vscode.l10n.t('Chapter 1')} `);
+		const first = suggestChapterName(book, { ...parent.node, children: [] }, `${firstNamesOf(parent.index).chapter} `);
 		const chapter = await vscode.window.showInputBox({
 			title: vscode.l10n.t('First chapter of {0}', level.trim()),
 			prompt: vscode.l10n.t('A volume or arc shows up in the tree once it has a chapter.'),
