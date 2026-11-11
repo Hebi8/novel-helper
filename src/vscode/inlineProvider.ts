@@ -168,6 +168,11 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 			rates: ratesFor(model.model, time, model.pricing, usageSettings().prices),
 		};
 
+		// Other windows may have spent up to the limit since this one last looked, or this one while the request was being prepared.
+		if (!manual && ((await this.hooks.status.overLimitNow()) || token.isCancellationRequested)) {
+			return undefined;
+		}
+
 		const controller = new AbortController();
 		const cancel = token.onCancellationRequested(() => controller.abort());
 		this.running.add(controller);
@@ -178,9 +183,13 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 			after: lineAfter,
 			maxChars: settings.maxSuggestionChars,
 			onUsage: (usage) => this.hooks.recordUsage(run, usage),
+			// The ghost text can be showing while the connection is still open for the usage:
+			// until it is closed, typing on or switching ghost text off has to be able to close it.
+			onClose: () => {
+				this.running.delete(controller);
+				cancel.dispose();
+			},
 		});
-		this.running.delete(controller);
-		cancel.dispose();
 		this.hooks.status.end(outcome.status === 'error' ? outcome.error : undefined);
 		if (outcome.status === 'cancelled') {
 			return undefined;

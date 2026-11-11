@@ -10,13 +10,15 @@ Built for long Chinese web novels first (one chapter per file, hundreds of chapt
 
 ## Install
 
-1. Build `novel-helper-0.2.0.vsix` (see [Build from source](#build-from-source)).
-2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.2.0.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
+1. Build `novel-helper-0.3.0.vsix` (see [Build from source](#build-from-source)).
+2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.3.0.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
 
 ## Set an API key
 
 1. Command Palette → **Novel Helper: Set or Clear API Key** → pick the provider → paste the key.
 2. For a provider other than Anthropic, set `novelHelper.provider`.
+
+Both can also be done by clicking through **Settings and Usage** in [the sidebar](#the-sidebar).
 
 The key is kept in VS Code's secret storage (the system keychain), never in settings. To remove it, run the same command and submit an empty box.
 
@@ -40,6 +42,28 @@ Pick another model with `novelHelper.<provider>.model`. When a model needs diffe
 For Ollama, set `novelHelper.provider` to `openaiCompatible` and `novelHelper.openaiCompatible.model` to the model name; the default base URL `http://localhost:11434/v1` already points at it. No key is needed.
 
 The OpenAI provider marks cache breakpoints the way GPT-5.6 and later expect (see [What it costs](#what-it-costs)). Earlier OpenAI models do not take those fields: use `openaiCompatible` with the base URL `https://api.openai.com/v1` for them.
+
+## The sidebar
+
+The activity bar has a Novel Helper icon with three views. The sidebar lays out the structure and changes the fixed fields; the content is always written in the Markdown file it opens.
+
+**Book**: book → volume → arc → chapter, as one tree: the chapters folder as it is (in a flat workspace the chapters sit right under the book).
+
+- Click a chapter to open it; the chapter being edited is selected in the tree.
+- Every node says whether it has an outline and a summary: `outline ✓ · summary ✗`. The inline buttons open its outline (and, for a chapter, its summary); one that is missing is first created, empty, where it belongs. The book node at the top opens the outline of the whole book.
+- **New Chapter** suggests the next number in the pattern of the chapters before it: `第12章 ` after `第11章 雾里来信`, `第十二章` after `第十一章`, `Chapter 10 - ` after `Chapter 9 - Fog`; add the title and press Enter. **New Volume or Arc** asks for its name and then for the name of its first chapter (a volume is a folder that holds chapters, so it shows up once it has one).
+- **Rename** in the context menu of a volume, arc or chapter renames its outline and summary with it, and the folders of that name in the outline and summary folders: one step, and Undo takes it back.
+- There is no delete and no drag and drop; delete and move files in the Explorer and the tree follows.
+
+**Lore**: entries grouped by type (`type` in the frontmatter; without one, the top folder the file is in).
+
+- Click an entry to open it. Its line says whether it is always on and what its aliases are.
+- Inline buttons toggle always-on and edit the aliases; the context menu also changes the type. Each changes that one frontmatter field and nothing else in the file: other fields, their order, comments and the body stay as they are. A file without frontmatter gets one.
+- **New Lore Entry**: pick a type (or type a new one), give a name, and the file is made from a template and opened. Templates hold the frontmatter to fill in and two or three headings. To use your own, put `.novel-helper/templates/<type>.md` in the workspace (`人物.md`, say), and `default.md` for every other type; `{{name}}` and `{{type}}` in it are replaced.
+
+**Settings and Usage**: one row each, click to change: ghost text on or off, automatic or manual trigger, provider, model, API key (shown only as saved or not set, never the key), today's and this month's requests and estimated cost (click for the details), the daily limit, and what was last sent to the model.
+
+**Starting a book**: in an empty folder the sidebar offers **Initialize Novel Workspace** (also in the Command Palette). It lists what it can create and you tick what you want: the folders for chapters, outlines, summaries and lore (named after the first folder of each setting, plus 人物 and 资料), an outline of the whole book with headings only, an always-on style entry, and optionally a first volume (`正文/第一卷/第1章.md` and `大纲/第一卷.md`). What exists is not listed and never overwritten.
 
 ## Lay out the workspace
 
@@ -209,7 +233,7 @@ Sizes are in characters; one Chinese character counts as one. The `files` and `c
 
 ## Try the example
 
-1. Open the [`examples/`](examples) folder of this repository as a workspace and set a key.
+1. Open the [`examples/`](examples) folder of this repository as a workspace and set a key. Click the Novel Helper icon in the activity bar to see the book and the lore as trees.
 2. Open `正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md`, put the cursor at the end of the last line and wait for the gray text.
 3. Run **Show Last Request to the Model** to see what went in: which file served as the outline of the book, of 「第一卷 雾港」, of 「第一幕 来信」 and of the chapter; 「陆青山」 matched as itself, not as 「陆青」; 潮汐钟 came in through the chapter's outline.
 4. Ask for another suggestion, then run **Show Usage and Estimated Cost** to see how much of the second request's input was read from cache.
@@ -224,7 +248,7 @@ npm test
 npx @vscode/vsce package
 ```
 
-`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, sentence cutting, usage and cost, and the model client against a local fake server.
+`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, sentence cutting, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), and the model client against a local fake server.
 
 ## License
 

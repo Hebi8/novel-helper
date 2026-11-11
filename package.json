@@ -2,7 +2,7 @@
   "name": "novel-helper",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "dreaife",
   "license": "MIT",
   "repository": {
@@ -51,6 +51,58 @@
   },
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "novelHelper",
+          "title": "%view.container%",
+          "icon": "media/sidebar.svg"
+        }
+      ]
+    },
+    "views": {
+      "novelHelper": [
+        {
+          "id": "novelHelper.book",
+          "name": "%view.book%"
+        },
+        {
+          "id": "novelHelper.lore",
+          "name": "%view.lore%"
+        },
+        {
+          "id": "novelHelper.settings",
+          "name": "%view.settings%"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "novelHelper.book",
+        "contents": "%welcome.noFolder%",
+        "when": "workspaceFolderCount == 0"
+      },
+      {
+        "view": "novelHelper.book",
+        "contents": "%welcome.empty%",
+        "when": "workspaceFolderCount > 0 && novelHelper.workspace == empty"
+      },
+      {
+        "view": "novelHelper.lore",
+        "contents": "%welcome.noFolder%",
+        "when": "workspaceFolderCount == 0"
+      },
+      {
+        "view": "novelHelper.lore",
+        "contents": "%welcome.empty%",
+        "when": "workspaceFolderCount > 0 && novelHelper.workspace == empty"
+      },
+      {
+        "view": "novelHelper.lore",
+        "contents": "%welcome.noLore%",
+        "when": "workspaceFolderCount > 0 && novelHelper.workspace == ready"
+      }
+    ],
     "commands": [
       {
         "command": "novelHelper.toggle",
@@ -71,8 +123,239 @@
         "command": "novelHelper.showUsage",
         "title": "%command.showUsage%",
         "category": "Novel Helper"
+      },
+      {
+        "command": "novelHelper.init",
+        "title": "%command.init%",
+        "category": "Novel Helper"
+      },
+      {
+        "command": "novelHelper.toggleTrigger",
+        "title": "%command.toggleTrigger%",
+        "category": "Novel Helper"
+      },
+      {
+        "command": "novelHelper.selectProvider",
+        "title": "%command.selectProvider%",
+        "category": "Novel Helper"
+      },
+      {
+        "command": "novelHelper.setModel",
+        "title": "%command.setModel%",
+        "category": "Novel Helper"
+      },
+      {
+        "command": "novelHelper.setDailyLimit",
+        "title": "%command.setDailyLimit%",
+        "category": "Novel Helper"
+      },
+      {
+        "command": "novelHelper.book.newChapter",
+        "title": "%command.book.newChapter%",
+        "category": "Novel Helper",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "novelHelper.book.newLevel",
+        "title": "%command.book.newLevel%",
+        "category": "Novel Helper",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "novelHelper.book.openOutline",
+        "title": "%command.book.openOutline%",
+        "category": "Novel Helper",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "novelHelper.book.openSummary",
+        "title": "%command.book.openSummary%",
+        "category": "Novel Helper",
+        "icon": "$(note)"
+      },
+      {
+        "command": "novelHelper.book.rename",
+        "title": "%command.book.rename%",
+        "category": "Novel Helper",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "novelHelper.lore.new",
+        "title": "%command.lore.new%",
+        "category": "Novel Helper",
+        "icon": "$(add)"
+      },
+      {
+        "command": "novelHelper.lore.pin",
+        "title": "%command.lore.pin%",
+        "category": "Novel Helper",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "novelHelper.lore.unpin",
+        "title": "%command.lore.unpin%",
+        "category": "Novel Helper",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "novelHelper.lore.setAliases",
+        "title": "%command.lore.setAliases%",
+        "category": "Novel Helper",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "novelHelper.lore.setType",
+        "title": "%command.lore.setType%",
+        "category": "Novel Helper",
+        "icon": "$(symbol-class)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "novelHelper.book.newChapter",
+          "when": "view == novelHelper.book",
+          "group": "navigation@1"
+        },
+        {
+          "command": "novelHelper.book.newLevel",
+          "when": "view == novelHelper.book",
+          "group": "navigation@2"
+        },
+        {
+          "command": "novelHelper.init",
+          "when": "view == novelHelper.book",
+          "group": "1_init"
+        },
+        {
+          "command": "novelHelper.lore.new",
+          "when": "view == novelHelper.lore",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "novelHelper.book.openOutline",
+          "when": "view == novelHelper.book",
+          "group": "inline@1"
+        },
+        {
+          "command": "novelHelper.book.openSummary",
+          "when": "view == novelHelper.book && viewItem == chapter",
+          "group": "inline@2"
+        },
+        {
+          "command": "novelHelper.book.newChapter",
+          "when": "view == novelHelper.book && viewItem =~ /^(book|level)$/",
+          "group": "inline@3"
+        },
+        {
+          "command": "novelHelper.book.newLevel",
+          "when": "view == novelHelper.book && viewItem =~ /^(book|level)$/",
+          "group": "inline@4"
+        },
+        {
+          "command": "novelHelper.book.openOutline",
+          "when": "view == novelHelper.book",
+          "group": "1_open@1"
+        },
+        {
+          "command": "novelHelper.book.openSummary",
+          "when": "view == novelHelper.book && viewItem == chapter",
+          "group": "1_open@2"
+        },
+        {
+          "command": "novelHelper.book.newChapter",
+          "when": "view == novelHelper.book",
+          "group": "2_new@1"
+        },
+        {
+          "command": "novelHelper.book.newLevel",
+          "when": "view == novelHelper.book && viewItem =~ /^(book|level)$/",
+          "group": "2_new@2"
+        },
+        {
+          "command": "novelHelper.book.rename",
+          "when": "view == novelHelper.book && viewItem =~ /^(level|chapter)$/",
+          "group": "3_rename"
+        },
+        {
+          "command": "novelHelper.lore.pin",
+          "when": "view == novelHelper.lore && viewItem == entry",
+          "group": "inline@1"
+        },
+        {
+          "command": "novelHelper.lore.unpin",
+          "when": "view == novelHelper.lore && viewItem == entryAlways",
+          "group": "inline@1"
+        },
+        {
+          "command": "novelHelper.lore.setAliases",
+          "when": "view == novelHelper.lore && viewItem =~ /^entry/",
+          "group": "inline@2"
+        },
+        {
+          "command": "novelHelper.lore.new",
+          "when": "view == novelHelper.lore && viewItem == group",
+          "group": "inline"
+        },
+        {
+          "command": "novelHelper.lore.pin",
+          "when": "view == novelHelper.lore && viewItem == entry",
+          "group": "1_fields@1"
+        },
+        {
+          "command": "novelHelper.lore.unpin",
+          "when": "view == novelHelper.lore && viewItem == entryAlways",
+          "group": "1_fields@1"
+        },
+        {
+          "command": "novelHelper.lore.setAliases",
+          "when": "view == novelHelper.lore && viewItem =~ /^entry/",
+          "group": "1_fields@2"
+        },
+        {
+          "command": "novelHelper.lore.setType",
+          "when": "view == novelHelper.lore && viewItem =~ /^entry/",
+          "group": "1_fields@3"
+        },
+        {
+          "command": "novelHelper.lore.new",
+          "when": "view == novelHelper.lore && viewItem == group",
+          "group": "2_new"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "novelHelper.book.openOutline",
+          "when": "false"
+        },
+        {
+          "command": "novelHelper.book.openSummary",
+          "when": "false"
+        },
+        {
+          "command": "novelHelper.book.rename",
+          "when": "false"
+        },
+        {
+          "command": "novelHelper.lore.pin",
+          "when": "false"
+        },
+        {
+          "command": "novelHelper.lore.unpin",
+          "when": "false"
+        },
+        {
+          "command": "novelHelper.lore.setAliases",
+          "when": "false"
+        },
+        {
+          "command": "novelHelper.lore.setType",
+          "when": "false"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "editor.action.inlineSuggest.trigger",

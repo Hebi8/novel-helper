@@ -2,11 +2,15 @@ import * as vscode from 'vscode';
 import { renderReport, renderUsage, type RunRecord } from './core/report';
 import { costOf, ratesFor } from './core/usage';
 import { PROVIDERS, type ProviderId } from './llm/providers';
+import { BookView } from './vscode/bookView';
 import { SECTION, completionSettings, currentProvider, modelSettings, secretKey, usageSettings } from './vscode/config';
+import { initWorkspace } from './vscode/init';
 import { ContinuationProvider } from './vscode/inlineProvider';
 import { LoreProviders } from './vscode/loreProviders';
+import { LoreView } from './vscode/loreView';
+import { SettingsView, selectProvider, setDailyLimit, setModel, toggleEnabled, toggleTrigger } from './vscode/settingsView';
 import { StatusBar } from './vscode/statusBar';
-import { UsageStore } from './vscode/usageStore';
+import { UsageStore } from './storage/usageStore';
 import { WorkspaceIndexes } from './vscode/workspaceIndex';
 
 const REPORT_URI = vscode.Uri.from({ scheme: 'novel-helper', path: '/last-request.md' });
@@ -18,7 +22,7 @@ const SELECTOR: vscode.DocumentFilter[] = ['markdown', 'plaintext'].flatMap((lan
 export function activate(context: vscode.ExtensionContext): void {
 	const log = vscode.window.createOutputChannel('Novel Helper', { log: true });
 	const indexes = new WorkspaceIndexes(log);
-	const usage = new UsageStore(context.globalStorageUri);
+	const usage = new UsageStore(context.globalStorageUri.fsPath);
 	const status = new StatusBar(usage);
 	const reportChanged = new vscode.EventEmitter<vscode.Uri>();
 	const askedForKey = new Set<ProviderId>();
@@ -78,13 +82,22 @@ export function activate(context: vscode.ExtensionContext): void {
 			vscode.l10n.t,
 		);
 	};
+	// The sidebar's welcome text is for a folder with nothing of a novel in it; it waits for the first scan.
+	const describeWorkspace = async () => {
+		const all = await indexes.all();
+		await vscode.commands.executeCommand('setContext', 'novelHelper.workspace', all.every((index) => index.library.empty) ? 'empty' : 'ready');
+	};
 	void usage.load();
+	void describeWorkspace();
 
 	context.subscriptions.push(
 		log,
 		indexes,
-		usage,
 		status,
+		new BookView(indexes),
+		new LoreView(indexes),
+		new SettingsView(context.secrets, usage),
+		indexes.onDidChange(describeWorkspace),
 		reportChanged,
 		usage.onDidChange(() => reportChanged.fire(USAGE_URI)),
 		vscode.languages.registerInlineCompletionItemProvider(SELECTOR, continuation),
@@ -95,7 +108,12 @@ export function activate(context: vscode.ExtensionContext): void {
 			provideTextDocumentContent: (uri) =>
 				uri.path === USAGE_URI.path ? usageDocument() : renderReport(lastRun, vscode.l10n.t),
 		}),
-		vscode.commands.registerCommand('novelHelper.toggle', toggle),
+		vscode.commands.registerCommand('novelHelper.toggle', toggleEnabled),
+		vscode.commands.registerCommand('novelHelper.toggleTrigger', toggleTrigger),
+		vscode.commands.registerCommand('novelHelper.selectProvider', selectProvider),
+		vscode.commands.registerCommand('novelHelper.setModel', setModel),
+		vscode.commands.registerCommand('novelHelper.setDailyLimit', setDailyLimit),
+		vscode.commands.registerCommand('novelHelper.init', () => initWorkspace(indexes)),
 		vscode.commands.registerCommand('novelHelper.setApiKey', (provider?: ProviderId) =>
 			setApiKey(context.secrets, provider),
 		),
@@ -123,15 +141,6 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.workspace.onDidDeleteFiles(() => indexes.reset()),
 		context.secrets.onDidChange(() => status.setProblem(undefined)),
 	);
-}
-
-async function toggle(): Promise<void> {
-	const config = vscode.workspace.getConfiguration(SECTION);
-	const target =
-		config.inspect<boolean>('enabled')?.workspaceValue !== undefined
-			? vscode.ConfigurationTarget.Workspace
-			: vscode.ConfigurationTarget.Global;
-	await config.update('enabled', !completionSettings().enabled, target);
 }
 
 async function setApiKey(secrets: vscode.SecretStorage, preselected?: ProviderId): Promise<void> {

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { dollars } from '../core/usage';
 import { completionSettings, modelSettings, usageSettings } from './config';
-import type { UsageStore } from './usageStore';
+import type { UsageStore } from '../storage/usageStore';
 
 const PROSE_LANGUAGES = new Set(['markdown', 'plaintext']);
 
@@ -25,6 +25,12 @@ export class StatusBar implements vscode.Disposable {
 	/** True when today's estimated cost has reached the daily limit: automatic requests stop. */
 	overLimit(): boolean {
 		return this.usage.overLimit(usageSettings().dailyLimitUsd);
+	}
+
+	/** The same after reading the shared usage file again: other windows add to it too. */
+	async overLimitNow(): Promise<boolean> {
+		await this.usage.load();
+		return this.overLimit();
 	}
 
 	private today(): string {

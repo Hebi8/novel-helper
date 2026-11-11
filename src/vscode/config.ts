@@ -116,3 +116,11 @@ export function usageSettings(): UsageSettings {
 export function secretKey(provider: ProviderId): string {
 	return `${SECTION}.apiKey.${provider}`;
 }
+
+/** Writes a setting where it is set already: in the workspace if it has a value there, else in the user settings. */
+export async function updateSetting(key: string, value: unknown): Promise<void> {
+	const config = vscode.workspace.getConfiguration(SECTION);
+	const target =
+		config.inspect(key)?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+	await config.update(key, value, target);
+}

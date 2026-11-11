@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 (2026-11-12)
+
+- A sidebar: a Novel Helper icon in the activity bar with three views. It lays out the structure and changes the fixed fields; the content is written in the Markdown files it opens.
+- **Book**: the book, its volumes, arcs and chapters as a tree that follows the chapter being edited. Every node shows whether it has an outline and a summary, and opens them (creating a missing one where it belongs). New chapters are suggested the next number in the pattern of the ones before (`第12章 ` after `第11章 雾里来信`, `第十二章` after `第十一章`); new volumes and arcs start with their first chapter. Renaming a volume, arc or chapter renames its outline, its summary and the folders that mirror it in one undoable step.
+- **Lore**: entries grouped by type, with always-on and aliases on each line. Buttons toggle always-on, edit aliases and change the type by rewriting that one frontmatter field and nothing else in the file. New entries start from a template per type; a workspace can bring its own in `.novel-helper/templates/`.
+- **Settings and Usage**: ghost text on or off, trigger, provider, model, whether an API key is saved (never the key), today's and this month's requests and estimated cost, the daily limit, the last request. New commands for the palette: Select Provider, Set Model, Set Daily Limit, Switch Between Automatic and Manual Trigger.
+- **Initialize Novel Workspace**: offered in an empty folder; creates the folders, an outline of the whole book, an always-on style entry and optionally a first volume, whichever you tick. Nothing that exists is overwritten.
+- Fixed: two windows recording usage at the same moment could lose one of the two requests. Adding to the usage file now happens under a lock file shared by all windows.
+- Fixed: an automatic request could still go out after the daily limit was reached, when another window had spent up to it or this one did while the request was waiting. The shared usage is read again right before an automatic request is sent.
+- Fixed: once the gray text was showing, typing on or switching ghost text off no longer closed a connection that was still open waiting for the usage (up to 2 seconds, OpenAI-compatible providers). It closes at once again.
+
 ## 0.2.0 (2026-11-12)
 
 - Outlines at every level: folders under the chapters folder are levels (volume, arc, as deep as you like), and a chapter's request carries the outline of the whole book (`大纲/全书.md`), of each level above it (the file named after the level's folder) and of the chapter. Each has its own size cap; names in the outlines above the chapter do not pull in lore. Flat workspaces work as before.

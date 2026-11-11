@@ -242,14 +242,21 @@ export interface CompletionOptions {
 	 * arrive. Fields the provider never reported are left undefined.
 	 */
 	onUsage?(usage: Usage): void;
+	/**
+	 * Called once when the request is over and its connection, if it had
+	 * one, is closed. Like `onUsage`, this can be after `complete` has
+	 * returned; until then, aborting `signal` still closes the connection.
+	 */
+	onClose?(): void;
 }
 
 /**
  * Resolves as soon as the answer is settled: a full sentence has arrived, the
- * stream ended, the caller cancelled, or the request failed.
+ * stream ended, the caller cancelled, or the request failed. The connection
+ * can stay open a little longer, see `onClose`.
  */
 export function complete(req: ModelRequest, options: CompletionOptions): Promise<CompletionOutcome> {
-	return new Promise((resolve) => void run(req, options, resolve));
+	return new Promise((resolve) => void run(req, options, resolve).finally(() => options.onClose?.()));
 }
 
 async function run(req: ModelRequest, options: CompletionOptions, resolve: (outcome: CompletionOutcome) => void): Promise<void> {

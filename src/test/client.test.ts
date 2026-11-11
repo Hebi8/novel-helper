@@ -453,6 +453,59 @@ describe('usage', () => {
 	});
 });
 
+describe('when the connection closes', () => {
+	test('the sentence is in, the connection still open for the usage: cancelling then closes it at once', async () => {
+		const server = await serve((res) =>
+			stream(res, [
+				OPENAI_START,
+				openaiText('他推开门，走了进去。'),
+				openaiText('屋里很暗。'),
+				{ wait: 3000 },
+				openaiUsage({ prompt_tokens: 500, completion_tokens: 17 }),
+				'data: [DONE]\n\n',
+			]),
+		);
+		const controller = new AbortController();
+		let closedAt: number | undefined;
+		let usage: Usage | undefined;
+		const outcome = await complete(
+			request('openai', server.baseUrl, { usageWaitMs: 2000 }),
+			options({ signal: controller.signal, onUsage: (u) => (usage = u), onClose: () => (closedAt = Date.now()) }),
+		);
+		assert.equal(outcome.text, '他推开门，走了进去。');
+		await sleep(50);
+		assert.equal(closedAt, undefined, 'the ghost text is ready, the connection is not closed yet');
+		// The writer types on, or switches ghost text off.
+		const cancelled = Date.now();
+		controller.abort();
+		assert.equal(await server.received[0].closed, true, 'the server sees the client go');
+		await sleep(20);
+		assert.ok(closedAt !== undefined && closedAt - cancelled < 200, 'closed on cancelling, not when the wait for usage runs out');
+		assert.deepEqual(usage, {}, 'counted as a request whose usage is unknown');
+	});
+
+	test('onClose comes once however the request ends', async () => {
+		const count = async (req: ModelRequest, signal = new AbortController().signal) => {
+			let closes = 0;
+			const outcome = await complete(req, options({ signal, onClose: () => closes++ }));
+			await sleep(150);
+			return [outcome.status, closes];
+		};
+		const whole = await serve((res) => stream(res, [ANTHROPIC_START, anthropicText('好。'), ANTHROPIC_END]));
+		assert.deepEqual(await count(request('anthropic', whole.baseUrl)), ['ok', 1]);
+		const waited = await serve((res) => stream(res, [OPENAI_START, openaiText('他推开门。'), openaiText('屋里很暗，什么也看不见'), { wait: 3000 }, OPENAI_END]));
+		assert.deepEqual(await count(request('openai', waited.baseUrl, { usageWaitMs: 50 })), ['ok', 1]);
+		const refused = await serve((res) => {
+			res.writeHead(500);
+			res.end('no');
+		});
+		assert.deepEqual(await count(request('openai', refused.baseUrl)), ['error', 1]);
+		const aborted = new AbortController();
+		aborted.abort();
+		assert.deepEqual(await count(request('openai', 'http://127.0.0.1:9'), aborted.signal), ['cancelled', 1]);
+	});
+});
+
 describe('redact', () => {
 	test('removes the key and key-shaped strings', () => {
 		assert.equal(redact(`bad key ${KEY}!`, KEY), 'bad key ***!');

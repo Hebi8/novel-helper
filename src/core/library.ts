@@ -88,6 +88,18 @@ export function globRootDepth(glob: string): number {
 	return wild === -1 ? segments.length - 1 : wild;
 }
 
+// The folders a glob's files are rooted in, one per alternative of its leading
+// braces: `{正文,章节}/**/*.md` → 正文, 章节; `稿子/正文/**/*.md` → 稿子/正文; `**/*.md` → ''.
+export function globFolders(glob: string): string[] {
+	let folders = [''];
+	for (const segment of glob.split('/').slice(0, globRootDepth(glob))) {
+		const braces = /^\{([^{}]*)\}$/.exec(segment);
+		const names = braces ? braces[1].split(',') : [segment];
+		folders = folders.flatMap((folder) => names.map((name) => (folder ? `${folder}/${name}` : name)));
+	}
+	return folders;
+}
+
 /** The whole book, or one folder level between the chapters folder and a chapter (卷, 幕…). */
 export interface Level {
 	/** Folder path relative to the workspace folder; '' for the whole book. */
@@ -101,7 +113,14 @@ export interface Level {
 /** The book as a tree of levels and chapters in reading order. */
 export interface BookNode extends Level {
 	kind: 'book' | 'level' | 'chapter';
+	/** The levels this one is in, outermost first: [第一卷] for 正文/第一卷/第一幕 and for 正文/第一卷/第1章.md. */
+	dirs: string[];
 	children: BookNode[];
+}
+
+export interface Rename {
+	from: string;
+	to: string;
 }
 
 type Companion = 'outline' | 'summary';
@@ -181,6 +200,12 @@ export class Library {
 		this.companions[kind].get(stem(path))?.delete(path);
 	}
 
+	/** No chapters, no lore, no outlines or summaries: nothing of a novel in the folder yet. */
+	get empty(): boolean {
+		const none = (kind: Companion) => [...this.companions[kind].values()].every((paths) => paths.size === 0);
+		return this.chapters.length === 0 && this.lore.size === 0 && none('outline') && none('summary');
+	}
+
 	isChapter(path: string): boolean {
 		return this.chapterDirs.has(path);
 	}
@@ -235,29 +260,82 @@ export class Library {
 
 	/** Levels and chapters in reading order; a level shows up once it holds a chapter. */
 	tree(): BookNode {
-		const root: BookNode = { kind: 'book', ...this.book(), children: [] };
+		const root: BookNode = { kind: 'book', ...this.book(), dirs: [], children: [] };
 		const levels = new Map<string, BookNode>();
 		for (const chapter of this.chapters) {
+			const dirs = this.chapterDirs.get(chapter)!;
 			let parent = root;
-			for (const level of this.levelsOf(chapter).slice(1)) {
+			this.levelsOf(chapter).slice(1).forEach((level, depth) => {
 				let node = levels.get(level.path);
 				if (!node) {
-					node = { kind: 'level', ...level, children: [] };
+					node = { kind: 'level', ...level, dirs: dirs.slice(0, depth), children: [] };
 					levels.set(level.path, node);
 					parent.children.push(node);
 				}
 				parent = node;
-			}
+			});
 			parent.children.push({
 				kind: 'chapter',
 				path: chapter,
 				name: stem(chapter),
 				outline: this.companionOf('outline', chapter),
 				summary: this.companionOf('summary', chapter),
+				dirs,
 				children: [],
 			});
 		}
 		return root;
+	}
+
+	/**
+	 * The folders the files of a kind are rooted in (正文, 大纲…), the one
+	 * holding the most files first; empty when there are no such files yet.
+	 */
+	roots(kind: FileKind): string[] {
+		const counts = new Map<string, number>();
+		const count = (path: string, dirs: string[]) => {
+			const folders = dirSegments(path);
+			const root = folders.slice(0, folders.length - dirs.length).join('/');
+			counts.set(root, (counts.get(root) ?? 0) + 1);
+		};
+		if (kind === 'chapter') {
+			this.chapterDirs.forEach((dirs, path) => count(path, dirs));
+		} else {
+			this.companions[kind].forEach((paths) => paths.forEach((dirs, path) => count(path, dirs)));
+		}
+		return [...counts].sort((a, b) => b[1] - a[1] || comparePaths(a[0], b[0])).map(([root]) => root);
+	}
+
+	/**
+	 * What has to move to rename a chapter or a level of `tree()` and keep
+	 * its outline and summary with it. A chapter: its file and the two that
+	 * go with it. A level: its folder, the outline and summary named after
+	 * it, and the folders of that name that hold the outlines and summaries
+	 * of what is inside it (大纲/第一卷/…). Files keep their extensions.
+	 */
+	renames(node: BookNode, newName: string): Rename[] {
+		const renamed = (path: string) => {
+			const slash = path.lastIndexOf('/') + 1;
+			return { from: path, to: path.slice(0, slash) + newName + path.slice(slash + stem(path).length) };
+		};
+		const files = [node.outline, node.summary].filter((path): path is string => path !== undefined).map(renamed);
+		if (node.kind === 'chapter') {
+			return [renamed(node.path), ...files];
+		}
+		const folders = new Set<string>();
+		for (const kind of ['outline', 'summary'] as const) {
+			for (const paths of this.companions[kind].values()) {
+				for (const [path, own] of paths) {
+					// The folder of this name in the file's path, when the folders above it are the level's own, or fewer of them.
+					const at = own.findIndex((dir, i) => dir === node.name && isTail(own.slice(0, i), node.dirs));
+					if (at !== -1) {
+						folders.add(dirSegments(path).slice(0, dirSegments(path).length - own.length + at + 1).join('/'));
+					}
+				}
+			}
+		}
+		const moved = [node.path, ...folders].map((from) => ({ from, to: from.slice(0, from.lastIndexOf('/') + 1) + newName }));
+		return [...moved, ...files];
 	}
 
 	private book(): Level {
