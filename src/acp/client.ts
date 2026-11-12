@@ -127,6 +127,9 @@ export class AgentClient {
 		const client = new AgentClient(child, command, handlers);
 		const giveUp = () => client.stop();
 		signal?.addEventListener('abort', giveUp);
+		if (signal?.aborted) {
+			giveUp();
+		}
 		const mine = (sessionId: string) => sessionId === client.sessionId && !client.replaying;
 		client.connection = acp
 			.client({ name: 'novel-helper' })
@@ -169,6 +172,11 @@ export class AgentClient {
 					clientInfo: { name: 'novel-helper', version: '1' },
 				}),
 			)
+			.catch((error: unknown) => {
+				// The caller gets no client to stop: a process that answered with an error and lives on is ended here.
+				client.stop();
+				throw error;
+			})
 			.finally(() => signal?.removeEventListener('abort', giveUp));
 		client.capabilities = response.agentCapabilities ?? {};
 		return client;
@@ -196,6 +204,8 @@ export class AgentClient {
 	 * pick it up again, else a new one. `brief` is what the agent is to know
 	 * about the workspace. `briefed` says whether the agent took it as part
 	 * of its system prompt; if not, it has to go in front of the first message.
+	 * The client has a session only once it is in the mode the command asks
+	 * for: when that fails, there is none, and the next call starts over.
 	 */
 	async open(cwd: string, brief: string, previous?: string): Promise<{ resumed: boolean; briefed: boolean }> {
 		const acp = await import('@agentclientprotocol/sdk');
@@ -203,15 +213,16 @@ export class AgentClient {
 		const systemPrompt: SystemPrompt | undefined = session?.systemPrompt ? { mode: 'append', content: [text(brief)] } : undefined;
 		const base: NewSessionRequest = { cwd, mcpServers: [], ...(systemPrompt && { systemPrompt }) };
 		const briefed = systemPrompt !== undefined;
+		this.sessionId = undefined;
 		if (previous !== undefined && (session?.resume || this.capabilities.loadSession)) {
-			this.sessionId = previous;
 			this.replaying = true;
 			try {
 				const request = { ...base, sessionId: previous };
 				const response = await this.ask(
 					session?.resume ? this.connection.agent.request(acp.methods.agent.session.resume, request) : this.connection.agent.request(acp.methods.agent.session.load, request),
 				);
-				await this.enterMode(response.modes);
+				await this.enterMode(previous, response.modes);
+				this.sessionId = previous;
 				return { resumed: true, briefed: true };
 			} catch (error) {
 				// A session the agent no longer has is no reason to stop: a new one is opened. Anything else is.
@@ -222,18 +233,17 @@ export class AgentClient {
 				this.replaying = false;
 			}
 		}
-		this.sessionId = undefined;
 		const response = await this.ask(this.connection.agent.request(acp.methods.agent.session.new, base));
+		await this.enterMode(response.sessionId, response.modes);
 		this.sessionId = response.sessionId;
-		await this.enterMode(response.modes);
 		return { resumed: false, briefed };
 	}
 
-	private async enterMode(modes: SessionModeState | null | undefined): Promise<void> {
+	private async enterMode(sessionId: string, modes: SessionModeState | null | undefined): Promise<void> {
 		const mode = this.command.mode;
 		if (mode !== undefined && modes && modes.currentModeId !== mode && modes.availableModes.some((available) => available.id === mode)) {
 			const acp = await import('@agentclientprotocol/sdk');
-			await this.ask(this.connection.agent.request(acp.methods.agent.session.setMode, { sessionId: this.sessionId!, modeId: mode }));
+			await this.ask(this.connection.agent.request(acp.methods.agent.session.setMode, { sessionId, modeId: mode }));
 		}
 	}
 

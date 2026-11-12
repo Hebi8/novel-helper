@@ -4,6 +4,7 @@
 
 import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { type BuoyFile, buoyPath } from '../core/buoy';
@@ -516,6 +517,62 @@ describe('an agent that cannot be used', () => {
 		await talk.goBack(turn.record!);
 		assert.equal(talk.of('turn').at(-1)?.stop, 'reverted');
 		assert.equal(talk.one.read(CHAPTER), '清晨的雾。\n阿栀推开了门。\n');
+	});
+});
+
+describe('going back and turns, one at a time', () => {
+	test('going back stops, and says why, when a file it would write over is no longer one a snapshot holds', async () => {
+		const talk = await chat();
+		await talk.say(`write ${CHAPTER} 改了。\nwrite 设定/雾港.md 也改了。`);
+		const turn = talk.of('turn')[0];
+		// The chapter is something else by now: no snapshot would keep it, so going back could not be undone.
+		const binary = Buffer.from([0x50, 0x4b, 0, 1]);
+		fs.writeFileSync(path.join(talk.one.workspace, CHAPTER), binary);
+		await talk.goBack(turn.record!);
+		assert.equal(talk.one.messages.at(-1), 'Did not go back to before #1: no file was changed.');
+		assert.match(talk.one.details.at(-1)!, /Move or rename them, then go back again\.\n\n正文\/第一卷\/第1章\.md: is not a text file now$/);
+		assert.deepEqual(fs.readFileSync(path.join(talk.one.workspace, CHAPTER)), binary);
+		assert.equal(talk.one.read('设定/雾港.md'), '也改了。', 'the file that could have been put back is left as well');
+		assert.deepEqual(talk.of('turn').map((one) => one.stop), ['end_turn']);
+		assert.equal(talk.records().length, 1);
+	});
+
+	test('a message sent the moment going back was clicked starts no turn beside it', async () => {
+		const talk = await chat();
+		await talk.say(`write ${CHAPTER} 改了。`);
+		const turn = talk.of('turn')[0];
+		talk.one.answers.push((buttons) => buttons[0]);
+		talk.panel.send({ type: 'revert', record: turn.record });
+		talk.begin('write 正文/第一卷/第2章.md 同时写的。');
+		await talk.idle();
+		await talk.one.settle();
+		assert.deepEqual(talk.of('user').map((one) => one.text), [`write ${CHAPTER} 改了。`]);
+		assert.deepEqual(talk.of('turn').map((one) => one.stop), ['end_turn', 'reverted']);
+		assert.deepEqual(storyFiles(talk.one), ['正文/第一卷/第1章.md', '设定/雾港.md']);
+		assert.equal(talk.one.read(CHAPTER), '清晨的雾。\n阿栀推开了门。\n');
+	});
+
+	test('closing the window while the agent is being started ends its process', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-helper-pid-'));
+		try {
+			const pidFile = path.join(dir, 'pid');
+			const talk = await chat(STORY, ['--init-hangs', `--pid=${pidFile}`]);
+			talk.begin('say 你好');
+			const pid = Number(await until(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, 'utf8'), 'the agent to be there'));
+			const alive = () => {
+				try {
+					process.kill(pid, 0);
+					return true;
+				} catch {
+					return false;
+				}
+			};
+			assert.equal(alive(), true);
+			talk.one.dispose();
+			await until(() => !alive(), 'the agent to be gone');
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 

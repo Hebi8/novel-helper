@@ -46,6 +46,26 @@ function seen(overrides: Partial<AgentHandlers> = {}): Seen {
 	return one;
 }
 
+/** The failure a call ends with. */
+const failure = (run: Promise<unknown>) =>
+	run.then(
+		() => assert.fail('no failure'),
+		(error: unknown) => {
+			assert.ok(error instanceof AgentFailure, String(error));
+			return error;
+		},
+	);
+
+/** Whether a process is still there. */
+function alive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 async function start(handlers: AgentHandlers, ...flags: string[]): Promise<AgentClient> {
 	const client = await AgentClient.start({ command: process.execPath, args: [FAKE_AGENT, ...flags], mode: 'default' }, cwd, handlers);
 	running.push(client);
@@ -166,6 +186,29 @@ describe('a session with an agent', () => {
 		assert.equal(plain.said(), `${other.sessionId} mode=auto closed=`);
 	});
 
+	test('a session that could not be put in the mode that asks is no session: the next try has to get it there again', async () => {
+		const handlers = seen();
+		const client = await start(handlers, '--modes', '--mode-fails', '--resume');
+		for (const previous of [undefined, 'earlier']) {
+			const error = await failure(client.open(cwd, '', previous));
+			assert.equal(error.kind, 'failed');
+			assert.match(error.message, /cannot change the mode/);
+			assert.equal(client.sessionId, undefined, 'nothing to send a message to, in a mode that does not ask');
+		}
+	});
+
+	test('an agent that answers the first request with an error is ended: the caller gets no client to stop it with', async () => {
+		const pidFile = path.join(cwd, 'init-fails.pid');
+		const error = await failure(AgentClient.start({ command: process.execPath, args: [FAKE_AGENT, '--init-fails', `--pid=${pidFile}`] }, cwd, seen()));
+		assert.equal(error.kind, 'failed');
+		assert.match(error.message, /not today/);
+		const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+		for (let i = 0; i < 200 && alive(pid); i++) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(alive(pid), false);
+	});
+
 	test('starting can be given up', async () => {
 		const abort = new AbortController();
 		const starting = AgentClient.start({ command: process.execPath, args: ['-e', 'setTimeout(() => {}, 60000)'] }, cwd, seen(), abort.signal);
@@ -198,15 +241,6 @@ describe('a session with an agent', () => {
 });
 
 describe('an agent that cannot be used', () => {
-	const failure = (run: Promise<unknown>) =>
-		run.then(
-			() => assert.fail('no failure'),
-			(error: unknown) => {
-				assert.ok(error instanceof AgentFailure, String(error));
-				return error;
-			},
-		);
-
 	test('a command that is not there', async () => {
 		const handlers = seen();
 		const error = await failure(AgentClient.start({ command: 'novel-helper-no-such-command', args: [] }, cwd, handlers));

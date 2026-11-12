@@ -15,7 +15,7 @@ import type { StoryNames } from '../core/scaffold';
 import { type Change, changeKind, titleOf } from '../core/snapshot';
 import { isUsable, leadsOut } from '../core/story';
 import { type AskOption, type Item, Transcript } from '../core/transcript';
-import { SnapshotStore } from '../storage/snapshotStore';
+import { type Blocked, SnapshotStore } from '../storage/snapshotStore';
 import { assistantSettings } from './config';
 import { markerOfIndex } from './story';
 import { type FolderIndex, readText, type WorkspaceIndexes } from './workspaceIndex';
@@ -473,10 +473,23 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 	/** One turn: a snapshot, the message with what the editor shows, the agent's work, and what it changed. */
 	async send(message: string): Promise<void> {
 		const text = message.trim();
-		if (!text || this.busy) {
+		if (text) {
+			await this.exclusive(() => this.run(text));
+		}
+	}
+
+	/**
+	 * The one way in for a turn and for going back: whichever comes first has
+	 * the panel until it is over, and what comes meanwhile is dropped. The
+	 * panel is taken before anything is waited for, so nothing gets in between.
+	 */
+	private async exclusive(work: () => Promise<void>): Promise<void> {
+		if (this.busy) {
 			return;
 		}
-		this.running = this.run(text);
+		// The work says on the panel what it is doing, once it knows.
+		this.busy = true;
+		this.running = work().finally(() => this.setBusy(false));
 		await this.running;
 	}
 
@@ -498,7 +511,6 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 		const index = await this.target();
 		if (!index) {
 			this.refuse(text, t('There is no story folder to work in yet. Run "Novel Helper: Initialize Novel Workspace" first.'));
-			this.setBusy(false);
 			return;
 		}
 		this.starting = new AbortController();
@@ -510,7 +522,6 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 				this.explain(failure, command, 'start');
 			}
 			this.post({ type: 'draft', text });
-			this.setBusy(false);
 			return;
 		} finally {
 			this.starting = undefined;
@@ -521,8 +532,6 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 			await this.save();
 		} catch (error) {
 			this.explain(error, command, 'turn');
-		} finally {
-			this.setBusy(false);
 		}
 	}
 
@@ -615,52 +624,68 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 
 	/** Takes the story folder back to right before a snapshot, after asking; what it is now is kept first. */
 	async revert(id: number): Promise<void> {
-		if (this.busy) {
-			return;
-		}
-		this.running = this.goBack(id);
-		await this.running;
+		await this.exclusive(() => this.goBack(id));
 	}
 
 	private async goBack(id: number): Promise<void> {
 		const t = vscode.l10n.t;
+		this.setBusy(true, t('Going back…'));
 		const index = await this.target();
 		if (!index) {
 			return;
 		}
-		this.setBusy(true, t('Going back…'));
-		try {
-			const store = this.storeOf(index.storyUri.fsPath);
-			// Unsaved edits are saved first: they are part of what is kept before going back, and nothing is left for the editor to hold on to.
-			await saveUnsaved(index);
-			const plan = await store.preview(id);
-			if (!plan) {
-				void vscode.window.showWarningMessage(t('That snapshot is no longer kept: only the last {0} are.', assistantSettings().keepSnapshots));
-				return;
-			}
-			if (plan.write.length + plan.remove.length === 0) {
-				void vscode.window.showInformationMessage(t('Nothing to go back to: the files are as they were before that turn.'));
-				return;
-			}
-			const go = t('Go Back');
-			const detail = t(
-				'{0} files are put back as they were, and {1} files made since are deleted. The story as it is now is kept as a snapshot first, so this can be undone the same way.',
-				plan.write.length,
-				plan.remove.length,
-			);
-			if ((await vscode.window.showWarningMessage(t('Go back to before #{0}?', id), { modal: true, detail }, go)) !== go) {
-				return;
-			}
-			const record = await store.revert(id);
-			if (record?.changes) {
-				this.show(this.transcript.push({ kind: 'turn', record: record.id, stop: 'reverted', target: id, changes: record.changes }));
-				this.notes.push(revertNote(record.changes.map((change) => change.path), storyNames(index).language));
-				await this.save();
-				this.filesChanged();
-			}
-		} finally {
-			this.setBusy(false);
+		const store = this.storeOf(index.storyUri.fsPath);
+		// Unsaved edits are saved first: they are part of what is kept before going back, and nothing is left for the editor to hold on to.
+		await saveUnsaved(index);
+		const plan = await store.preview(id);
+		if (!plan) {
+			void vscode.window.showWarningMessage(t('That snapshot is no longer kept: only the last {0} are.', assistantSettings().keepSnapshots));
+			return;
 		}
+		if (plan.blocked.length) {
+			await this.sayBlocked(id, plan.blocked);
+			return;
+		}
+		if (plan.write.length + plan.remove.length === 0) {
+			void vscode.window.showInformationMessage(t('Nothing to go back to: the files are as they were before that turn.'));
+			return;
+		}
+		const go = t('Go Back');
+		const detail = t(
+			'{0} files are put back as they were, and {1} files made since are deleted. The story as it is now is kept as a snapshot first, so this can be undone the same way.',
+			plan.write.length,
+			plan.remove.length,
+		);
+		if ((await vscode.window.showWarningMessage(t('Go back to before #{0}?', id), { modal: true, detail }, go)) !== go) {
+			return;
+		}
+		const { record, blocked } = await store.revert(id);
+		if (blocked.length) {
+			// Something got in the way while the question was open.
+			await this.sayBlocked(id, blocked);
+		} else if (record?.changes) {
+			this.show(this.transcript.push({ kind: 'turn', record: record.id, stop: 'reverted', target: id, changes: record.changes }));
+			this.notes.push(revertNote(record.changes.map((change) => change.path), storyNames(index).language));
+			await this.save();
+			this.filesChanged();
+		}
+	}
+
+	/** Says why nothing was put back: which files are in the way, and what each is now. */
+	private async sayBlocked(id: number, blocked: readonly Blocked[]): Promise<void> {
+		const t = vscode.l10n.t;
+		const why: Record<Blocked['why'], string> = {
+			link: t('is a symbolic link now, or in a folder that is one'),
+			large: t('is too large for a snapshot now (over 5 MB)'),
+			binary: t('is not a text file now'),
+			taken: t('has a folder in its place now, or a file in the place of its folder'),
+		};
+		const detail = [
+			t('Going back would write over these files, and what they are now is nothing a snapshot keeps, so that could not be undone. Move or rename them, then go back again.'),
+			'',
+			...blocked.map((one) => `${one.path}: ${why[one.why]}`),
+		].join('\n');
+		await vscode.window.showWarningMessage(t('Did not go back to before #{0}: no file was changed.', id), { modal: true, detail });
 	}
 
 	/** "Go Back to Before a Turn…": the snapshots that are kept, newest first, also those of conversations that are no longer on the panel. */
@@ -688,6 +713,8 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 
 	dispose(): void {
 		clearTimeout(this.contextTimer);
+		// An agent that is still being started is not `client` yet.
+		this.starting?.abort();
 		this.client?.stop();
 		this.disposables.forEach((disposable) => disposable.dispose());
 	}

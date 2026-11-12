@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { type BuoyFile, type BuoyState, buoyPath, serializeBuoyFile } from '../core/buoy';
 import { MARKER_FILE, serializeMarker } from '../core/story';
-import { fakeServer, type FakeServer, OPENAI_END, OPENAI_START, openaiText, stream } from './fakeServer';
+import { fakeServer, type FakeServer, OPENAI_END, OPENAI_START, openaiText, sleep, stream } from './fakeServer';
 import { filesIn, start, type Started } from './vscodeStub';
 
 const MARKER = serializeMarker({ version: 1, language: 'zh' });
@@ -324,12 +324,25 @@ describe('position on the outline', () => {
 	const setup = async (chapters: Record<string, string>, answers: string[] = [], files: Record<string, string> = {}, settings: Record<string, unknown> = {}) => {
 		const asked: string[] = [];
 		const prompts: string[] = [];
-		const server = await fakeServer((res, request) => {
+		let held: Promise<void> | undefined;
+		const server = await fakeServer(async (res, request) => {
 			const [system, user] = (request.body.messages as Array<{ content: string }>).map((message) => message.content);
 			const position = system.startsWith('你在帮一位小说作者');
 			(position ? asked : prompts).push(user);
+			if (position) {
+				await held;
+			}
 			return stream(res, [OPENAI_START, openaiText(position ? (answers.shift() ?? '') : '灯还亮着。'), OPENAI_END]);
 		});
+		/** Makes the model take its time over the questions about the position, until the returned function is called. */
+		const holdAnswers = () => {
+			let release!: () => void;
+			held = new Promise((resolve) => (release = resolve));
+			return () => {
+				held = undefined;
+				release();
+			};
+		};
 		servers.push(server);
 		const one = await workspace(
 			{ ...OUTLINE, ...files, ...Object.fromEntries(Object.entries(chapters).map(([name, text]) => [`正文/${name}.md`, text])) },
@@ -345,7 +358,7 @@ describe('position on the outline', () => {
 		const marks = (chapter: string) =>
 			(JSON.parse(one.read(buoyPath(`正文/${chapter}.md`))) as BuoyFile).marks.map((mark) => `${mark.by} ${mark.state.kind}: ${mark.state.nodes.map((node) => node.title).join(', ')}`);
 		const node = (...titles: string[]) => one.find('novelHelper.outline', '全书', ...titles);
-		return { one, asked, prompts, open, suggest, marks, node };
+		return { one, asked, prompts, open, suggest, marks, node, holdAnswers };
 	};
 	const state = (kind: BuoyState['kind'], ...ids: string[]): BuoyState => ({ kind, nodes: ids.map((id) => ({ id, title: id.slice(id.lastIndexOf('#') + 1) })) });
 	/** A buoy file whose only mark was made when the chapter had `chars` characters. */
@@ -473,6 +486,64 @@ describe('position on the outline', () => {
 		assert.deepEqual([moved.chapter, moved.marks[0].state.nodes[0].id], ['正文/第1章 来信.md', '大纲/第1章 来信.md#等门']);
 		assert.deepEqual((JSON.parse(one.read(files[1])) as BuoyFile).marks[0].state.nodes.map((ref) => ref.id), ['大纲/第1章 来信.md#等门', '大纲/第2章.md#收信']);
 		assert.deepEqual(marks('第2章'), ['manual bridge: 等门, 收信']);
+	});
+
+	test('an answer about the position that comes after files were renamed is dropped: the marks as the rename left them stand', async () => {
+		const { one, asked, suggest, holdAnswers } = await setup({ 第1章: '', 第2章: long(1200) }, ['3', '3'], marked('第2章', 0, state('in', '大纲/第1章.md#来信')));
+		const written = () => (JSON.parse(one.read(buoyPath('正文/第2章.md'))) as BuoyFile).marks.map((mark) => `${mark.by} ${mark.state.nodes[0].id}`);
+		const answer = holdAnswers();
+		await suggest('第2章');
+		assert.equal(asked.length, 1, 'the model is being asked');
+		await rename(one, child(await book(one), '第1章'), '第1章 来信');
+		await one.settle();
+		assert.deepEqual(written(), ['manual 大纲/第1章 来信.md#来信']);
+		answer();
+		await one.settle();
+		assert.deepEqual(written(), ['manual 大纲/第1章 来信.md#来信'], 'the answer was about the outline as it was');
+		// The next request asks again, about the outline as it is now.
+		await suggest('第2章');
+		assert.equal(asked.length, 2);
+		assert.deepEqual(written(), ['manual 大纲/第1章 来信.md#来信', 'auto 大纲/第1章 来信.md#等门']);
+	});
+
+	test('a buoy file is the file of the chapter at its path, whatever chapter it names inside: nothing is written where that points', async () => {
+		const file = serializeBuoyFile({ ...(JSON.parse(Object.values(marked('第1章', 300, state('in', '大纲/第1章.md#来信')))[0]) as BuoyFile), chapter: '../../../outside' });
+		const { one, open, marks } = await setup({ 第1章: long(300) }, [], { [buoyPath('正文/第1章.md')]: file });
+		await open('第1章');
+		await one.settle();
+		await one.commands['novelHelper.position.forward']();
+		await one.settle();
+		assert.equal(fs.existsSync(path.join(one.base, 'outside.json')), false);
+		assert.deepEqual(marks('第1章'), ['manual in: 来信', 'manual in: 等门']);
+		assert.equal((JSON.parse(one.read(buoyPath('正文/第1章.md'))) as BuoyFile).chapter, '正文/第1章.md');
+	});
+
+	test('a mark the writer adds while a mark of the assistant is being filled in is kept', async () => {
+		const open = JSON.stringify({ version: 1, chapter: '正文/第1章.md', marks: [{ by: 'assistant', state: state('in', '大纲/第1章.md#来信') }] });
+		const { one, open: show, marks } = await setup({ 第1章: long(300) }, [], { [buoyPath('正文/第1章.md')]: open });
+		// The first time the file is written back with the mark made whole, the disk is slow.
+		const files = one.vscode.workspace.fs;
+		const writeFile = files.writeFile;
+		let waiting = false;
+		let release!: () => void;
+		const slow = new Promise<void>((resolve) => (release = resolve));
+		files.writeFile = async (uri: { path: string }, content: Uint8Array) => {
+			if (!waiting && uri.path.endsWith('.md.json')) {
+				waiting = true;
+				await slow;
+			}
+			return writeFile(uri, content);
+		};
+		await show('第1章');
+		while (!waiting) {
+			await sleep(10);
+		}
+		const moving = one.commands['novelHelper.position.forward']();
+		await sleep(150);
+		release();
+		await moving;
+		await one.settle();
+		assert.deepEqual(marks('第1章'), ['assistant in: 来信', 'manual in: 等门']);
 	});
 
 	test('a heading renamed in the outline: the buoys are lost, said so, and searched for again', async () => {

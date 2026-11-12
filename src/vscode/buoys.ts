@@ -92,6 +92,8 @@ export class Buoys implements vscode.Disposable {
 	private readonly searchAgainAt = new Map<string, number>();
 	/** The chapter last in the editor: what the commands and the outline view are about, also while an outline file has the focus. */
 	private chapter?: { index: FolderIndex; path: string };
+	/** The last of the reads and changes of buoy files, which go one after the other. */
+	private last: Promise<unknown> = Promise.resolve();
 
 	constructor(private readonly hooks: BuoyHooks) {
 		this.disposables = [
@@ -128,12 +130,23 @@ export class Buoys implements vscode.Disposable {
 	}
 
 	/**
-	 * A chapter's buoy file. A mark in it that only says where the buoys are
-	 * (the assistant adds them so) is taken to be about the chapter as it is
-	 * right now, to its end, and the file is written back with it made whole,
-	 * under the chapter it is the file of, whatever chapter it names inside.
+	 * Buoy files are read and changed one at a time. A change reads the file,
+	 * alters what it read and writes all of it back; two of those at once on
+	 * one file, and the one that writes last undoes the other.
 	 */
-	private async readFile(index: FolderIndex, chapter: string): Promise<BuoyFile | undefined> {
+	private serial<T>(work: () => Promise<T>): Promise<T> {
+		const done = this.last.then(work);
+		this.last = done.catch(() => undefined);
+		return done;
+	}
+
+	/**
+	 * A chapter's buoy file, to be called from within `serial`. A mark that
+	 * only says where the buoys are (the assistant adds them so) is taken to
+	 * be about the chapter as it is right now, to its end, and the file is
+	 * written back with it made whole.
+	 */
+	private async load(index: FolderIndex, chapter: string): Promise<BuoyFile | undefined> {
 		try {
 			const written = new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(index.uri(buoyPath(chapter))));
 			if (!hasOpenMarks(written)) {
@@ -141,18 +154,27 @@ export class Buoys implements vscode.Disposable {
 			}
 			const text = await readText(index.uri(chapter));
 			const now = new Date();
-			const file: BuoyFile = { ...parseBuoyFile(written, (state) => markAt(text, bodyLength(text), state, 'assistant', now))!, chapter };
-			await this.writeFile(index, file);
+			const file = parseBuoyFile(written, (state) => markAt(text, bodyLength(text), state, 'assistant', now))!;
+			await this.writeFile(index, chapter, file);
 			return file;
 		} catch {
 			return undefined;
 		}
 	}
 
-	private async writeFile(index: FolderIndex, file: BuoyFile): Promise<void> {
-		const uri = index.uri(buoyPath(file.chapter));
+	private readFile(index: FolderIndex, chapter: string): Promise<BuoyFile | undefined> {
+		return this.serial(() => this.load(index, chapter));
+	}
+
+	/**
+	 * Writes a chapter's buoy file. Where to, and the chapter it names
+	 * inside, go by the chapter the caller means, never by what a file that
+	 * was read says: a file cannot send a write anywhere else.
+	 */
+	private async writeFile(index: FolderIndex, chapter: string, file: BuoyFile): Promise<void> {
+		const uri = index.uri(buoyPath(chapter));
 		await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(uri, '..'));
-		await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(serializeBuoyFile(file)));
+		await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(serializeBuoyFile({ ...file, chapter })));
 	}
 
 	/** Where a chapter is, going by its last mark and the outline as it is now. */
@@ -186,11 +208,14 @@ export class Buoys implements vscode.Disposable {
 		return position ? this.place(at, position, 'init', text) : at;
 	}
 
-	/** Adds a mark at the end of the chapter's text as it is now. */
+	/** Adds a mark at the end of the chapter's text as it is now, to the marks the file has by then. */
 	private async place(at: ChapterPosition, position: Position, by: MarkSource, text: string): Promise<ChapterPosition> {
-		const file = at.file ?? { version: BUOY_VERSION, chapter: at.chapter, marks: [] };
-		file.marks.push(markAt(text, bodyLength(text), stateOf(position), by, new Date()));
-		await this.writeFile(at.index, file);
+		const file = await this.serial(async () => {
+			const now = (await this.load(at.index, at.chapter)) ?? { version: BUOY_VERSION, chapter: at.chapter, marks: [] };
+			now.marks.push(markAt(text, bodyLength(text), stateOf(position), by, new Date()));
+			await this.writeFile(at.index, at.chapter, now);
+			return now;
+		});
 		this.changed.fire();
 		return { ...at, file, position, lost: false };
 	}
@@ -248,9 +273,15 @@ export class Buoys implements vscode.Disposable {
 		return answer.text;
 	}
 
-	/** Whether a mark was added to the chapter while the model was being asked: the writer moved the buoys, and that stands. */
+	/**
+	 * Whether the chapter's marks or the outline changed while the model was
+	 * being asked: the writer moved the buoys, or files were renamed and the
+	 * marks followed. That stands, and the answer is about what is no more.
+	 */
 	private async overtaken(at: ChapterPosition): Promise<boolean> {
-		return ((await this.readFile(at.index, at.chapter))?.marks.length ?? 0) !== (at.file?.marks.length ?? 0);
+		const index = await this.hooks.indexes.get(at.index.folder);
+		const now = await this.readFile(index, at.chapter);
+		return (await index.outline()) !== at.graph || (now && serializeBuoyFile(now)) !== (at.file && serializeBuoyFile(at.file));
 	}
 
 	/** Asks whether the buoys moved since the last mark, and marks where they are now. */
@@ -375,6 +406,11 @@ export class Buoys implements vscode.Disposable {
 	 * buoy file follow the outline files they name.
 	 */
 	private async renamed(files: ReadonlyArray<{ oldUri: vscode.Uri; newUri: vscode.Uri }>): Promise<void> {
+		await this.serial(() => this.followRenames(files));
+		await this.follow();
+	}
+
+	private async followRenames(files: ReadonlyArray<{ oldUri: vscode.Uri; newUri: vscode.Uri }>): Promise<void> {
 		const fs = vscode.workspace.fs;
 		const exists = (uri: vscode.Uri) => fs.stat(uri).then(() => true, () => false);
 		for (const index of await this.hooks.indexes.all()) {
@@ -400,17 +436,16 @@ export class Buoys implements vscode.Disposable {
 			const prefix = `${BUOY_FOLDER}/`;
 			for (const uri of await vscode.workspace.findFiles(new vscode.RelativePattern(index.storyUri, `${BUOY_FOLDER}/**/*.json`))) {
 				const chapter = index.relative(uri)!.slice(prefix.length, -'.json'.length);
-				const file = await this.readFile(index, chapter);
+				const file = await this.load(index, chapter);
 				if (!file) {
 					continue;
 				}
 				const after: BuoyFile = { ...file, chapter, marks: file.marks.map((mark) => ({ ...mark, state: renameState(mark.state, renames) })) };
 				if (serializeBuoyFile(after) !== serializeBuoyFile(file)) {
-					await this.writeFile(index, after);
+					await this.writeFile(index, chapter, after);
 				}
 			}
 		}
-		await this.follow();
 	}
 
 	dispose(): void {

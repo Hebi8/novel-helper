@@ -16,7 +16,10 @@
 //
 // Flags: --resume, --system-prompt and --close declare those capabilities,
 // --modes starts sessions in a mode called `auto` next to one called
-// `default`, --auth makes it ask for a login.
+// `default` (and --mode-fails refuses to change it), --auth makes it ask for
+// a login. --init-fails answers the first request with an error and lives
+// on; --init-hangs does not answer it at all. --pid=FILE writes the
+// process id to FILE on start.
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -25,6 +28,10 @@ import { Readable, Writable } from 'node:stream';
 async function main(): Promise<void> {
 	const acp = await import('@agentclientprotocol/sdk');
 	const flags = new Set(process.argv.slice(2));
+	const pidFile = process.argv.find((flag) => flag.startsWith('--pid='))?.slice('--pid='.length);
+	if (pidFile) {
+		fs.writeFileSync(pidFile, String(process.pid));
+	}
 	const cancels = new Map<string, () => void>();
 	let cwd = process.cwd();
 	let system = '(none)';
@@ -40,16 +47,24 @@ async function main(): Promise<void> {
 
 	acp
 		.agent({ name: 'fake' })
-		.onRequest(acp.methods.agent.initialize, () => ({
-			protocolVersion: acp.PROTOCOL_VERSION,
-			agentCapabilities: {
-				sessionCapabilities: {
-					...(flags.has('--resume') && { resume: {} }),
-					...(flags.has('--system-prompt') && { systemPrompt: {} }),
-					...(flags.has('--close') && { close: {} }),
+		.onRequest(acp.methods.agent.initialize, async () => {
+			if (flags.has('--init-fails')) {
+				throw acp.RequestError.internalError(undefined, 'not today');
+			}
+			if (flags.has('--init-hangs')) {
+				await new Promise(() => undefined);
+			}
+			return {
+				protocolVersion: acp.PROTOCOL_VERSION,
+				agentCapabilities: {
+					sessionCapabilities: {
+						...(flags.has('--resume') && { resume: {} }),
+						...(flags.has('--system-prompt') && { systemPrompt: {} }),
+						...(flags.has('--close') && { close: {} }),
+					},
 				},
-			},
-		}))
+			};
+		})
 		.onRequest(acp.methods.agent.session.new, ({ params }) => {
 			if (flags.has('--auth')) {
 				throw acp.RequestError.authRequired();
@@ -58,6 +73,9 @@ async function main(): Promise<void> {
 			return { sessionId: `fake-${process.pid}-${++sessions}`, ...modes() };
 		})
 		.onRequest(acp.methods.agent.session.setMode, ({ params }) => {
+			if (flags.has('--mode-fails')) {
+				throw acp.RequestError.internalError(undefined, 'cannot change the mode');
+			}
 			mode = params.modeId;
 			return {};
 		})

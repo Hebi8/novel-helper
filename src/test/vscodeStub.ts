@@ -179,6 +179,8 @@ export interface Started {
 	asked: Asked[];
 	/** What was shown with showInformationMessage, showWarningMessage and showErrorMessage. */
 	messages: string[];
+	/** The `detail` of those that had one. */
+	details: string[];
 	/** The webview views that were registered, by id. */
 	webviews: Record<string, Any>;
 	/** What was opened in the diff editor: `[left, right, title]`. */
@@ -242,6 +244,7 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 	const answers: Started['answers'] = [];
 	const asked: Asked[] = [];
 	const messages: string[] = [];
+	const details: string[] = [];
 	const webviews: Started['webviews'] = {};
 	const diffs: Started['diffs'] = [];
 	const external: string[] = [];
@@ -308,6 +311,9 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 	// A modal message waits for one of its buttons: the next scripted answer picks it. Any other message is only noted.
 	const message = async (text: string, ...rest: Any[]) => {
 		messages.push(text);
+		if (rest[0]?.detail !== undefined) {
+			details.push(rest[0].detail);
+		}
 		return rest[0]?.modal ? answers.shift()!(rest.slice(1)) : undefined;
 	};
 
@@ -606,6 +612,7 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 		answers,
 		asked,
 		messages,
+		details,
 		webviews,
 		diffs,
 		external,

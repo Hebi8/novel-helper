@@ -3,9 +3,10 @@
 
 import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import fsp = require('node:fs/promises');
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { after, describe, test } from 'node:test';
+import { after, describe, mock, test } from 'node:test';
 import { changeKind, diff, expired, looksBinary, MAX_FILE_BYTES, parseRecord, referenced, restorePlan, skipsFolder, SNAPSHOT_DIR, titleOf } from '../core/snapshot';
 import { SnapshotStore } from '../storage/snapshotStore';
 import { filesIn } from './vscodeStub';
@@ -161,8 +162,10 @@ describe('turns', () => {
 				{ path: '正文/第2章.md', hash: first.files['正文/第2章.md'] },
 			],
 			remove: ['正文/第3章.md'],
+			blocked: [],
 		});
-		const back = await one.store.revert(first.id);
+		const { record: back, blocked } = await one.store.revert(first.id);
+		assert.deepEqual(blocked, []);
 		assert.deepEqual(one.files(), ['正文/第1章.md', '正文/第2章.md', '资料/地图.png']);
 		assert.equal(one.read('正文/第1章.md'), '一');
 		assert.equal(one.read('正文/第2章.md'), '二');
@@ -182,9 +185,9 @@ describe('turns', () => {
 		one.write('正文/第1章.md', '一改');
 		await one.store.finish(record.id);
 		one.write('正文/第1章.md', '一');
-		assert.equal(await one.store.revert(record.id), undefined);
+		assert.deepEqual(await one.store.revert(record.id), { blocked: [] });
 		assert.equal((await one.store.list()).length, 1);
-		assert.equal(await one.store.revert(99), undefined);
+		assert.deepEqual(await one.store.revert(99), { blocked: [] });
 	});
 
 	test('only the newest records are kept, and contents nothing refers to are removed', async () => {
@@ -200,6 +203,117 @@ describe('turns', () => {
 		assert.equal(one.objects(), 4);
 		await one.store.revert(records[0].id);
 		assert.equal(one.read('正文/第1章.md'), '2');
+	});
+
+	test('going back does not write over what no snapshot holds now: it says which files, and changes nothing', async () => {
+		const chapters = ['正文/第1章.md', '正文/第2章.md', '正文/第3章.md', '正文/第4章.md', '正文/第5章.md'];
+		const one = story({ ...Object.fromEntries(chapters.map((chapter) => [chapter, '原样'])), '摘要/第1章.md': '摘要' });
+		const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-helper-outside-'));
+		made.push(outside);
+		fs.writeFileSync(path.join(outside, 'kept.md'), '目录外的文件');
+		const first = await one.store.begin({ kind: 'turn', title: '改' });
+		// Since the turn began: one chapter changed like any other, and the others became things a snapshot leaves out.
+		one.write('正文/第1章.md', '改了');
+		one.write('正文/第2章.md', Buffer.alloc(MAX_FILE_BYTES + 1, 0x61));
+		one.write('正文/第3章.md', Buffer.from([0x50, 0x4b, 0, 1]));
+		one.remove('正文/第4章.md');
+		fs.symlinkSync(path.join(outside, 'kept.md'), path.join(one.dir, '正文/第4章.md'));
+		one.remove('正文/第5章.md');
+		one.write('正文/第5章.md/草稿.md', '成了文件夹');
+		fs.rmSync(path.join(one.dir, '摘要'), { recursive: true });
+		fs.symlinkSync(outside, path.join(one.dir, '摘要'));
+		await one.store.finish(first.id);
+
+		const inTheWay = [
+			{ path: '摘要/第1章.md', why: 'link' },
+			{ path: '正文/第2章.md', why: 'large' },
+			{ path: '正文/第3章.md', why: 'binary' },
+			{ path: '正文/第4章.md', why: 'link' },
+			{ path: '正文/第5章.md', why: 'taken' },
+		];
+		assert.deepEqual((await one.store.preview(first.id))?.blocked, inTheWay);
+		const before = (await one.store.list()).length;
+		assert.deepEqual(await one.store.revert(first.id), { blocked: inTheWay });
+		assert.equal(one.read('正文/第1章.md'), '改了', 'not even the file that could have been put back');
+		assert.equal(fs.statSync(path.join(one.dir, '正文/第2章.md')).size, MAX_FILE_BYTES + 1);
+		assert.deepEqual([...fs.readFileSync(path.join(one.dir, '正文/第3章.md'))], [0x50, 0x4b, 0, 1]);
+		assert.ok(fs.lstatSync(path.join(one.dir, '正文/第4章.md')).isSymbolicLink());
+		assert.equal(one.read('正文/第5章.md/草稿.md'), '成了文件夹');
+		assert.deepEqual(fs.readdirSync(outside), ['kept.md']);
+		assert.equal(fs.readFileSync(path.join(outside, 'kept.md'), 'utf8'), '目录外的文件');
+		assert.equal((await one.store.list()).length, before, 'and no record of a going back that did not happen');
+
+		// With those out of the way, going back goes through.
+		for (const file of ['正文/第2章.md', '正文/第3章.md', '正文/第4章.md', '正文/第5章.md', '摘要']) {
+			fs.rmSync(path.join(one.dir, file), { recursive: true });
+		}
+		assert.deepEqual((await one.store.revert(first.id)).blocked, []);
+		assert.deepEqual(one.files(), ['摘要/第1章.md', ...chapters]);
+		assert.deepEqual(one.files().map(one.read), ['摘要', '原样', '原样', '原样', '原样', '原样']);
+		assert.deepEqual(fs.readdirSync(outside), ['kept.md']);
+	});
+
+	test('a window that dies while it writes a record leaves the record as it was, and what the record needs is kept', async () => {
+		const one = story({ '正文/第1章.md': '一' });
+		const record = await one.store.begin({ kind: 'turn', title: '改' });
+		one.write('正文/第1章.md', '一改');
+		// The end of the turn: the file the record is being written to is opened, emptied, and that is as far as it gets.
+		const writeFile = fsp.writeFile;
+		const cut = mock.method(fsp, 'writeFile', async (...args: Parameters<typeof fsp.writeFile>) => {
+			if (String(args[0]).includes(`${path.sep}turns${path.sep}`)) {
+				cut.mock.restore();
+				await writeFile(args[0], '');
+				throw new Error('killed');
+			}
+			return writeFile(...args);
+		});
+		await assert.rejects(one.store.finish(record.id), /killed/);
+
+		// The window is opened again; another turn comes and goes, and clears away what nothing refers to.
+		const again = new SnapshotStore(one.dir, () => 50);
+		assert.deepEqual((await again.list()).map((kept) => kept.id), [record.id]);
+		const next = await again.begin({ kind: 'turn', title: '再改' });
+		one.write('正文/第1章.md', '一再改');
+		await again.finish(next.id);
+		assert.deepEqual(filesIn(path.join(one.dir, SNAPSHOT_DIR, 'turns')), ['000001.json', '000002.json'], 'what was half-written is cleared away');
+		await again.revert(record.id);
+		assert.equal(one.read('正文/第1章.md'), '一');
+	});
+
+	test('two windows that start a turn at the same moment get a record each', async () => {
+		const one = story({ '正文/第1章.md': '一' });
+		const other = new SnapshotStore(one.dir, () => 50);
+		const records = await Promise.all([one.store.begin({ kind: 'turn', title: '甲' }), other.begin({ kind: 'turn', title: '乙' })]);
+		assert.deepEqual(records.map((record) => record.id).sort(), [1, 2]);
+		assert.deepEqual((await one.store.list()).map((record) => record.title).sort(), ['乙', '甲']);
+	});
+
+	test('what one window has kept for a record it is about to write is not cleared away by another that ends a turn', async () => {
+		const one = story({ '正文/第1章.md': '一' });
+		const other = new SnapshotStore(one.dir, () => 50);
+		const first = await other.begin({ kind: 'turn', title: '乙' });
+		one.write('正文/第1章.md', '二');
+		// This window has read the folder and is held up right before it writes its record.
+		let reached!: () => void;
+		const there = new Promise<void>((resolve) => (reached = resolve));
+		const turns = path.join(one.dir, SNAPSHOT_DIR, 'turns');
+		const readdir = fsp.readdir as (...args: unknown[]) => Promise<unknown>;
+		const hold = mock.method(fsp as unknown as { readdir: typeof readdir }, 'readdir', async (...args: unknown[]) => {
+			if (args[0] === turns) {
+				hold.mock.restore();
+				reached();
+				await new Promise((resolve) => setTimeout(resolve, 300));
+			}
+			return readdir(...args);
+		});
+		const beginning = one.store.begin({ kind: 'turn', title: '甲' });
+		await there;
+		// Meanwhile the other window's turn ends, with the file changed once more.
+		one.write('正文/第1章.md', '三');
+		await other.finish(first.id);
+		const second = await beginning;
+		assert.equal((await one.store.read(second.files['正文/第1章.md'])).toString(), '二');
+		assert.deepEqual((await one.store.list()).map((record) => record.id), [1, 2]);
 	});
 
 	test('a record left without its end (the window was closed during the turn) can still be gone back to', async () => {
