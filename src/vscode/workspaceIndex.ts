@@ -4,6 +4,7 @@
 
 import * as vscode from 'vscode';
 import { type FileKind, globFolders, globRootDepth, Library } from '../core/library';
+import { buildOutline, type OutlineGraph } from '../core/outline';
 import { isUsable, type Marker, normalizeStoryFolder, storyState, type StoryState } from '../core/story';
 import { filePatterns, storyFolderSetting } from './config';
 import { findStories, readMarker } from './story';
@@ -25,6 +26,9 @@ export class FolderIndex implements vscode.Disposable {
 	private readonly disposables: vscode.Disposable[] = [];
 	/** Counts events per lore file, so a slow read cannot undo a later change or deletion. */
 	private readonly loreEvents = new Map<string, number>();
+
+	/** The outline graph as last read; dropped when an outline file is made, saved or removed. */
+	private outlineGraph?: Promise<OutlineGraph>;
 
 	/** After the first scan, every change to the library is announced. */
 	private loaded = false;
@@ -87,6 +91,16 @@ export class FolderIndex implements vscode.Disposable {
 		return vscode.Uri.joinPath(this.storyUri, ...relative.split('/'));
 	}
 
+	/** The outline as a graph, from the outline files as they are (an open editor's text if there is one). */
+	outline(): Promise<OutlineGraph> {
+		this.outlineGraph ??= (async () => {
+			const { files, book } = this.library.outlines();
+			const read = await Promise.all(files.map(async (file) => ({ ...file, content: await readText(this.uri(file.path)).catch(() => '') })));
+			return buildOutline(read, { file: book.outline, name: book.name });
+		})();
+		return this.outlineGraph;
+	}
+
 	private async load(): Promise<void> {
 		// A setting that points out of the workspace folder is not followed: nothing is read.
 		if (this.story !== undefined) {
@@ -134,7 +148,7 @@ export class FolderIndex implements vscode.Disposable {
 						watcher.onDidCreate((uri) => this.add(kind, uri, rootDepth)),
 						watcher.onDidDelete((uri) => this.remove(kind, uri)),
 					);
-					if (kind === 'lore') {
+					if (kind === 'lore' || kind === 'outline') {
 						this.disposables.push(watcher.onDidChange((uri) => this.add(kind, uri, rootDepth)));
 					}
 					const uris = await vscode.workspace.findFiles(pattern);
@@ -154,6 +168,7 @@ export class FolderIndex implements vscode.Disposable {
 		// The watchers are rooted in the story folder: what they report is inside it.
 		const path = this.relative(uri)!;
 		if (kind !== 'lore') {
+			this.outlineGraph = kind === 'outline' ? undefined : this.outlineGraph;
 			this.library.addFile(kind, path, rootDepth);
 			this.changed();
 			return;
@@ -180,6 +195,7 @@ export class FolderIndex implements vscode.Disposable {
 			this.loreEvent(path);
 			this.library.deleteLore(path);
 		} else {
+			this.outlineGraph = kind === 'outline' ? undefined : this.outlineGraph;
 			this.library.deleteFile(kind, path);
 		}
 		this.changed();

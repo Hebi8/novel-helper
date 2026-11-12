@@ -6,8 +6,9 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { after, describe, test } from 'node:test';
+import { type BuoyFile, type BuoyState, buoyPath, serializeBuoyFile } from '../core/buoy';
 import { MARKER_FILE, serializeMarker } from '../core/story';
-import { fakeServer, OPENAI_END, OPENAI_START, openaiText, stream } from './fakeServer';
+import { fakeServer, type FakeServer, OPENAI_END, OPENAI_START, openaiText, stream } from './fakeServer';
 import { filesIn, start, type Started } from './vscodeStub';
 
 const MARKER = serializeMarker({ version: 1, language: 'zh' });
@@ -306,5 +307,183 @@ describe('ghost text', () => {
 		} finally {
 			await server.close();
 		}
+	});
+});
+
+describe('position on the outline', () => {
+	const OUTLINE = {
+		'大纲/全书.md': '全书的概述',
+		'大纲/第1章.md': '## 来信\n\n信送不出去。\n→ 没有的节点\n\n## 等门\n\n等到傍晚。\n',
+		'大纲/第2章.md': '## 收信\n\n周伯收下信。\n',
+	};
+	const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) };
+	const servers: FakeServer[] = [];
+	after(() => Promise.all(servers.map((server) => server.close())));
+
+	/** A workspace with the outline above and these chapters, and a model that gives `answers` in turn to the questions about the position. */
+	const setup = async (chapters: Record<string, string>, answers: string[] = [], files: Record<string, string> = {}, settings: Record<string, unknown> = {}) => {
+		const asked: string[] = [];
+		const prompts: string[] = [];
+		const server = await fakeServer((res, request) => {
+			const [system, user] = (request.body.messages as Array<{ content: string }>).map((message) => message.content);
+			const position = system.startsWith('你在帮一位小说作者');
+			(position ? asked : prompts).push(user);
+			return stream(res, [OPENAI_START, openaiText(position ? (answers.shift() ?? '') : '灯还亮着。'), OPENAI_END]);
+		});
+		servers.push(server);
+		const one = await workspace(
+			{ ...OUTLINE, ...files, ...Object.fromEntries(Object.entries(chapters).map(([name, text]) => [`正文/${name}.md`, text])) },
+			{ 'novelHelper.provider': 'openaiCompatible', 'novelHelper.openaiCompatible.baseUrl': server.baseUrl, 'novelHelper.openaiCompatible.model': 'local', 'novelHelper.debounceMs': 0, ...settings },
+		);
+		const open = (chapter: string) => one.vscode.window.showTextDocument(one.vscode.Uri.file(path.join(one.workspace, `正文/${chapter}.md`)));
+		const suggest = async (chapter: string) => {
+			await open(chapter);
+			const { document } = one.vscode.window.activeTextEditor;
+			await one.providers.inline.provideInlineCompletionItems(document, document.positionAt(document.getText().length), { triggerKind: 1 }, token);
+			await one.settle();
+		};
+		const marks = (chapter: string) =>
+			(JSON.parse(one.read(buoyPath(`正文/${chapter}.md`))) as BuoyFile).marks.map((mark) => `${mark.by} ${mark.state.kind}: ${mark.state.nodes.map((node) => node.title).join(', ')}`);
+		const node = (...titles: string[]) => one.find('novelHelper.outline', '全书', ...titles);
+		return { one, asked, prompts, open, suggest, marks, node };
+	};
+	const state = (kind: BuoyState['kind'], ...ids: string[]): BuoyState => ({ kind, nodes: ids.map((id) => ({ id, title: id.slice(id.lastIndexOf('#') + 1) })) });
+	/** A buoy file whose only mark was made when the chapter had `chars` characters. */
+	const marked = (chapter: string, chars: number, at: BuoyState) =>
+		({ [buoyPath(`正文/${chapter}.md`)]: serializeBuoyFile({ version: 1, chapter: `正文/${chapter}.md`, marks: [{ at: chars, before: '', chars, time: '2026-11-12T00:00:00.000Z', by: 'manual', state: at }] }) });
+	const long = (chars: number) => '他等了很久。'.repeat(Math.ceil(chars / 6)).slice(0, chars);
+
+	test('a chapter that is starting is put on the outline without asking the model, and the prompt says where it is', async () => {
+		const { one, asked, prompts, suggest, marks } = await setup({ 第1章: '', 第2章: '' });
+		await suggest('第1章');
+		assert.deepEqual(marks('第1章'), ['init in: 来信'], 'the first leaf of the outline file of its name');
+		assert.match(prompts[0], /<上层大纲>\n【全书】\n全书的概述\n<\/上层大纲>\n\n<当前位置>\n正文现在写到【来信】。\n\n【来信】\n信送不出去。\n\n接下来是：\n【等门】\n等到傍晚。\n<\/当前位置>/);
+		assert.doesNotMatch(prompts[0], /<本章大纲>/);
+		await one.commands['novelHelper.position.forward']();
+		await suggest('第2章');
+		assert.deepEqual(marks('第2章'), ['init in: 等门'], 'where the chapter before it ended');
+		assert.deepEqual(asked, []);
+		assert.ok(one.files().includes('.novel-helper/buoys/正文/第1章.md.json'));
+	});
+
+	test('grown by the update length: the model is asked in the background whether it moved, and the answer is marked', async () => {
+		const text = long(1200);
+		const { one, asked, prompts, suggest, marks } = await setup({ 第1章: text }, ['3', '乱答'], marked('第1章', 150, state('in', '大纲/第1章.md#来信')));
+		await suggest('第1章');
+		assert.equal(asked.length, 1);
+		assert.match(prompts[0], /正文现在写到【来信】。/, 'the continuation goes out with the position as it was');
+		assert.match(asked[0], /<当前位置>\n正文现在写到【来信】。\n<\/当前位置>/);
+		assert.match(asked[0], /<最近的正文>\n他等了很久。/, 'from a little before the last mark; here that is the start');
+		assert.match(asked[0], /1\. 还在【来信】里\n2\. 【来信】的内容基本写完了，正在写它和【等门】之间的衔接\n3\. 已经在写【等门】的内容\n\n只回答一个编号。$/);
+		assert.deepEqual(marks('第1章'), ['manual in: 来信', 'auto in: 等门']);
+		const last = (JSON.parse(one.read(buoyPath('正文/第1章.md'))) as BuoyFile).marks[1];
+		assert.deepEqual([last.at, last.chars, last.before], [1200, 1200, text.slice(-30)]);
+		const ledger = JSON.parse(fs.readFileSync(path.join(one.storage, 'usage.json'), 'utf8')) as Record<string, Record<string, { requests: number }>>;
+		assert.deepEqual(Object.fromEntries(Object.entries(Object.values(ledger)[0]).map(([key, totals]) => [key, totals.requests])), { 'openaiCompatible/local': 1, 'openaiCompatible/local#position': 1 });
+
+		await suggest('第1章');
+		assert.equal(asked.length, 1, 'not asked again until the chapter has grown again');
+		one.vscode.window.activeTextEditor.document.content = long(2300);
+		await suggest('第1章');
+		assert.equal(asked.length, 2);
+		assert.match(asked[1], /<最近的正文>\n（前略）/);
+		assert.deepEqual(marks('第1章').slice(2), ['auto in: 等门'], 'an answer that cannot be read moves nothing, and is marked so');
+	});
+
+	test('a chapter with text and no position: the model searches the whole outline; an answer that names no node is not asked for again at once', async () => {
+		const { asked, prompts, suggest, marks, one } = await setup({ 第1章: long(400), 第2章: long(400) }, ['3', '没有这样的节点']);
+		await suggest('第2章');
+		assert.match(asked[0], /^<大纲节点>\n1\. 第1章 › 来信：信送不出去。\n2\. 第1章 › 等门：等到傍晚。\n3\. 第2章 › 收信：周伯收下信。\n<\/大纲节点>\n\n<本章正文 文件="第2章">\n他等了很久。/);
+		assert.match(prompts[0], /<本章大纲>\n## 收信/, 'until it is found, the chapter goes by the outline file of its name');
+		assert.deepEqual(marks('第2章'), ['relocate in: 收信']);
+		await suggest('第2章');
+		assert.match(prompts[1], /<当前位置>\n正文现在写到【收信】。\n\n【收信】\n周伯收下信。\n<\/当前位置>/, 'the last leaf: nothing comes next');
+
+		await suggest('第1章');
+		await suggest('第1章');
+		assert.equal(asked.length, 2, 'asked once');
+		assert.ok(!one.files().includes('.novel-helper/buoys/正文/第1章.md.json'));
+	});
+
+	test('with the update length at 0 the model is never asked; a chapter that is starting is still placed', async () => {
+		const { asked, suggest, marks, one } = await setup({ 第1章: '', 第2章: long(1500) }, [], {}, { 'novelHelper.position.updateChars': 0 });
+		await suggest('第1章');
+		await suggest('第2章');
+		assert.deepEqual(marks('第1章'), ['init in: 来信']);
+		assert.ok(!one.files().includes('.novel-helper/buoys/正文/第2章.md.json'));
+		assert.deepEqual(asked, []);
+	});
+
+	test('the outline view shows the nodes, the links that lead nowhere, and where the chapter is; the buoys are moved from it and by command', async () => {
+		const { one, open, marks, node } = await setup({ 第1章: long(300) });
+		assert.deepEqual(await one.labels('novelHelper.outline'), ['全书', '  第1章', '    来信', '    等门', '  第2章', '    收信']);
+		const item = async (...titles: string[]) => one.trees['novelHelper.outline'].getTreeItem(await node(...titles));
+		assert.equal((await item('第1章', '来信')).description, '→ 没有的节点: no such node');
+		assert.deepEqual((await item('第1章', '等门')).command.arguments.map((argument: any) => argument.path ?? argument.selection.start.line), [path.join(one.workspace, '大纲/第1章.md'), 5]);
+
+		await one.commands['novelHelper.position.forward']();
+		assert.match(one.messages.at(-1)!, /^Open a chapter first/);
+		await open('第1章');
+		await one.settle();
+		assert.equal(one.views['novelHelper.outline'].message, '第1章: no position on the outline yet');
+		await one.commands['novelHelper.outline.placeHere'](await node('第1章'));
+		await one.settle();
+		assert.equal((await item('第1章', '来信')).description, '◉ the chapter is here · → 没有的节点: no such node');
+		assert.equal(one.views['novelHelper.outline'].message, '第1章: in 【来信】');
+		assert.match(one.statusItem.tooltip, /\n\n第1章 on the outline: in 【来信】\n\n/);
+
+		// The outline file has the focus now: the commands still mean the chapter.
+		await one.vscode.window.showTextDocument(one.vscode.Uri.file(path.join(one.workspace, '大纲/第1章.md')));
+		await one.commands['novelHelper.outline.bridgeTo'](await node('第2章', '收信'));
+		assert.deepEqual([(await item('第1章', '来信')).description.split(' · ')[0], (await item('第2章', '收信')).description], ['◉ the chapter is leaving here', '→ the chapter is heading here']);
+		assert.equal((await item('第2章', '收信')).contextValue, 'outlineSecond');
+		await one.commands['novelHelper.outline.addParallel'](await node('第1章', '等门'));
+		await one.commands['novelHelper.outline.dropSecond']();
+		await one.commands['novelHelper.position.forward']();
+		await one.commands['novelHelper.position.forward']();
+		await one.commands['novelHelper.position.forward']();
+		assert.match(one.messages.at(-1)!, /last node of the outline/);
+		await one.commands['novelHelper.position.back']();
+		assert.deepEqual(marks('第1章'), ['manual in: 来信', 'manual bridge: 来信, 收信', 'manual parallel: 来信, 等门', 'manual in: 来信', 'manual in: 等门', 'manual in: 收信', 'manual in: 等门']);
+	});
+
+	test('"Let the Model Find the Position" asks at once and says what came of it', async () => {
+		const { one, open, asked, marks } = await setup({ 第1章: long(50) }, ['2', '？']);
+		await open('第1章');
+		await one.commands['novelHelper.position.relocate']();
+		assert.equal(asked.length, 1);
+		assert.deepEqual(marks('第1章'), ['relocate in: 等门']);
+		assert.equal(one.messages.at(-1), '第1章 is in 【等门】.');
+		await one.commands['novelHelper.position.relocate']();
+		assert.match(one.messages.at(-1)!, /did not name a node of the outline/);
+		assert.deepEqual(marks('第1章'), ['relocate in: 等门']);
+	});
+
+	test('renaming a chapter in the sidebar takes its buoys along, and the buoys of every chapter follow the outline file renamed with it', async () => {
+		const { one, marks } = await setup(
+			{ 第1章: '', 第2章: '' },
+			[],
+			{ ...marked('第1章', 0, state('in', '大纲/第1章.md#等门')), ...marked('第2章', 0, state('bridge', '大纲/第1章.md#等门', '大纲/第2章.md#收信')) },
+		);
+		await rename(one, child(await book(one), '第1章'), '第1章 来信');
+		await one.settle();
+		const files = one.files().filter((file) => file.startsWith('.novel-helper/'));
+		assert.deepEqual(files, ['.novel-helper/buoys/正文/第1章 来信.md.json', '.novel-helper/buoys/正文/第2章.md.json']);
+		const moved = JSON.parse(one.read(files[0])) as BuoyFile;
+		assert.deepEqual([moved.chapter, moved.marks[0].state.nodes[0].id], ['正文/第1章 来信.md', '大纲/第1章 来信.md#等门']);
+		assert.deepEqual((JSON.parse(one.read(files[1])) as BuoyFile).marks[0].state.nodes.map((ref) => ref.id), ['大纲/第1章 来信.md#等门', '大纲/第2章.md#收信']);
+		assert.deepEqual(marks('第2章'), ['manual bridge: 等门, 收信']);
+	});
+
+	test('a heading renamed in the outline: the buoys are lost, said so, and searched for again', async () => {
+		const { one, open, asked, suggest, marks } = await setup({ 第1章: long(300) }, ['2'], marked('第1章', 300, state('in', '大纲/第1章.md#等门')));
+		one.write('大纲/第1章.md', '## 来信\n\n## 等到傍晚\n');
+		one.changedOutside('change', '大纲/第1章.md');
+		await open('第1章');
+		await one.settle();
+		assert.equal(one.views['novelHelper.outline'].message, '第1章: lost: 【等门】 is no longer in the outline');
+		await suggest('第1章');
+		assert.equal(asked.length, 1);
+		assert.deepEqual(marks('第1章'), ['manual in: 等门', 'relocate in: 等到傍晚']);
 	});
 });

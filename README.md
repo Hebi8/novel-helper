@@ -10,8 +10,8 @@ Built for long Chinese web novels first (one chapter per file, hundreds of chapt
 
 ## Install
 
-1. Build `novel-helper-0.3.2.vsix` (see [Build from source](#build-from-source)).
-2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.3.2.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
+1. Build `novel-helper-0.3.4.vsix` (see [Build from source](#build-from-source)).
+2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.3.4.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
 
 ## Set an API key
 
@@ -45,7 +45,7 @@ The OpenAI provider marks cache breakpoints the way GPT-5.6 and later expect (se
 
 ## The sidebar
 
-The activity bar has a Novel Helper icon with three views. The sidebar lays out the structure and changes the fixed fields; the content is always written in the Markdown file it opens.
+The activity bar has a Novel Helper icon with four views. The sidebar lays out the structure and changes the fixed fields; the content is always written in the Markdown file it opens.
 
 **Book**: book → volume → arc → chapter, as one tree: the chapters folder as it is (in a flat workspace the chapters sit right under the book).
 
@@ -55,6 +55,8 @@ The activity bar has a Novel Helper icon with three views. The sidebar lays out 
 - **Rename** in the context menu of a volume, arc or chapter renames its outline and summary with it, and the folders of that name in the outline and summary folders: one step, and Undo takes it back. When a folder or file that would go along is used from elsewhere too (same-named arcs of two volumes sharing one outline folder, say), nothing is renamed, not one file is touched, and you are told what is shared by whom; give each its own first, or rename by hand.
 - There is no delete and no drag and drop; delete and move files in the Explorer and the tree follows.
 
+**Outline**: the folders, files and headings of the outline folder as a tree, with the links between nodes and the node the current chapter is in; the buoys are moved here. See [The outline as a graph](#the-outline-as-a-graph-and-where-a-chapter-is-on-it).
+
 **Lore**: entries grouped by type (`type` in the frontmatter; without one, the top folder the file is in).
 
 - Click an entry to open it. Its line says whether it is always on and what its aliases are.
@@ -63,7 +65,7 @@ The activity bar has a Novel Helper icon with three views. The sidebar lays out 
 
 **Settings and Usage**: one row each, click to change: [the story folder](#the-story-folder), ghost text on or off, automatic or manual trigger, provider, model, API key (shown only as saved or not set, never the key), today's and this month's requests and estimated cost (click for the details), the daily limit, and what was last sent to the model.
 
-**Starting a book**: in an empty folder the sidebar offers **Initialize Here** (**Initialize Novel Workspace** in the Command Palette). It asks where the story goes and whether its folders get Chinese or English names (see [The story folder](#the-story-folder)), then lists what it can create and you tick what you want: the folders for chapters, outlines, summaries and lore, an outline of the whole book with headings only, an always-on style entry, and optionally a first volume (`正文/第一卷/第1章.md` and `大纲/第一卷.md`). What exists is not listed and never overwritten.
+**Starting a book**: in an empty folder the sidebar offers **Initialize Here** (**Initialize Novel Workspace** in the Command Palette). It asks where the story goes and whether its folders get Chinese or English names (see [The story folder](#the-story-folder)), then lists what it can create and you tick what you want: the folders for chapters, outlines, summaries and lore, an outline of the whole book with a few labels to fill in, an always-on style entry, and optionally a first volume (`正文/第一卷/第1章.md` and `大纲/第一卷.md`). What exists is not listed and never overwritten.
 
 ## The story folder
 
@@ -143,6 +145,38 @@ The entry's text. Without a summary, its first 500 characters are sent.
 
 Chapters are ordered by path, numbers compared by value: 第2章 before 第10章, 第九章 before 第十二章, 卷二 before 卷十.
 
+## The outline as a graph, and where a chapter is on it
+
+The outline is more than a synopsis per chapter: the whole outline folder is a graph, a chapter has a position on it (its buoys), and a continuation takes the part of the outline that position points at.
+
+**Nodes and their order.** Every folder below the outline folder, every file, and every heading in a file is a node: folders hold files, files hold headings, and the outline file of the whole book is the root. A file and the folder of the same name (`第一卷 雾港.md` and `第一卷 雾港/`) are one node; the file says what the folder is about. A single `# title` at the top of a file is the file's own title, not a node; a file without headings is one node. A node's text is what is written under its heading, up to the next heading.
+
+The nodes with nothing below them (the leaves), in order, are the main line of the story: files by name (numbers by value, as for chapters), headings as written. Each leaf leads to the next. The outline need not mirror the chapters folder: one outline file can cover several chapters, and one chapter can run over several nodes.
+
+**Links.** A line `→ title` on its own in a node (`->` works too) says that the story can go from this node to that one: a branch, a merge, a jump.
+
+```markdown
+## 渡海
+
+陆青山不肯摆渡，林小满和陆青说服他。
+
+→ 点灯
+→ 第二卷 回潮/第13章#船回来
+```
+
+When two nodes have the same title, write `path below the outline folder#title` (with or without the extension); `#title` is a heading in the same file, and of two namesakes the one in the same file is taken. A link that names no node, or more than one, is flagged in the sidebar's **Outline** view. A link to a node that has nodes below it leads to its first leaf; a link written on such a node leaves from its last leaf.
+
+**Buoys.** A chapter has one or two, always on leaves, in one of three states: in a node; on the way from one node to another; in two nodes at once. For a chapter with buoys the request carries: the outline of the whole book, the nodes above the buoy's node, that node itself, the next node on the main line (up to `novelHelper.context.nextNodeChars` characters), and a sentence saying where the text is. Lore is brought in by the names in the buoy's node. A chapter without buoys works as before, by the outline file of its name.
+
+- A chapter that is just starting (under 200 characters) is placed the first time it asks for a continuation, without asking the model: where the chapter before it ended; if that one has no buoys, on the first leaf of the outline file of its own name.
+- After that, every time the chapter has grown by 1,000 characters (`novelHelper.position.updateChars`, `0` to turn it off; typed or accepted, it counts the same), the next request for a continuation also asks the model, in the background: still there, starting towards a neighbouring node, in a neighbouring node, or back in the one before. It can move one step along a link, each of two parallel buoys on its own; an answer that cannot be read moves nothing. That continuation does not wait for it and goes by the position as it was.
+- A chapter that has text but no buoys (a book taken up half-way), or whose buoy's node was renamed or removed in the outline, has the model search all the leaves once. **Novel Helper: Let the Model Find the Position on the Outline** does that at any time.
+- These requests use the continuation's provider and model, the answer is a number, and they have a row of their own in **Show Usage and Estimated Cost**. None is sent while ghost text is off, without a key, or over the daily limit.
+
+**By hand.** The sidebar's **Outline** view shows the nodes as a tree and marks where the current chapter is; clicking a node opens its file at the heading. On a node: put the chapter here, make it what the chapter is on its way to, add it as a second node told at once, take the second away. The view's title bar and the Command Palette have one step forward, one step back, and letting the model find the position. A position set by hand stands, and the automatic updates go on from it. While an outline file has the focus these still mean the chapter you last had open. The status bar item's tooltip has the position too.
+
+Buoys are kept in the story folder under `.novel-helper/buoys/`, one JSON file per chapter (`.novel-helper/buoys/正文/…/第2章 灯塔.md.json`), not in the chapter. Every change adds a mark: how far the text was when the buoys were found to be so; the last mark is where the chapter is now. Renaming a chapter or a volume in the sidebar or the explorer takes these files along, and renaming an outline file updates the nodes they name. Renaming a heading in the outline loses the buoys on it: the Outline view says so, and the model searches for them at the next continuation.
+
 ## Write
 
 - Pause at the end of a line in a chapter file: after 750 ms the gray text appears. **Tab** takes it; **Esc** or typing on drops it, and cancels a request still in flight.
@@ -150,7 +184,7 @@ Chapters are ordered by path, numbers compared by value: 第2章 before 第10章
 - The status bar item shows on, off and requesting; click it to switch. Set `novelHelper.trigger` to `manual` to ask only with Alt+\\.
 - A suggestion is at most 100 characters (`novelHelper.maxSuggestionChars`; punctuation, line breaks and indents count), in as many sentences and paragraphs as fit. The model may stop earlier, at a natural pause after a sentence. Text that runs past the limit is cut after the last 。！？… within it (with any closing quotes after it), and at the limit itself only when there is no sentence end before it.
 - Paragraphs are written the way the chapter writes them: a blank line between them or just a line break, a full-width indent at their start or none. That is read from the text before the cursor and applied to what the model wrote. When the line before the cursor is finished (it ends a sentence or with a colon, or it is a heading), a suggestion may begin with a new paragraph.
-- The prompt asks for the story to move on with every suggestion. With a chapter outline: work out which of its points the text has reached and head for the next one, without rewriting what is written or jumping far ahead. Without one: bring something new each time (action, dialogue, information, a change in the situation) and do not restate what the text already said. Nothing may contradict the lore, and key facts the lore does not have (rules of the world, a character's background and relations) are not made up; where the plot goes and the small details of a scene are the model's to write.
+- The prompt asks for the story to move on with every suggestion. With a position on the outline ([buoys](#the-outline-as-a-graph-and-where-a-chapter-is-on-it)): write on through the node the chapter is in, pass on to the next node when it is done, and do not jump past that one. Without buoys, with a chapter outline: work out which of its points the text has reached and head for the next one, without rewriting what is written or jumping far ahead. Without one: bring something new each time (action, dialogue, information, a change in the situation) and do not restate what the text already said. Nothing may contradict the lore, and key facts the lore does not have (rules of the world, a character's background and relations) are not made up; where the plot goes and the small details of a scene are the model's to write.
 - Replies that talk about the task ("好的，以下是续写：…") are not shown.
 - While an input method is still composing (pinyin right after Chinese text), no automatic request is sent.
 
@@ -160,7 +194,7 @@ Command Palette → **Novel Helper: Show Last Request to the Model** opens a rea
 
 - every entry that went in, and why: always-on, or which names matched, how often, how close to the cursor, named in the outline; with its size and whether its summary or text was used;
 - entries left out because their budget ran out;
-- for each level, the outline file used, how much of it, whether it was cut, and which levels have none; the previous chapters used, and how much of each;
+- for each level, the outline file used, how much of it, whether it was cut, and which levels have none; the chapter's position on the outline and the nodes that went in; the previous chapters used, and how much of each;
 - what the request used: input tokens at full price, read from cache and written to cache, output tokens, and the cost estimated from the prices;
 - the full prompt (cut where the cache breakpoints are), the request parameters (never the key), the model's raw reply, the ghost text it became, and the timing.
 
@@ -171,8 +205,8 @@ When the model ignores something you expected it to know, this page shows whethe
 In this order, the parts that change least first:
 
 1. Instructions and always-on entries.
-2. The outlines above the chapter, largest first: the book, the volume, the arc; then the previous chapters (summary, or the chapter's ending when it has none) and this chapter's outline. Each outline above the chapter has its own size cap and is cut beyond it.
-3. Entries whose names or aliases appear in this chapter before the cursor or in this chapter's outline. Each mention counts more the closer it is to the cursor; when the budget runs short the highest-ranked entries stay. Names in the outlines above the chapter do not count, or the book's outline would pull in every character.
+2. The outlines above the chapter, largest first: the book, the volume, the arc; then the previous chapters (summary, or the chapter's ending when it has none) and this chapter's outline. Each outline above the chapter has its own size cap and is cut beyond it. For a chapter with [buoys](#the-outline-as-a-graph-and-where-a-chapter-is-on-it) this part is: the outline of the book, the nodes above the buoy's node, the previous chapters, and the position (the buoy's node and the node after it). The buoys move about once in a thousand characters, and when they do the cache from this part on starts over once.
+3. Entries whose names or aliases appear in this chapter before the cursor or in this chapter's outline (with buoys, in the buoy's node). Each mention counts more the closer it is to the cursor; when the budget runs short the highest-ranked entries stay. Names in the outlines above the chapter do not count, or the book's outline would pull in every character.
 4. This chapter from its start to the cursor, and a little after it.
 
 Names are matched longest-first, so 「张三丰」 never counts as 「张三」. Names with Latin letters ignore case and need word boundaries: `Al` does not match inside `Also`.
@@ -257,7 +291,9 @@ The counts are what the provider reported for each request. Cost is tokens times
 | `novelHelper.context.entryChars` | `500` | Most taken from one entry |
 | `novelHelper.context.bookOutlineChars` | `1000` | Most taken from the whole book's outline |
 | `novelHelper.context.levelOutlineChars` | `800` | Most taken from the outline of each level in between (volume, arc) |
-| `novelHelper.context.outlineChars` | `800` | Most taken from this chapter's outline |
+| `novelHelper.context.outlineChars` | `800` | Most taken from this chapter's outline; with buoys, from each node the chapter is in |
+| `novelHelper.context.nextNodeChars` | `300` | With buoys: most taken from the node that comes next |
+| `novelHelper.position.updateChars` | `1000` | Characters a chapter grows by before the model is asked again where it is on the outline; `0` turns the automatic updates off |
 | `novelHelper.context.previousChapters` | `3` | Previous chapters included |
 | `novelHelper.context.previousChapterChars` | `400` | Most taken from each previous chapter |
 
@@ -266,11 +302,11 @@ Sizes are in characters; one Chinese character counts as one. The `files` and `c
 ## Try the example
 
 1. Open the [`examples/`](examples) folder of this repository as a workspace and set a key. Click the Novel Helper icon in the activity bar to see the book and the lore as trees.
-2. Open `正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md`, put the cursor at the end of the last line and wait for the gray text.
-3. Run **Show Last Request to the Model** to see what went in: which file served as the outline of the book, of 「第一卷 雾港」, of 「第一幕 来信」 and of the chapter; 「陆青山」 matched as itself, not as 「陆青」; 潮汐钟 came in through the chapter's outline.
+2. Open `正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md`, put the cursor at the end of the last line and wait for the gray text. In the **Outline** view this chapter is in 「周伯收信」 (the example comes with its buoy file, `.novel-helper/buoys/…`).
+3. Run **Show Last Request to the Model** to see what went in: the outline of the book, the two nodes above (「第一卷 雾港」, 「第一幕 来信」), the position 「周伯收信」 and the next node 「商量渡海」; 「陆青山」 matched as itself, not as 「陆青」. Put the chapter back in 「等门」 and ask again: 潮汐钟 now comes in because that node names it (the text only has the bell ringing).
 4. Ask for another suggestion, then run **Show Usage and Estimated Cost** to see how much of the second request's input was read from cache.
 
-第1章 has a summary and 第2章 does not: create `第3章.md` in the same folder and its request carries the end of 第2章 instead.
+第1章 has a summary and 第2章 does not: create `第3章.md` in the same folder and its request carries the end of 第2章 instead, and it starts where 第2章 is on the outline, in 「周伯收信」.
 
 ## Build from source
 
@@ -280,7 +316,7 @@ npm test
 npx @vscode/vsce package
 ```
 
-`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, the story folder's path and state, the marker file, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, cutting ghost text and its paragraphs, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), the model client against a local fake server, and the extension as a whole, run in a temporary folder against a stand-in for the `vscode` module (renaming, initializing, paths that lead out, lore fields, the story folder, switching ghost text off during a wait).
+`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, the story folder's path and state, the marker file, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, the outline graph (nodes, order, links), buoys (states, marks, moving along links, the prompts that ask the model and reading its answers), cutting ghost text and its paragraphs, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), the model client against a local fake server, and the extension as a whole, run in a temporary folder against a stand-in for the `vscode` module (renaming, initializing, paths that lead out, lore fields, the story folder, switching ghost text off during a wait, where a chapter starts on the outline, the automatic updates, moving the buoys by hand, and following a rename).
 
 ## License
 

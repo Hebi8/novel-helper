@@ -1,6 +1,6 @@
 import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { buildContext, CURSOR, type ContextInput, type ContextLimits, INSTRUCTIONS, TEXT_CHUNK_CHARS, userText } from '../core/context';
+import { buildContext, CURSOR, type ContextInput, type ContextLimits, INSTRUCTIONS, type PositionSource, TEXT_CHUNK_CHARS, userText } from '../core/context';
 import { Library } from '../core/library';
 
 function library(): Library {
@@ -23,6 +23,7 @@ const LIMITS: ContextLimits = {
 	bookOutlineChars: 30,
 	levelOutlineChars: 20,
 	outlineChars: 30,
+	nextNodeChars: 12,
 	previousChapterChars: 10,
 };
 
@@ -184,10 +185,11 @@ describe('buildContext: chapters and text', () => {
 		]);
 	});
 
-	test('the instructions name the chapter outline by the tag it is sent in', () => {
+	test('the instructions name the chapter outline and the position by the tags they are sent in', () => {
 		const { prompt } = buildContext(input({ outline: { path: 'o.md', content: '大纲' } }));
 		assert.ok(userText(prompt).includes('<本章大纲>\n大纲\n</本章大纲>'));
-		assert.ok(INSTRUCTIONS.includes('有 <本章大纲> 时') && INSTRUCTIONS.includes('没有 <本章大纲> 时'));
+		assert.ok(userText(buildContext(input({ position: POSITION })).prompt).includes('<当前位置>\n'));
+		assert.ok(INSTRUCTIONS.includes('有 <当前位置> 时') && INSTRUCTIONS.includes('没有 <当前位置>、有 <本章大纲> 时') && INSTRUCTIONS.includes('两者都没有时'));
 	});
 
 	test('no previous chapters, outline or lore: one block, nothing to cache in it', () => {
@@ -195,6 +197,53 @@ describe('buildContext: chapters and text', () => {
 		assert.equal(trace.outline, undefined);
 		assert.deepEqual(prompt.user.map((b) => b.cache), [false]);
 		assert.ok(prompt.user[0].text.includes(`开头${CURSOR}\n</当前章节>`));
+	});
+});
+
+const POSITION: PositionSource = {
+	kind: 'in',
+	nodes: [{ title: '王五登场', path: '大纲/第3章.md', text: `王五推门进来。${'很'.repeat(40)}` }],
+	above: [
+		{ title: '第一卷', path: '大纲/第一卷.md', text: '卷的概述' },
+		{ title: '只有文件夹', text: '' },
+	],
+	next: { title: '三哥翻脸', path: '大纲/第3章.md', text: `三哥摔了杯子。${'很'.repeat(20)}` },
+};
+
+describe('buildContext: a chapter with a position on the outline', () => {
+	const levels = [{ name: '全书', book: true, outline: { path: '大纲/全书.md', content: '书的大纲' } }];
+	const build = (position: PositionSource) =>
+		buildContext(input({ levels, position, outline: { path: 'o.md', content: '不用的本章大纲' }, limits: { ...LIMITS, matchedChars: 200 } }));
+
+	test('the book, what the node is under, the node, the node after it; the chapter outline file is left out', () => {
+		const { prompt, trace } = build(POSITION);
+		assert.equal(
+			prompt.user[0].text,
+			'<上层大纲>\n【全书】\n书的大纲\n\n【第一卷】\n卷的概述\n</上层大纲>\n\n' +
+				`<当前位置>\n正文现在写到【王五登场】。\n\n【王五登场】\n王五推门进来。${'很'.repeat(23)}（后略）\n\n接下来是：\n【三哥翻脸】\n三哥摔了杯子。${'很'.repeat(5)}（后略）\n</当前位置>\n\n`,
+		);
+		assert.equal(prompt.user[0].cache, true, 'cached with the outlines: it changes only when the position moves');
+		assert.equal(trace.outline, undefined);
+		assert.deepEqual(trace.position, {
+			kind: 'in',
+			nodes: [{ title: '王五登场', path: '大纲/第3章.md', chars: 30, truncated: true }],
+			next: { title: '三哥翻脸', path: '大纲/第3章.md', chars: 12, truncated: true },
+		});
+		assert.deepEqual(trace.levels.map((level) => [level.name, level.path, level.chars]), [['全书', '大纲/全书.md', 4], ['第一卷', '大纲/第一卷.md', 4], ['只有文件夹', undefined, 0]]);
+	});
+
+	test('names in the node the chapter is in bring lore in; names in the node after it do not', () => {
+		const { trace } = build(POSITION);
+		assert.deepEqual(trace.matched.filter((e) => e.hit!.inOutline).map((e) => e.name), ['王五']);
+		assert.ok(!trace.matched.some((e) => e.name === '张三' && e.hit!.inOutline), '三哥 is named in the next node only');
+	});
+
+	test('a bridge and two nodes at once are said in words, each node with its text', () => {
+		const to = { title: '三哥翻脸', text: '摔杯' };
+		const bridge = userText(build({ kind: 'bridge', nodes: [{ title: '王五登场', text: '' }, to], above: [] }).prompt);
+		assert.ok(bridge.includes('<当前位置>\n正文正在从【王五登场】衔接到【三哥翻脸】。\n\n【王五登场】\n\n【三哥翻脸】\n摔杯\n</当前位置>'));
+		const parallel = userText(build({ kind: 'parallel', nodes: [{ title: '王五登场', text: '进门' }, to], above: [] }).prompt);
+		assert.ok(parallel.includes('<当前位置>\n正文同时在写【王五登场】和【三哥翻脸】。\n\n【王五登场】\n进门\n\n【三哥翻脸】\n摔杯\n</当前位置>'));
 	});
 });
 

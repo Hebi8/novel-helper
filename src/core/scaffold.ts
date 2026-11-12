@@ -45,7 +45,7 @@ const WORDS = {
 		style: '文风',
 		volume: '第一卷',
 		chapter: '第1章',
-		bookOutline: ['全书大纲', '一句话', '主线', '分卷'],
+		bookOutline: ['全书大纲', '一句话：', '主线：', '分卷：'],
 		styleHeadings: ['人称和时态', '语言', '不要写的'],
 	},
 	en: {
@@ -57,7 +57,7 @@ const WORDS = {
 		style: 'Style',
 		volume: 'Volume 1',
 		chapter: 'Chapter 1',
-		bookOutline: ['Outline of the whole book', 'In one sentence', 'Main plot', 'Volumes'],
+		bookOutline: ['Outline of the whole book', 'In one sentence:', 'Main plot:', 'Volumes:'],
 		styleHeadings: ['Person and tense', 'Language', 'Never'],
 	},
 };
@@ -107,21 +107,22 @@ export function markerOf(names: StoryNames): Marker {
  * The folders and starter files of a story: a folder for chapters, outlines,
  * summaries and each kind of lore, the whole book's outline, an always-on
  * style entry, and a first volume with its first chapter and outline.
- * Starter files hold headings only, in the language of the names; the
- * writing is the writer's. `t` words what each item is for.
+ * Starter files hold a title and a few labels, in the language of the
+ * names; the writing is the writer's. `t` words what each item is for.
  */
 export function scaffold(names: StoryNames, t: Translate): ScaffoldItem[] {
 	const words = WORDS[names.language];
 	const [title, ...parts] = words.bookOutline;
 	const items: ScaffoldItem[] = [
 		{ path: names.chapters, about: t('chapters, one file each') },
-		{ path: names.outlines, about: t('outlines: of the book, of each volume, of each chapter') },
+		{ path: names.outlines, about: t('outlines: every file, and every heading in one, is a node the story passes through in order') },
 		{ path: names.summaries, about: t('chapter summaries, sent in place of earlier chapters') },
 		...names.lore.map((path) => ({ path, about: t('lore entries, one file each') })),
 		{
 			path: join(names.outlines, `${names.book}.md`),
 			about: t('outline of the whole book, sent with every request'),
-			content: `# ${title}\n\n${parts.map((part) => `## ${part}\n`).join('\n')}`,
+			// Plain lines, not headings: a heading would be a node of the plot, and this is what the whole book is about.
+			content: `# ${title}\n\n${parts.map((part) => `${part}\n`).join('\n')}`,
 		},
 		{
 			path: join(names.lore[0], `${words.style}.md`),
@@ -129,7 +130,7 @@ export function scaffold(names: StoryNames, t: Translate): ScaffoldItem[] {
 			content: `---\ntype: ${words.style}\nalways: true\n---\n\n${words.styleHeadings.map((heading) => `## ${heading}\n`).join('\n')}`,
 		},
 		{ path: join(names.chapters, words.volume, `${words.chapter}.md`), about: t('the first chapter of a first volume'), content: '', firstVolume: true },
-		{ path: join(names.outlines, `${words.volume}.md`), about: t('outline of the first volume'), content: '', firstVolume: true },
+		{ path: join(names.outlines, `${words.volume}.md`), about: t('outline of the first volume: a heading for each step of its plot'), content: '', firstVolume: true },
 	];
 	// A setting that roots its files in the story folder itself has no folder to make.
 	return items.filter((item) => item.path !== '');

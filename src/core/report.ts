@@ -5,7 +5,7 @@ import type { CompletionOutcome, HttpRequest } from '../llm/client';
 import type { ContextTrace, Prompt, SkippedEntry, UsedEntry } from './context';
 import type { Hit } from './match';
 import { fenced } from './text';
-import { costOf, dayKey, dollars, type Ledger, type Rates, sum, type Totals, totalsFor, type Usage } from './usage';
+import { costOf, dayKey, dollars, type Ledger, type Rates, splitUsageKey, sum, type Totals, totalsFor, type Usage } from './usage';
 
 /** `vscode.l10n.t`-compatible: `{0}`, `{1}` … are replaced by the arguments. */
 export type Translate = (message: string, ...args: Array<string | number>) => string;
@@ -172,11 +172,24 @@ export function renderReport(run: RunRecord | undefined, t: Translate): string {
 			out.push(`- ${level.path ? t('Outline of {0}: {1}, {2} chars', level.name, level.path, size) : t('Outline of {0}: none', level.name)}`);
 		}
 	}
-	out.push(
-		trace.outline
-			? `- ${t('Outline of this chapter: {0}, {1} chars', trace.outline.path, chars(trace.outline.chars, trace.outline.truncated, t))}`
-			: `- ${t('Outline of this chapter: none')}`,
-	);
+	if (trace.position) {
+		const { kind, nodes, next } = trace.position;
+		const [first, second = ''] = nodes.map((node) => `【${node.title}】`);
+		const where = kind === 'bridge' ? t('on the way from {0} to {1}', first, second) : kind === 'parallel' ? t('in {0} and {1} at once', first, second) : t('in {0}', first);
+		out.push(`- ${t('Position on the outline: {0}', where)}`);
+		for (const node of nodes) {
+			out.push(`  - ${t('Node {0}: {1}, {2} chars', `【${node.title}】`, node.path ?? '', chars(node.chars, node.truncated, t))}`);
+		}
+		if (next) {
+			out.push(`  - ${t('Next node {0}: {1}, {2} chars', `【${next.title}】`, next.path ?? '', chars(next.chars, next.truncated, t))}`);
+		}
+	} else {
+		out.push(
+			trace.outline
+				? `- ${t('Outline of this chapter: {0}, {1} chars', trace.outline.path, chars(trace.outline.chars, trace.outline.truncated, t))}`
+				: `- ${t('Outline of this chapter: none')}`,
+		);
+	}
 	if (trace.previous.length) {
 		for (const p of trace.previous) {
 			const kind = p.source === 'summary' ? t('summary') : t('ending (no summary)');
@@ -237,7 +250,10 @@ function totalsTable(byModel: Record<string, Totals>, t: Translate): string[] {
 	const out = [
 		`| ${t('Provider / model')} | ${t('Requests')} | ${t('Input at full price')} | ${t('Input read from cache')} | ${t('Input written to cache')} | ${t('Output')} | ${t('Estimated cost')} |`,
 		'|---|---:|---:|---:|---:|---:|---:|',
-		...models.map((model) => totalsRow(model, byModel[model])),
+		...models.map((key) => {
+			const { model, kind } = splitUsageKey(key);
+			return totalsRow(kind === 'position' ? t('{0} · outline position', model) : key, byModel[key]);
+		}),
 		...(models.length > 1 ? [totalsRow(t('Total'), all)] : []),
 		'',
 	];

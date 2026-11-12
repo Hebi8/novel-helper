@@ -366,7 +366,7 @@ describe('scaffold', () => {
 			'大纲/第一卷.md (first volume)',
 		]);
 		assert.ok(items.every((item) => item.about));
-		assert.equal(items[6].content, '# 全书大纲\n\n## 一句话\n\n## 主线\n\n## 分卷\n');
+		assert.equal(items[6].content, '# 全书大纲\n\n一句话：\n\n主线：\n\n分卷：\n');
 		assert.equal(items[7].content, '---\ntype: 文风\nalways: true\n---\n\n## 人称和时态\n\n## 语言\n\n## 不要写的\n');
 	});
 
@@ -386,7 +386,7 @@ describe('scaffold', () => {
 			'chapters/Volume 1/Chapter 1.md (first volume)',
 			'outlines/Volume 1.md (first volume)',
 		]);
-		assert.equal(items[6].content, '# Outline of the whole book\n\n## In one sentence\n\n## Main plot\n\n## Volumes\n');
+		assert.equal(items[6].content, '# Outline of the whole book\n\nIn one sentence:\n\nMain plot:\n\nVolumes:\n');
 		assert.match(items[7].content!, /^---\ntype: Style\nalways: true\n---\n\n## Person and tense\n/);
 	});
 

@@ -103,8 +103,24 @@ function addTotals(into: Totals, from: Totals): void {
 	}
 }
 
-/** Totals per day (`YYYY-MM-DD`, local time), then per `provider/model`. */
+/**
+ * Totals per day (`YYYY-MM-DD`, local time), then per `provider/model`.
+ * Requests that are not continuations are kept apart: their key has `#` and
+ * what they were for after the model.
+ */
 export type Ledger = Record<string, Record<string, Totals>>;
+
+/** What a request was for, when not a continuation: finding the chapter's place on the outline. */
+export type UsageKind = 'position';
+
+export function usageKey(provider: string, model: string, kind?: UsageKind): string {
+	return `${provider}/${model}${kind ? `#${kind}` : ''}`;
+}
+
+export function splitUsageKey(key: string): { model: string; kind?: string } {
+	const hash = key.lastIndexOf('#');
+	return hash === -1 ? { model: key } : { model: key.slice(0, hash), kind: key.slice(hash + 1) };
+}
 
 export function dayKey(date: Date): string {
 	const pad = (n: number) => String(n).padStart(2, '0');

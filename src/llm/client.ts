@@ -190,6 +190,61 @@ export function openaiPart(event: SseEvent): Part {
 	return part;
 }
 
+/** A whole reply, for the small questions asked next to the continuation. */
+export interface Answer {
+	text: string;
+	error?: string;
+	/** What the provider reported; undefined when it refused the request or could not be reached. */
+	usage?: Usage;
+}
+
+/**
+ * Sends a request and reads its reply to the end. Never throws: a failure
+ * comes back as `error`, with the text received until then.
+ */
+export async function ask(req: ModelRequest): Promise<Answer> {
+	const controller = new AbortController();
+	let timedOut = false;
+	const timer = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, req.timeoutMs);
+	const parse = req.protocol === 'anthropic' ? anthropicPart : openaiPart;
+	const usage: Usage = {};
+	let answered = false;
+	let text = '';
+	let error: string | undefined;
+	try {
+		const { url, headers, body } = buildHttpRequest(req);
+		const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
+		if (!response.ok) {
+			throw new Error(`HTTP ${response.status}: ${errorMessage(await response.text())}`);
+		}
+		if (!response.body) {
+			throw new Error('response has no body');
+		}
+		answered = true;
+		for await (const event of readSse(response.body)) {
+			const part = parse(event);
+			Object.assign(usage, part.usage);
+			text += part.text ?? '';
+			if (part.done) {
+				break;
+			}
+		}
+	} catch (failure) {
+		error = redact(timedOut ? `no complete answer within ${req.timeoutMs} ms` : describe(failure), req.apiKey);
+	} finally {
+		clearTimeout(timer);
+		controller.abort();
+	}
+	if (answered && usage.input !== undefined && usage.output === undefined) {
+		usage.output = estimateTokens(text);
+		usage.outputEstimated = true;
+	}
+	return { text, error, usage: answered ? usage : undefined };
+}
+
 function errorMessage(body: string): string {
 	try {
 		const json = JSON.parse(body);

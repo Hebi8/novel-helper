@@ -5,8 +5,10 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { test } from 'node:test';
+import { buoyPath, initialPosition, locate, parseBuoyFile, positionSource, resolve } from '../core/buoy';
 import { buildContext, type ContextLimits, userText } from '../core/context';
 import { type FileKind, globRootDepth, Library } from '../core/library';
+import { buildOutline, trail } from '../core/outline';
 
 const root = path.resolve(__dirname, '../..');
 const examples = path.join(root, 'examples');
@@ -97,4 +99,44 @@ test('examples: the second chapter gets the outlines of the book, its volume and
 	// What the README's cost section quotes; printed with `node --test` output for whoever updates it.
 	const cached = prompt.system.length + prompt.user.slice(0, prompt.user.map((b) => b.cache).lastIndexOf(true) + 1).reduce((n, b) => n + b.text.length, 0);
 	assert.ok(cached / (prompt.system.length + user.length) > 0.8, 'most of the prompt is before the last cache breakpoint');
+});
+
+test('examples: the outline is a graph, the second chapter starts at the first node of its outline, and its request goes by where it is', () => {
+	const library = index();
+	const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
+	const { files, book } = library.outlines();
+	const graph = buildOutline(files.map((file) => ({ ...file, content: read(file.path) })), { file: book.outline, name: book.name });
+	assert.deepEqual(graph.leaves.map(trail), [
+		'第一卷 雾港 › 第一幕 来信 › 第1章 雾里来信',
+		'第一卷 雾港 › 第一幕 来信 › 第2章 灯塔 › 等门',
+		'第一卷 雾港 › 第一幕 来信 › 第2章 灯塔 › 周伯收信',
+		'第一卷 雾港 › 第一幕 来信 › 第2章 灯塔 › 商量渡海',
+	]);
+	assert.equal(initialPosition(graph, undefined, library.companionOf('outline', chapter))?.nodes[0].title, '等门');
+
+	// The chapter as written ends with 周伯 about to speak, and its buoy file says so.
+	const marks = parseBuoyFile(read(buoyPath(chapter)))!.marks;
+	assert.deepEqual(marks.map((mark) => [mark.by, mark.state.nodes[0].title]), [['init', '等门'], ['auto', '周伯收信']]);
+	assert.equal(locate(read(chapter), marks[1]), read(chapter).length, 'the last mark is at the end of the chapter as it is');
+	const at = resolve(graph, marks[1].state)!;
+	assert.equal(at.nodes[0], graph.leaves[2]);
+	const position = positionSource(graph, at);
+	const { prompt, trace } = buildContext({
+		documentPath: chapter,
+		before: read(chapter),
+		after: '',
+		maxChars: 100,
+		entries: library.entries(),
+		matcher: library.matcher(),
+		levels: library.levelsOf(chapter).slice(0, 1).map((level) => ({ name: level.name, book: true, outline: { path: level.outline!, content: read(level.outline!) } })),
+		position,
+		previous: [],
+		limits,
+	});
+	assert.deepEqual(trace.levels.map((level) => [level.name, level.chars > 0]), [['全书', true], ['第一卷 雾港', true], ['第一幕 来信', true], ['第2章 灯塔', false]]);
+	assert.deepEqual(trace.position?.nodes.map((node) => node.title), ['周伯收信']);
+	assert.equal(trace.position?.next?.title, '商量渡海');
+	assert.match(userText(prompt), /<当前位置>\n正文现在写到【周伯收信】。\n\n【周伯收信】\n周伯开门收下信，.*\n\n接下来是：\n【商量渡海】\n陆路会被潮水淹没/);
+	const outlined = trace.matched.filter((e) => e.hit!.inOutline).map((e) => e.name).sort();
+	assert.deepEqual(outlined, ['北角灯塔', '周伯', '林小满'], 'by the names in the node it is in: 陆青山 is in the next node, 潮汐钟 in the one before');
 });

@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import * as http from 'node:http';
 import { after, describe, test } from 'node:test';
 import type { Usage } from '../core/usage';
-import { buildHttpRequest, complete, type CompletionOptions, type ModelRequest, redact } from '../llm/client';
+import { ask, buildHttpRequest, complete, type CompletionOptions, type ModelRequest, redact } from '../llm/client';
 import { PROVIDERS } from '../llm/providers';
 import {
 	ANTHROPIC_END,
@@ -523,6 +523,34 @@ describe('when the connection closes', () => {
 		const aborted = new AbortController();
 		aborted.abort();
 		assert.deepEqual(await count(request('openai', 'http://127.0.0.1:9'), aborted.signal), ['cancelled', 1]);
+	});
+});
+
+describe('a whole reply', () => {
+	test('read to the end, with the usage, on either protocol', async () => {
+		const anthropic = await serve((res) => stream(res, [ANTHROPIC_START, anthropicText('A2 '), anthropicText('B1'), ANTHROPIC_END]));
+		assert.deepEqual(await ask(request('anthropic', anthropic.baseUrl, { maxTokens: 16 })), {
+			text: 'A2 B1',
+			error: undefined,
+			usage: { input: 40, cacheRead: 900, cacheWrite: 300, output: 12 },
+		});
+		assert.equal(anthropic.received[0].body.max_tokens, 16);
+		const openai = await serve((res) =>
+			stream(res, [OPENAI_START, openaiText('3'), OPENAI_END.replace('data: [DONE]\n\n', ''), openaiUsage({ prompt_tokens: 500, completion_tokens: 1 }), 'data: [DONE]\n\n']),
+		);
+		assert.deepEqual(await ask(request('openai', openai.baseUrl)), { text: '3', error: undefined, usage: { input: 500, output: 1 } });
+	});
+
+	test('a refused request has an error and no usage; one that breaks off has the usage reported until then', async () => {
+		const refused = await serve((res) => {
+			res.writeHead(401, { 'content-type': 'application/json' });
+			res.end(JSON.stringify({ error: { message: `bad key ${KEY}` } }));
+		});
+		assert.deepEqual(await ask(request('openai', refused.baseUrl)), { text: '', error: 'HTTP 401: bad key ***', usage: undefined });
+		const slow = await serve((res) => stream(res, [ANTHROPIC_START, anthropicText('2'), { wait: 3000 }, ANTHROPIC_END]));
+		const answer = await ask(request('anthropic', slow.baseUrl, { timeoutMs: 200 }));
+		assert.equal(answer.error, 'no complete answer within 200 ms');
+		assert.deepEqual(answer.usage, { input: 40, cacheRead: 900, cacheWrite: 300, output: 1, outputEstimated: true });
 	});
 });
 

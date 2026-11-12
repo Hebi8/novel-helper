@@ -3,7 +3,7 @@ import { describe, test } from 'node:test';
 import { buildContext } from '../core/context';
 import { Library } from '../core/library';
 import { renderReport, renderUsage, type RunRecord, type Translate } from '../core/report';
-import { type Ledger, record as recordUsage } from '../core/usage';
+import { type Ledger, record as recordUsage, usageKey } from '../core/usage';
 import { buildHttpRequest } from '../llm/client';
 import { PROVIDERS } from '../llm/providers';
 
@@ -37,6 +37,7 @@ function record(): RunRecord {
 			bookOutlineChars: 100,
 			levelOutlineChars: 100,
 			outlineChars: 100,
+			nextNodeChars: 100,
 			previousChapterChars: 100,
 		},
 	});
@@ -81,6 +82,23 @@ describe('renderReport', () => {
 		assert.match(report, /POST https:\/\/api\.anthropic\.com\/v1\/messages/);
 		assert.match(report, /"thinking": \{\n\s+"type": "disabled"\n\s+\}/);
 		assert.match(report, /## Ghost text\n\n```text\n「走吧。」\n```/);
+	});
+
+	test('a chapter with a position on the outline: where it is, and the nodes that went in', () => {
+		const run = record();
+		run.trace.outline = undefined;
+		run.trace.position = {
+			kind: 'bridge',
+			nodes: [
+				{ title: '等门', path: '大纲/第2章.md', chars: 12, truncated: false },
+				{ title: '收信', path: '大纲/第2章.md', chars: 800, truncated: true },
+			],
+		};
+		const bridge = renderReport(run, t);
+		assert.match(bridge, /- Position on the outline: on the way from 【等门】 to 【收信】\n {2}- Node 【等门】: 大纲\/第2章\.md, 12 chars\n {2}- Node 【收信】: 大纲\/第2章\.md, 800 \(cut\) chars\n/);
+		assert.doesNotMatch(bridge, /Outline of this chapter/);
+		run.trace.position = { kind: 'in', nodes: [run.trace.position.nodes[0]], next: { title: '收信', chars: 0, truncated: false } };
+		assert.match(renderReport(run, t), /- Position on the outline: in 【等门】\n {2}- Node 【等门】: .*\n {2}- Next node 【收信】: , 0 chars\n/);
 	});
 
 	test('the prompt is shown cut at its cache breakpoints, with how much of it can be reused', () => {
@@ -155,6 +173,14 @@ describe('renderUsage', () => {
 		assert.match(month, /\| anthropic\/claude-haiku-5-5 \| 3 \| 1400 \| 6000 \| 300 \| 120 \| \$0\.000298 \|/, 'October is not in it');
 		assert.match(report, /- anthropic · claude-haiku-5-5: input 0\.1, cache read 0\.01, cache write 0\.125, output 0\.5 \(US dollars per million tokens\)\./);
 		assert.match(report, /- Daily limit: none\./);
+	});
+
+	test('requests that find the position on the outline have a row of their own', () => {
+		const ledger: Ledger = {};
+		recordUsage(ledger, '2026-11-12', usageKey('anthropic', 'claude-haiku-5-5'), { input: 400, output: 20 }, 0.0001);
+		recordUsage(ledger, '2026-11-12', usageKey('anthropic', 'claude-haiku-5-5', 'position'), { input: 900, output: 2 }, 0.00009);
+		const report = renderUsage(ledger, now, info, t);
+		assert.match(report, /\| anthropic\/claude-haiku-5-5 \| 1 \| 400 \| 0 \| 0 \| 20 \| \$0\.000100 \|\n\| anthropic\/claude-haiku-5-5 · outline position \| 1 \| 900 \| 0 \| 0 \| 2 \| \$0\.000090 \|\n\| Total \| 2 \| 1300 /);
 	});
 
 	test('nothing yet; a model without a price; a daily limit', () => {

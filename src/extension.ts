@@ -1,14 +1,17 @@
 import * as vscode from 'vscode';
 import { renderReport, renderUsage, type RunRecord } from './core/report';
 import { isUsable, MARKER_FILE } from './core/story';
-import { costOf, ratesFor } from './core/usage';
+import { stem } from './core/text';
+import { costOf, ratesFor, usageKey } from './core/usage';
 import { PROVIDERS, type ProviderId } from './llm/providers';
 import { BookView } from './vscode/bookView';
+import { Buoys, positionSummary } from './vscode/buoys';
 import { SECTION, completionSettings, currentProvider, modelSettings, secretKey, usageSettings } from './vscode/config';
 import { initWorkspace } from './vscode/init';
 import { ContinuationProvider } from './vscode/inlineProvider';
 import { LoreProviders } from './vscode/loreProviders';
 import { LoreView } from './vscode/loreView';
+import { OutlineView } from './vscode/outlineView';
 import { SettingsView, selectProvider, setDailyLimit, setModel, toggleEnabled, toggleTrigger } from './vscode/settingsView';
 import { StatusBar } from './vscode/statusBar';
 import { selectStoryFolder } from './vscode/story';
@@ -30,8 +33,26 @@ export function activate(context: vscode.ExtensionContext): void {
 	const askedForKey = new Set<ProviderId>();
 	let lastRun: RunRecord | undefined;
 
+	const saveUsage = (key: string, used: Parameters<UsageStore['add']>[1], cost: number | undefined) =>
+		usage.add(key, used, cost).catch((error) => log.warn(`could not save usage: ${error instanceof Error ? error.message : String(error)}`));
+	const buoys = new Buoys({
+		indexes,
+		secrets: context.secrets,
+		log,
+		overLimit: () => status.overLimit(),
+		recordUsage(model, used) {
+			const rates = ratesFor(model.model, new Date(), model.pricing, usageSettings().prices);
+			void saveUsage(usageKey(model.provider, model.model, 'position'), used, rates && costOf(used, rates));
+		},
+	});
+	const showPosition = async () => {
+		const at = await buoys.current();
+		const where = positionSummary(at);
+		status.setPosition(at && where ? vscode.l10n.t('{0} on the outline: {1}', stem(at.chapter), where) : undefined);
+	};
 	const continuation = new ContinuationProvider({
 		indexes,
+		buoys,
 		secrets: context.secrets,
 		status,
 		log,
@@ -44,9 +65,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			if (run === lastRun) {
 				reportChanged.fire(REPORT_URI);
 			}
-			usage
-				.add(`${run.provider}/${run.model}`, used, run.rates && costOf(used, run.rates))
-				.catch((error) => log.warn(`could not save usage: ${error instanceof Error ? error.message : String(error)}`));
+			void saveUsage(usageKey(run.provider, run.model), used, run.rates && costOf(used, run.rates));
 		},
 		missingKey(provider) {
 			const label = PROVIDERS[provider].label;
@@ -100,6 +119,9 @@ export function activate(context: vscode.ExtensionContext): void {
 		indexes,
 		status,
 		new BookView(indexes),
+		buoys,
+		new OutlineView(indexes, buoys),
+		buoys.onDidChange(showPosition),
 		new LoreView(indexes),
 		new SettingsView(indexes, context.secrets, usage),
 		indexes.onDidChange(describeWorkspace),

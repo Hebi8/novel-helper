@@ -2,7 +2,7 @@
   "name": "novel-helper",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "publisher": "dreaife",
   "license": "MIT",
   "repository": {
@@ -67,6 +67,10 @@
           "name": "%view.book%"
         },
         {
+          "id": "novelHelper.outline",
+          "name": "%view.outline%"
+        },
+        {
           "id": "novelHelper.lore",
           "name": "%view.lore%"
         },
@@ -86,6 +90,10 @@
         "view": "novelHelper.book",
         "contents": "%welcome.empty%",
         "when": "workspaceFolderCount > 0 && novelHelper.workspace == empty"
+      },
+      {
+        "view": "novelHelper.outline",
+        "contents": "%welcome.noOutline%"
       },
       {
         "view": "novelHelper.lore",
@@ -190,6 +198,48 @@
         "icon": "$(edit)"
       },
       {
+        "command": "novelHelper.position.forward",
+        "title": "%command.position.forward%",
+        "category": "Novel Helper",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "novelHelper.position.back",
+        "title": "%command.position.back%",
+        "category": "Novel Helper",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "novelHelper.position.relocate",
+        "title": "%command.position.relocate%",
+        "category": "Novel Helper",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "novelHelper.outline.placeHere",
+        "title": "%command.outline.placeHere%",
+        "category": "Novel Helper",
+        "icon": "$(location)"
+      },
+      {
+        "command": "novelHelper.outline.bridgeTo",
+        "title": "%command.outline.bridgeTo%",
+        "category": "Novel Helper",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "novelHelper.outline.addParallel",
+        "title": "%command.outline.addParallel%",
+        "category": "Novel Helper",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "novelHelper.outline.dropSecond",
+        "title": "%command.outline.dropSecond%",
+        "category": "Novel Helper",
+        "icon": "$(close)"
+      },
+      {
         "command": "novelHelper.lore.new",
         "title": "%command.lore.new%",
         "category": "Novel Helper",
@@ -241,6 +291,21 @@
           "command": "novelHelper.selectStoryFolder",
           "when": "view == novelHelper.book",
           "group": "1_init@2"
+        },
+        {
+          "command": "novelHelper.position.back",
+          "when": "view == novelHelper.outline",
+          "group": "navigation@1"
+        },
+        {
+          "command": "novelHelper.position.forward",
+          "when": "view == novelHelper.outline",
+          "group": "navigation@2"
+        },
+        {
+          "command": "novelHelper.position.relocate",
+          "when": "view == novelHelper.outline",
+          "group": "navigation@3"
         },
         {
           "command": "novelHelper.lore.new",
@@ -295,6 +360,31 @@
           "group": "3_rename"
         },
         {
+          "command": "novelHelper.outline.placeHere",
+          "when": "view == novelHelper.outline",
+          "group": "inline@1"
+        },
+        {
+          "command": "novelHelper.outline.placeHere",
+          "when": "view == novelHelper.outline",
+          "group": "1_position@1"
+        },
+        {
+          "command": "novelHelper.outline.bridgeTo",
+          "when": "view == novelHelper.outline",
+          "group": "1_position@2"
+        },
+        {
+          "command": "novelHelper.outline.addParallel",
+          "when": "view == novelHelper.outline",
+          "group": "1_position@3"
+        },
+        {
+          "command": "novelHelper.outline.dropSecond",
+          "when": "view == novelHelper.outline && viewItem == outlineSecond",
+          "group": "1_position@4"
+        },
+        {
           "command": "novelHelper.lore.pin",
           "when": "view == novelHelper.lore && viewItem == entry",
           "group": "inline@1"
@@ -341,6 +431,22 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "novelHelper.outline.placeHere",
+          "when": "false"
+        },
+        {
+          "command": "novelHelper.outline.bridgeTo",
+          "when": "false"
+        },
+        {
+          "command": "novelHelper.outline.addParallel",
+          "when": "false"
+        },
+        {
+          "command": "novelHelper.outline.dropSecond",
+          "when": "false"
+        },
         {
           "command": "novelHelper.book.openOutline",
           "when": "false"
@@ -614,6 +720,20 @@
           "default": 800,
           "minimum": 0,
           "markdownDescription": "%config.context.outlineChars%",
+          "scope": "resource"
+        },
+        "novelHelper.context.nextNodeChars": {
+          "type": "number",
+          "default": 300,
+          "minimum": 0,
+          "markdownDescription": "%config.context.nextNodeChars%",
+          "scope": "resource"
+        },
+        "novelHelper.position.updateChars": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 0,
+          "markdownDescription": "%config.position.updateChars%",
           "scope": "resource"
         },
         "novelHelper.context.previousChapters": {

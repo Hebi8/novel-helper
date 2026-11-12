@@ -4,7 +4,10 @@
 // next for as long as possible:
 //   system:   instructions, always-on entries              (same for every request)
 //   outlines: the book, the levels above the chapter,
-//             previous chapters, this chapter's outline    (same within a chapter)
+//             previous chapters, this chapter's outline;
+//             or, for a chapter with a place on the
+//             outline graph, the book, what is above that
+//             place, the node it is in, the node after it  (same until the place moves)
 //   lore:     entries named in the chapter, in the order
 //             they first come up                           (grows now and then)
 //   text:     this chapter from its start to the cursor,
@@ -15,6 +18,7 @@
 // pieces before the tail: a request reads everything up to the previous
 // breakpoint from the cache and adds one piece to it.
 
+import { type BuoyKind, positionLine } from './buoy';
 import type { LoreEntry } from './library';
 import { type Hit, type Matcher, rankHits } from './match';
 import { chunkEnds, frontmatterLength, headChars, splitFrontmatter, stem, steppedStart, tailChars } from './text';
@@ -31,8 +35,9 @@ export const INSTRUCTIONS = `你是小说写作助手，负责行内续写：从
 4. 不解释，不打招呼，不加标题、引号包裹或任何标记，也不要输出 ${CURSOR}。
 5. 用和正文相同的语言，保持原文的人称、时态、文风和标点习惯。
 6. 推进情节，不要原地打转：
-   - 有 <本章大纲> 时，先对照正文判断大纲里哪些内容已经写到，续写朝下一个还没写到的点走。已经写过的点不要重写，也不要一步跳到很后面的点，中间该有的过程照常写。大纲里的内容都写完了，就顺着写本章的收尾，不要另起大纲里没有的大事件。
-   - 没有 <本章大纲> 时，每次续写都要带来新东西：新的动作、对话、信息或局面变化。
+   - 有 <当前位置> 时，它说的是正文现在写到了大纲的哪个节点，后面跟着这个节点的内容和接下来的节点。先对照正文判断当前节点里哪些内容已经写到，续写朝还没写到的内容走；当前节点写完了，就朝接下来的节点过渡。位置是「从一个节点衔接到另一个节点」时，写两者之间的过渡，朝后一个节点的开头走；位置是「同时在写两个节点」时，两条线都要照顾到。已经写过的内容不要重写，也不要越过接下来的节点往更后面跳，中间该有的过程照常写。没有给出接下来的节点时，把当前节点写完就顺势收束，不要另起大纲里没有的大事件。
+   - 没有 <当前位置>、有 <本章大纲> 时，先对照正文判断大纲里哪些内容已经写到，续写朝下一个还没写到的点走。已经写过的点不要重写，也不要一步跳到很后面的点，中间该有的过程照常写。大纲里的内容都写完了，就顺着写本章的收尾，不要另起大纲里没有的大事件。
+   - 两者都没有时，每次续写都要带来新东西：新的动作、对话、信息或局面变化。
    - 上文已经表达过的动作、情绪和描写，不要换个说法再写一遍。
 7. 人物的言行、称呼和关系不能和资料冲突，也不要编造资料里没有的关键设定（世界规则、人物背景和关系）。情节往前发展，以及场景里的小细节（动作、神态、环境、对话的具体内容），可以自己写。
 8. 光标后面如果已经有文字，续写要能自然接上它。`;
@@ -55,8 +60,10 @@ export interface ContextLimits {
 	bookOutlineChars: number;
 	/** Cap for the outline of each level between the book and the chapter (卷, 幕…). */
 	levelOutlineChars: number;
-	/** Cap for this chapter's outline. */
+	/** Cap for this chapter's outline, and for each node the chapter is in on the outline graph. */
 	outlineChars: number;
+	/** Cap for the node that comes after those. */
+	nextNodeChars: number;
 	/** Cap per previous chapter (its summary, or the end of its text). */
 	previousChapterChars: number;
 }
@@ -76,6 +83,26 @@ export interface LevelSource {
 	outline?: { path: string; content: string };
 }
 
+/** A node of the outline graph as it goes into the prompt. */
+export interface NodeSource {
+	title: string;
+	/** The file it is written in, if any. */
+	path?: string;
+	/** What is written right under it. */
+	text: string;
+}
+
+/** Where the chapter is on the outline graph. */
+export interface PositionSource {
+	kind: BuoyKind;
+	/** The node the text is in; for a bridge, where it comes from and where it goes; for parallel, both. */
+	nodes: NodeSource[];
+	/** The nodes the first of those is under, outermost first, the book aside. */
+	above: NodeSource[];
+	/** The node after them on the main line. */
+	next?: NodeSource;
+}
+
 export interface ContextInput {
 	/** Relative path (or name) of the document being written. */
 	documentPath: string;
@@ -89,8 +116,10 @@ export interface ContextInput {
 	matcher: Matcher;
 	/** The book first, then each level down to the chapter's folder. */
 	levels: LevelSource[];
-	/** This chapter's outline. */
+	/** This chapter's outline; not used when `position` is given. */
 	outline?: { path: string; content: string };
+	/** Where the chapter is on the outline graph. With it, `levels` is the book alone: `position.above` stands for the rest. */
+	position?: PositionSource;
 	/** Previous chapters, oldest first. */
 	previous: ChapterSource[];
 	limits: ContextLimits;
@@ -139,9 +168,17 @@ export interface ContextTrace {
 	/** One per level, the book first; `path` is undefined when the level has no outline. */
 	levels: Array<{ name: string; book: boolean; path?: string; chars: number; truncated: boolean }>;
 	outline?: { path: string; chars: number; truncated: boolean };
+	position?: { kind: BuoyKind; nodes: NodeTrace[]; next?: NodeTrace };
 	previous: Array<{ path: string; source: 'summary' | 'ending'; chars: number; truncated: boolean }>;
 	before: { chars: number; truncated: boolean };
 	after: { chars: number; truncated: boolean };
+}
+
+export interface NodeTrace {
+	title: string;
+	path?: string;
+	chars: number;
+	truncated: boolean;
 }
 
 interface Piece {
@@ -202,7 +239,13 @@ export function buildContext(input: ContextInput): { prompt: Prompt; trace: Cont
 	const start = steppedStart(body, limits.beforeChars, Math.max(1, Math.ceil(limits.beforeChars / 3)));
 	const before = body.slice(start);
 
-	const outlineText = input.outline ? splitFrontmatter(input.outline.content).body.trim() : '';
+	const { position } = input;
+	// Names are looked for in the outline of what is being written: the nodes the chapter is in, or the chapter's own outline.
+	const outlineText = position
+		? position.nodes.map((node) => `${node.title}\n${node.text}`).join('\n')
+		: input.outline
+			? splitFrontmatter(input.outline.content).body.trim()
+			: '';
 	const hits = rankHits(input.matcher.find(before), before.length, outlineText ? input.matcher.find(outlineText) : []);
 	const order = new Map(input.entries.map((entry, index) => [entry.id, index]));
 
@@ -223,8 +266,8 @@ export function buildContext(input: ContextInput): { prompt: Prompt; trace: Cont
 		room -= piece.chars;
 		picked.push({ entry, piece, hit });
 	}
-	const position = (hit: Hit) => (hit.inOutline ? -1 : hit.first ?? 0);
-	picked.sort((a, b) => position(a.hit) - position(b.hit) || order.get(a.entry.id)! - order.get(b.entry.id)!);
+	const placeOf = (hit: Hit) => (hit.inOutline ? -1 : hit.first ?? 0);
+	picked.sort((a, b) => placeOf(a.hit) - placeOf(b.hit) || order.get(a.entry.id)! - order.get(b.entry.id)!);
 	const matched = picked.map(({ entry, piece, hit }): UsedEntry => ({
 		id: entry.id, name: entry.name, type: entry.type, chars: piece.chars, truncated: piece.truncated, source: piece.source, hit,
 	}));
@@ -238,6 +281,13 @@ export function buildContext(input: ContextInput): { prompt: Prompt; trace: Cont
 			levelBlocks.push(`【${level.name}】\n${cut.text}${cut.truncated ? '（后略）' : ''}`);
 		}
 		levels.push({ name: level.name, book: level.book, path: level.outline?.path, chars: cut.text.length, truncated: cut.truncated });
+	}
+	for (const node of position?.above ?? []) {
+		const cut = headChars(node.text, limits.levelOutlineChars);
+		if (cut.text) {
+			levelBlocks.push(`【${node.title}】\n${cut.text}${cut.truncated ? '（后略）' : ''}`);
+		}
+		levels.push({ name: node.title, book: false, path: node.path, chars: cut.text.length, truncated: cut.truncated });
 	}
 
 	const previous: ContextTrace['previous'] = [];
@@ -256,8 +306,24 @@ export function buildContext(input: ContextInput): { prompt: Prompt; trace: Cont
 	}
 
 	let outline: ContextTrace['outline'];
+	let positionTrace: ContextTrace['position'];
 	let outlineBlock = '';
-	if (input.outline && outlineText) {
+	if (position) {
+		const piece = (node: NodeSource, max: number): { block: string; trace: NodeTrace } => {
+			const cut = headChars(node.text, max);
+			return {
+				block: `【${node.title}】${cut.text ? `\n${cut.text}${cut.truncated ? '（后略）' : ''}` : ''}`,
+				trace: { title: node.title, path: node.path, chars: cut.text.length, truncated: cut.truncated },
+			};
+		};
+		const nodes = position.nodes.map((node) => piece(node, limits.outlineChars));
+		const next = position.next && piece(position.next, limits.nextNodeChars);
+		outlineBlock = tagged(
+			'当前位置',
+			[positionLine(position.kind, position.nodes.map((node) => node.title)), ...nodes.map((node) => node.block), ...(next ? [`接下来是：\n${next.block}`] : [])].join('\n\n'),
+		);
+		positionTrace = { kind: position.kind, nodes: nodes.map((node) => node.trace), next: next?.trace };
+	} else if (input.outline && outlineText) {
 		const cut = headChars(outlineText, limits.outlineChars);
 		outlineBlock = tagged('本章大纲', `${cut.text}${cut.truncated ? '（后略）' : ''}`);
 		outline = { path: input.outline.path, chars: cut.text.length, truncated: cut.truncated };
@@ -310,6 +376,7 @@ export function buildContext(input: ContextInput): { prompt: Prompt; trace: Cont
 			limits,
 			levels,
 			outline,
+			position: positionTrace,
 			previous,
 			before: { chars: before.length, truncated: start > 0 },
 			after: { chars: afterText.length, truncated: afterCut.truncated },

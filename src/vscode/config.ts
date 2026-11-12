@@ -42,9 +42,15 @@ export function contextSettings(scope?: vscode.Uri): ContextSettings {
 		bookOutlineChars: n('bookOutlineChars'),
 		levelOutlineChars: n('levelOutlineChars'),
 		outlineChars: n('outlineChars'),
+		nextNodeChars: n('nextNodeChars'),
 		previousChapters: n('previousChapters'),
 		previousChapterChars: n('previousChapterChars'),
 	};
+}
+
+/** How many characters a chapter grows by before the model is asked again where it is on the outline; 0 for never. */
+export function positionUpdateChars(scope?: vscode.Uri): number {
+	return vscode.workspace.getConfiguration(`${SECTION}.position`, scope).get<number>('updateChars', 1000);
 }
 
 export interface CompletionSettings {

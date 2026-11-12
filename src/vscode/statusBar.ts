@@ -10,6 +10,8 @@ export class StatusBar implements vscode.Disposable {
 	private readonly item = vscode.window.createStatusBarItem('novelHelper.status', vscode.StatusBarAlignment.Right, 100);
 	private running = 0;
 	private problem?: string;
+	/** Where the chapter last in the editor is on the outline, in words. */
+	private position?: string;
 	private readonly disposables: vscode.Disposable[] = [this.item];
 
 	constructor(private readonly usage: UsageStore) {
@@ -65,6 +67,11 @@ export class StatusBar implements vscode.Disposable {
 		this.update();
 	}
 
+	setPosition(position: string | undefined): void {
+		this.position = position;
+		this.update();
+	}
+
 	update(): void {
 		const editor = vscode.window.activeTextEditor;
 		if (!editor || !PROSE_LANGUAGES.has(editor.document.languageId)) {
@@ -104,7 +111,7 @@ export class StatusBar implements vscode.Disposable {
 				vscode.l10n.t('Click to turn it off.'),
 			].join('\n');
 		}
-		this.item.tooltip = `${tooltip}\n\n${this.today()}`;
+		this.item.tooltip = [tooltip, ...(this.position ? [this.position] : []), this.today()].join('\n\n');
 		this.item.show();
 	}
 

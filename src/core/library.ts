@@ -223,6 +223,12 @@ export class Library {
 		return this.chapters;
 	}
 
+	/** Every outline file with its folders below the outline folder, and the one for the whole book. */
+	outlines(): { files: Array<{ path: string; dirs: string[] }>; book: Level } {
+		const files = [...this.companions.outline.values()].flatMap((paths) => [...paths].map(([path, dirs]) => ({ path, dirs })));
+		return { files, book: this.book() };
+	}
+
 	/** Up to `count` chapters right before `path`, oldest first. */
 	previousChapters(path: string, count: number): string[] {
 		const index = this.chapters.indexOf(path);

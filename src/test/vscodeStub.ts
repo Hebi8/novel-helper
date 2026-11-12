@@ -144,6 +144,10 @@ export interface Started {
 	commands: Record<string, (...args: Any[]) => Any>;
 	providers: Any;
 	trees: Record<string, Any>;
+	/** The tree views made with `createTreeView`, for what is set on them (`message`). */
+	views: Record<string, Any>;
+	/** The status bar item. */
+	statusItem: Any;
 	settings: Record<string, unknown>;
 	/** Every `update` of a setting, as `[key, value]`. */
 	updates: Array<[string, unknown]>;
@@ -195,6 +199,8 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 	const commands: Started['commands'] = {};
 	const providers: Any = {};
 	const trees: Started['trees'] = {};
+	const views: Started['views'] = {};
+	const statusItem: Any = { show() {}, hide() {}, dispose() {} };
 	const updates: Started['updates'] = [];
 	const answers: Started['answers'] = [];
 	const asked: Asked[] = [];
@@ -283,6 +289,7 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 		},
 		InlineCompletionTriggerKind: { Invoke: 0, Automatic: 1 },
 		StatusBarAlignment: { Right: 2 },
+		ProgressLocation: { Window: 10 },
 		ViewColumn: { Beside: -2 },
 		ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
 		Hover: class {},
@@ -342,6 +349,9 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 				},
 				createDirectory: async (uri: Uri) => {
 					await fs.promises.mkdir(uri.path, { recursive: true });
+				},
+				rename: async (from: Uri, to: Uri) => {
+					await fs.promises.rename(from.path, to.path);
 				},
 				stat: async (uri: Uri) => {
 					await statGate;
@@ -403,13 +413,14 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 		window: {
 			activeTextEditor: undefined,
 			createOutputChannel: () => ({ info() {}, warn() {}, dispose() {} }),
-			createStatusBarItem: () => ({ show() {}, hide() {}, dispose() {} }),
+			createStatusBarItem: () => statusItem,
 			onDidChangeActiveTextEditor: editorChanged.event,
 			showTextDocument: async (target: Any) => {
 				const document = target instanceof Uri ? await vscode.workspace.openTextDocument(target) : target;
 				vscode.window.activeTextEditor = { document };
 				editorChanged.fire(vscode.window.activeTextEditor);
 			},
+			withProgress: async (_: unknown, task: () => Promise<unknown>) => task(),
 			showWarningMessage: message,
 			showInformationMessage: message,
 			showErrorMessage: message,
@@ -435,7 +446,8 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 			},
 			createTreeView: (id: string, options: Any) => {
 				trees[id] = options.treeDataProvider;
-				return { visible: true, message: undefined, onDidChangeVisibility: () => ({ dispose() {} }), reveal: async () => {}, dispose() {} };
+				views[id] = { visible: true, message: undefined, onDidChangeVisibility: () => ({ dispose() {} }), reveal: async () => {}, dispose() {} };
+				return views[id];
 			},
 		},
 		languages: {
@@ -510,6 +522,8 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 		commands,
 		providers,
 		trees,
+		views,
+		statusItem,
 		settings,
 		updates,
 		answers,

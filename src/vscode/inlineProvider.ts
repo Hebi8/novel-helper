@@ -3,12 +3,14 @@
 // Tab accepts (VS Code's own key).
 
 import * as vscode from 'vscode';
+import { positionSource } from '../core/buoy';
 import { buildContext, type ChapterSource, type LevelSource } from '../core/context';
 import type { RunRecord } from '../core/report';
 import { Matcher } from '../core/match';
 import { ratesFor, type Usage } from '../core/usage';
 import { buildHttpRequest, complete } from '../llm/client';
 import type { ProviderId } from '../llm/providers';
+import type { Buoys, ChapterPosition } from './buoys';
 import { completionSettings, contextSettings, modelSettings, secretKey, usageSettings } from './config';
 import type { StatusBar } from './statusBar';
 import { readText, type WorkspaceIndexes } from './workspaceIndex';
@@ -40,6 +42,7 @@ function sleep(ms: number, token: vscode.CancellationToken): Promise<boolean> {
 
 export interface ProviderHooks {
 	indexes: WorkspaceIndexes;
+	buoys: Buoys;
 	secrets: vscode.SecretStorage;
 	status: StatusBar;
 	log: vscode.LogOutputChannel;
@@ -106,16 +109,22 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 		let levels: LevelSource[] = [];
 		let outline: { path: string; content: string } | undefined;
 		let previous: ChapterSource[] = [];
+		/** Where the chapter is on the outline graph; with buoys, they say which parts of the outline go into the prompt. */
+		let at: ChapterPosition | undefined;
 		if (located && library) {
 			const read = (path: string) => readText(located.index.uri(path));
+			if (library.isChapter(located.path)) {
+				at = await this.hooks.buoys.prepare(located.index, located.path, text);
+			}
+			const above = library.levelsOf(located.path);
 			levels = await Promise.all(
-				library.levelsOf(located.path).map(async (level): Promise<LevelSource> => ({
+				(at?.position ? above.slice(0, 1) : above).map(async (level): Promise<LevelSource> => ({
 					name: level.name,
 					book: level.path === '',
 					outline: level.outline ? { path: level.outline, content: await read(level.outline) } : undefined,
 				})),
 			);
-			const outlinePath = library.companionOf('outline', located.path);
+			const outlinePath = at?.position ? undefined : library.companionOf('outline', located.path);
 			if (outlinePath) {
 				outline = { path: outlinePath, content: await read(outlinePath) };
 			}
@@ -145,6 +154,7 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 			matcher: library?.matcher() ?? NO_LORE,
 			levels,
 			outline,
+			position: at?.position && positionSource(at.graph, at.position),
 			previous,
 			limits,
 		});
@@ -177,6 +187,10 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 			return undefined;
 		}
 
+		// A continuation is going out: the time to see whether the chapter has moved on along the outline. Not waited for.
+		if (at) {
+			this.hooks.buoys.update(at, text);
+		}
 		const controller = new AbortController();
 		const cancel = token.onCancellationRequested(() => controller.abort());
 		this.running.add(controller);
