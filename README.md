@@ -45,7 +45,7 @@ The OpenAI provider marks cache breakpoints the way GPT-5.6 and later expect (se
 
 ## The sidebar
 
-The activity bar has a Novel Helper icon with four views. The sidebar lays out the structure and changes the fixed fields; the content is always written in the Markdown file it opens.
+The activity bar has a Novel Helper icon with five views: the four below, and the [assistant](#the-assistant). The sidebar lays out the structure and changes the fixed fields; the content is always written in the Markdown file it opens.
 
 **Book**: book → volume → arc → chapter, as one tree: the chapters folder as it is (in a flat workspace the chapters sit right under the book).
 
@@ -254,6 +254,66 @@ The counts are what the provider reported for each request. Cost is tokens times
 
 **Daily limit:** set `novelHelper.usage.dailyLimitUsd` to a dollar amount and automatic requests stop once the day's estimated cost reaches it; the status bar says so, and **Alt+\\** still asks for one. The default, `0`, is no limit. Requests without a price do not count towards it.
 
+## The assistant
+
+The fifth view in the sidebar, Assistant, is a conversation with an agent that can read and change the whole story folder. Ghost text takes care of the next few lines after the cursor; "tighten the paragraph I selected", "does the outline of volume three still match what is written", "write a summary for this chapter" are things to say here. The view can be dragged to the secondary side bar on the right, next to the editor.
+
+**What to install first**
+
+- Node.js 22 or later. The extension starts the agent's adapter with `npx`; the adapter is not part of the extension and is downloaded on the first start (a few hundred MB, a few minutes). After that it starts from npx's cache in a second or two.
+- Claude Code, logged in: run `claude` in a terminal and follow the prompts. The assistant uses the login and the subscription of Claude Code on this machine, not API credit. The extension handles no keys, and the API key for ghost text is not given to the agent. (With `ANTHROPIC_API_KEY` set in the environment, Claude Code bills that key instead, by its own rules.)
+- With Remote-SSH the agent runs on the remote machine: Node.js and the login have to be there.
+
+**Choosing the agent**
+
+| `novelHelper.assistant.agent` | |
+|---|---|
+| `claude` (default) | Claude Code, through the adapter `@agentclientprotocol/claude-agent-acp`. The version is fixed in the extension (0.106.0 now) and moves with the extension's releases: the adapter is released often and is still 0.x, `npx` runs whatever it gets, and what it runs can reach all of your files; a fixed version also starts straight from the cache without asking the registry for a newer one. |
+| `custom` | Any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) over stdin and stdout: the command goes in `novelHelper.assistant.command`, its arguments in `novelHelper.assistant.args`. Gemini CLI, for example, is the command `gemini` with the arguments `["--acp"]`. Other agents have not been tried one by one; how well they work is up to them. |
+
+These settings are read from your user settings only (remote settings in a remote window), not from a workspace: opening a folder does not let it decide which command is run. In Restricted Mode (a folder you have not trusted) the assistant is off.
+
+**What it knows**
+
+- At the start of every conversation the extension gives it a brief on the workspace: how the folder is laid out (with the folder names this book uses), how outlines and summaries pair with chapters, the frontmatter fields of lore entries, and what it may change.
+- Every message takes along the file you have open, the line the cursor is on, and the selected text with its place; the line above the input box says what goes with the next one. So "this paragraph" and "this chapter" work.
+- Before a message is sent, unsaved files of the story folder are saved: Claude Code reads and writes the disk itself, not the editor.
+
+**Permissions**
+
+- Reading, searching and changing files inside the story folder, chapters included, goes through without a question for each.
+- Everything else is asked about on the panel, and is not allowed unless you click: running commands, the network, paths outside the story folder, folders in it whose names start with a dot (`.git`, `.vscode`, `.novel-helper`: these hold what tools go by, and the snapshots themselves), and files that snapshots do not hold (not text, or over 5 MB; see below), since a change to those could not be gone back from. A symbolic link counts as the place it points to.
+- For Claude Code, the extension puts the session into its ask-every-time mode and applies the rules above. Allow rules you wrote into Claude Code's own settings still come first, and commands Claude Code considers read-only (`ls`, `cat`, `echo` and the like) are not asked about either. A custom agent runs in its own default mode.
+
+**Snapshots and going back**
+
+- Before every turn the extension takes a snapshot of the text files in the story folder, kept in `.novel-helper/snapshots/` of the story folder by content: the same content is stored once. After the turn it reads the folder again and compares, which gives the files the turn added, changed and deleted, however the agent wrote them.
+- The end of each turn lists the files it changed. Click a file to see the difference in VS Code's diff editor; while the file is still as the turn left it, the right side is the file itself and can be edited there.
+- **Go Back to Before This Turn** puts every file that changed since the turn began back as it was then: files made since are deleted, deleted ones come back, and what you changed by hand after the turn goes back too. It asks first, and it takes a snapshot of the story as it is now before doing anything, so going back can itself be undone (**Undo This Going Back**). Files with unsaved edits are saved first, into that snapshot.
+- A new conversation clears the panel and keeps the snapshots: **Novel Helper: Assistant: Go Back to Before a Turn…** in the Command Palette lists all that are kept.
+- The last 50 are kept (`novelHelper.assistant.snapshots.keep`); older ones are removed, with the contents nothing refers to any more. A turn that changed no file leaves none.
+- Not in a snapshot: `.novel-helper/snapshots/` itself, `.git` and `node_modules` folders anywhere, files over 5 MB, files that are not text (a NUL byte in the first 8000 bytes), symbolic links. Changes to those are not listed, and going back leaves them alone. Going back does not delete folders that became empty.
+- Snapshots do not use git and do not touch a git repository of yours. `.novel-helper/snapshots/` holds a `.gitignore` containing `*`, so a story kept in git does not commit them.
+- When the agent changes a file that has unsaved edits of yours, the editor keeps your version, the panel says so, and VS Code asks which one to keep when you save. Files without unsaved edits are reloaded by VS Code itself.
+
+```text
+.novel-helper/snapshots/
+├── .gitignore
+├── objects/
+│   ├── 2d/2cc7a1…          the content of a file, named by its SHA-256
+│   └── 47/2d6086…
+└── turns/
+    ├── 000012.json          a turn: the hash of every file before it, and what it changed
+    └── 000013.json          a going back, in the same format
+```
+
+**Conversations**
+
+- A conversation lasts while the window is open. A window that is opened again shows it; where the agent can pick the session up (Claude Code can), it goes on, and where not, the panel says that this is a new one.
+- When the agent's process ends in the middle, the panel says so, and the next message starts it again and picks the session up.
+- **+** in the view's title bar starts a new conversation. **Stop** ends the turn that is running; permission requests still open count as not allowed.
+- When the agent cannot be started, the panel says which case it is and what to do: `npx` not found, the agent not logged in, or the process ending right away (with what it wrote last). What the agent writes to stderr is in the Output panel under Novel Helper.
+
 ## Look up lore
 
 - Hover a name or alias in any Markdown or plain-text file to see its card. With the cursor on the name, **Ctrl+K Ctrl+I** shows it without the mouse.
@@ -278,6 +338,10 @@ The counts are what the provider reported for each request. Cost is tokens times
 | `novelHelper.extraRequestBody` | `{}` | Merged into every request body; `null` removes a field |
 | `novelHelper.usage.prices` | `{}` | Your own prices by model id, in US dollars per million tokens |
 | `novelHelper.usage.dailyLimitUsd` | `0` | Stop automatic requests once the day's estimated cost reaches this; `0` for no limit |
+| `novelHelper.assistant.agent` | `claude` | The agent behind the [assistant](#the-assistant): `claude` or `custom`; user settings only |
+| `novelHelper.assistant.command` | | The command that starts a custom agent; user settings only |
+| `novelHelper.assistant.args` | `[]` | Arguments of the custom agent's command; user settings only |
+| `novelHelper.assistant.snapshots.keep` | `50` | How many of the assistant's snapshots are kept |
 | `novelHelper.files.storyFolder` | | [The story folder](#the-story-folder), as a path relative to the workspace folder; empty is the workspace folder itself |
 | `novelHelper.files.lore` | `{设定,人物,角色,资料,世界观,lore,characters,worldbuilding}/**/*.{md,txt}` | Globs relative to the story folder |
 | `novelHelper.files.chapters` | `{正文,章节,chapters,manuscript}/**/*.{md,txt}` | |
@@ -316,7 +380,7 @@ npm test
 npx @vscode/vsce package
 ```
 
-`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, the story folder's path and state, the marker file, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, the outline graph (nodes, order, links), buoys (states, marks, moving along links, the prompts that ask the model and reading its answers), cutting ghost text and its paragraphs, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), the model client against a local fake server, and the extension as a whole, run in a temporary folder against a stand-in for the `vscode` module (renaming, initializing, paths that lead out, lore fields, the story folder, switching ghost text off during a wait, where a chapter starts on the outline, the automatic updates, moving the buoys by hand, and following a rename).
+`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, the story folder's path and state, the marker file, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, the outline graph (nodes, order, links), buoys (states, marks, moving along links, the prompts that ask the model and reading its answers), cutting ghost text and its paragraphs, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), the model client against a local fake server, and the extension as a whole, run in a temporary folder against a stand-in for the `vscode` module (renaming, initializing, paths that lead out, lore fields, the story folder, switching ghost text off during a wait, where a chapter starts on the outline, the automatic updates, moving the buoys by hand, and following a rename). For the assistant: taking, comparing, going back to and pruning snapshots, the workspace brief and what goes with a message, the rules for what goes through unasked, folding session updates into the panel's list, and the panel's Markdown reader; the ACP client is tested against a fake agent run as a child process (`src/test/fakeAgent.ts`), and the panel as a whole runs against it in the `vscode` stand-in.
 
 ## License
 

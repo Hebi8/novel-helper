@@ -42,11 +42,28 @@ async function main() {
 			esbuildProblemMatcherPlugin,
 		],
 	});
+	// The page of the assistant's panel: a script for the browser side of a webview.
+	const page = await esbuild.context({
+		entryPoints: [
+			'src/webview/assistant.ts'
+		],
+		bundle: true,
+		format: 'iife',
+		minify: production,
+		sourcemap: !production,
+		sourcesContent: false,
+		platform: 'browser',
+		outfile: 'dist/assistant.js',
+		logLevel: 'silent',
+		plugins: [
+			esbuildProblemMatcherPlugin,
+		],
+	});
 	if (watch) {
-		await ctx.watch();
+		await Promise.all([ctx.watch(), page.watch()]);
 	} else {
-		await ctx.rebuild();
-		await ctx.dispose();
+		await Promise.all([ctx.rebuild(), page.rebuild()]);
+		await Promise.all([ctx.dispose(), page.dispose()]);
 	}
 }
 

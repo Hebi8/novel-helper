@@ -148,3 +148,23 @@ export async function setStoryFolder(folder: vscode.WorkspaceFolder, path: strin
 		(vscode.workspace.workspaceFolders ?? []).length > 1 ? vscode.ConfigurationTarget.WorkspaceFolder : vscode.ConfigurationTarget.Workspace;
 	await vscode.workspace.getConfiguration(`${SECTION}.files`, folder.uri).update('storyFolder', path, target);
 }
+
+export interface AssistantSettings {
+	/** `claude` for the preset, `custom` for the command below. */
+	agent: string;
+	command: string;
+	args: string[];
+	/** How many snapshots of the assistant's turns are kept. */
+	keepSnapshots: number;
+}
+
+/** The agent's command is read from the user's own settings only (the settings are declared machine-scoped): a workspace cannot say what is run. */
+export function assistantSettings(): AssistantSettings {
+	const c = vscode.workspace.getConfiguration(`${SECTION}.assistant`);
+	return {
+		agent: c.get<string>('agent', 'claude'),
+		command: c.get<string>('command', ''),
+		args: c.get<string[]>('args', []),
+		keepSnapshots: c.get<number>('snapshots.keep', 50),
+	};
+}

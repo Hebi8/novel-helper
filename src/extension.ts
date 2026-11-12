@@ -4,6 +4,7 @@ import { isUsable, MARKER_FILE } from './core/story';
 import { stem } from './core/text';
 import { costOf, ratesFor, usageKey } from './core/usage';
 import { PROVIDERS, type ProviderId } from './llm/providers';
+import { AssistantView } from './vscode/assistantView';
 import { BookView } from './vscode/bookView';
 import { Buoys, positionSummary } from './vscode/buoys';
 import { SECTION, completionSettings, currentProvider, modelSettings, secretKey, usageSettings } from './vscode/config';
@@ -124,6 +125,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		buoys.onDidChange(showPosition),
 		new LoreView(indexes),
 		new SettingsView(indexes, context.secrets, usage),
+		new AssistantView(context, indexes, log),
 		indexes.onDidChange(describeWorkspace),
 		reportChanged,
 		usage.onDidChange(() => reportChanged.fire(USAGE_URI)),

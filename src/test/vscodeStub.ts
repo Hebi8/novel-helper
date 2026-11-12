@@ -18,20 +18,25 @@ class Uri {
 	constructor(
 		readonly scheme: string,
 		readonly path: string,
+		readonly query = '',
 	) {
 		this.fsPath = path;
 	}
 	static file(p: string): Uri {
 		return new Uri('file', p);
 	}
-	static from({ scheme, path: p }: { scheme: string; path: string }): Uri {
-		return new Uri(scheme, p);
+	static from({ scheme, path: p, query }: { scheme: string; path: string; query?: string }): Uri {
+		return new Uri(scheme, p, query);
+	}
+	static parse(text: string): Uri {
+		const [, scheme, rest] = /^([a-z][\w+.-]*):(?:\/\/)?(.*)$/i.exec(text)!;
+		return new Uri(scheme, rest);
 	}
 	static joinPath(base: Uri, ...parts: string[]): Uri {
 		return new Uri(base.scheme, path.posix.join(base.path, ...parts));
 	}
 	toString(): string {
-		return `${this.scheme}://${this.path}`;
+		return `${this.scheme}://${this.path}${this.query && `?${this.query}`}`;
 	}
 }
 
@@ -59,6 +64,15 @@ class Range {
 		readonly start: Position,
 		readonly end: Position,
 	) {}
+}
+
+class Selection extends Range {
+	get active(): Position {
+		return this.end;
+	}
+	get isEmpty(): boolean {
+		return this.start.line === this.end.line && this.start.character === this.end.character;
+	}
 }
 
 class ThemeIcon {
@@ -134,6 +148,15 @@ export interface Asked {
 	problem?: string;
 }
 
+export interface Panel {
+	html: string;
+	options: Any;
+	/** Every message the extension posted to the page. */
+	posted: Any[];
+	/** A message from the page to the extension. */
+	send(message: Any): void;
+}
+
 export interface Started {
 	/** The workspace folder; `base` is its parent, for files that are to be outside the workspace. */
 	workspace: string;
@@ -156,6 +179,20 @@ export interface Started {
 	asked: Asked[];
 	/** What was shown with showInformationMessage, showWarningMessage and showErrorMessage. */
 	messages: string[];
+	/** The webview views that were registered, by id. */
+	webviews: Record<string, Any>;
+	/** What was opened in the diff editor: `[left, right, title]`. */
+	diffs: Array<[Uri, Uri, string]>;
+	/** Addresses handed to `env.openExternal`. */
+	external: string[];
+	/** Opens a webview view as VS Code does when it is first shown, and returns its page's side: what it was sent, and a way to send to the extension. */
+	panel(id: string): Panel;
+	/** Selects text in the active editor: lines and characters from 0. */
+	select(startLine: number, startCharacter: number, endLine: number, endCharacter: number): void;
+	/** Types into an open document without saving it. */
+	type(relative: string, content: string): void;
+	/** Closes the window and opens it again: the extension is activated anew, with what it kept in the workspace's state. */
+	reopen(): Promise<void>;
 	/** Paths the extension read through `workspace.fs`. */
 	reads: string[];
 	/** File system watchers created and not disposed. */
@@ -205,6 +242,11 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 	const answers: Started['answers'] = [];
 	const asked: Asked[] = [];
 	const messages: string[] = [];
+	const webviews: Started['webviews'] = {};
+	const diffs: Started['diffs'] = [];
+	const external: string[] = [];
+	const selectionChanged = new EventEmitter();
+	const workspaceState = new Map<string, unknown>();
 	const reads: string[] = [];
 	const documents = new Map<string, Any>();
 	const liveWatchers = new Set<Any>();
@@ -238,8 +280,11 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 				isUntitled: false,
 				languageId: 'markdown',
 				content: fs.readFileSync(uri.path, 'utf8'),
-				getText() {
-					return this.content;
+				get isDirty() {
+					return !fs.existsSync(this.uri.path) || fs.readFileSync(this.uri.path, 'utf8') !== this.content;
+				},
+				getText(range?: Range) {
+					return range ? this.content.slice(offsetAt(this.content, range.start), offsetAt(this.content, range.end)) : this.content;
 				},
 				positionAt(offset: number) {
 					return positionAt(this.content, offset);
@@ -260,9 +305,10 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 		}
 		return document;
 	};
-	const message = async (text: string) => {
+	// A modal message waits for one of its buttons: the next scripted answer picks it. Any other message is only noted.
+	const message = async (text: string, ...rest: Any[]) => {
 		messages.push(text);
-		return undefined;
+		return rest[0]?.modal ? answers.shift()!(rest.slice(1)) : undefined;
 	};
 
 	const vscode: Any = {
@@ -270,6 +316,7 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 		EventEmitter,
 		Position,
 		Range,
+		Selection,
 		ThemeIcon,
 		TreeItem,
 		WorkspaceEdit,
@@ -294,10 +341,17 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 		ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
 		Hover: class {},
 		MarkdownString: class {},
-		env: { language: 'en' },
+		env: {
+			language: 'en',
+			openExternal: async (uri: Uri) => {
+				external.push(uri.toString());
+				return true;
+			},
+		},
 		l10n: { t: (text: string, ...args: unknown[]) => text.replace(/\{(\d+)\}/g, (_, i: string) => String(args[Number(i)])) },
 		workspace: {
 			workspaceFolders: [folder],
+			isTrusted: true,
 			get textDocuments() {
 				return [...documents.values()];
 			},
@@ -358,12 +412,15 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 					return { type: (await fs.promises.stat(uri.path)).isDirectory() ? 2 : 1 };
 				},
 			},
-			registerTextDocumentContentProvider: (_: string, provider: Any) => {
-				providers.content = provider;
+			// `providers.content` is the extension's own scheme; the others are kept by their scheme.
+			registerTextDocumentContentProvider: (scheme: string, provider: Any) => {
+				providers[scheme === 'novel-helper' ? 'content' : scheme] = provider;
 				return { dispose() {} };
 			},
 			openTextDocument: async (uri: Uri) =>
-				uri.scheme === 'file' ? documentFor(uri) : { uri, languageId: 'markdown', getText: () => providers.content.provideTextDocumentContent(uri) },
+				uri.scheme === 'file'
+					? documentFor(uri)
+					: { uri, languageId: 'markdown', getText: () => providers[uri.scheme === 'novel-helper' ? 'content' : uri.scheme].provideTextDocumentContent(uri) },
 			// Like VS Code: checked as a whole first, then done step by step; a step that fails leaves the earlier ones done.
 			applyEdit: async (edit: WorkspaceEdit) => {
 				for (const op of edit.ops) {
@@ -415,12 +472,17 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 			createOutputChannel: () => ({ info() {}, warn() {}, dispose() {} }),
 			createStatusBarItem: () => statusItem,
 			onDidChangeActiveTextEditor: editorChanged.event,
+			onDidChangeTextEditorSelection: selectionChanged.event,
 			showTextDocument: async (target: Any) => {
 				const document = target instanceof Uri ? await vscode.workspace.openTextDocument(target) : target;
-				vscode.window.activeTextEditor = { document };
+				vscode.window.activeTextEditor = { document, selection: new Selection(new Position(0, 0), new Position(0, 0)) };
 				editorChanged.fire(vscode.window.activeTextEditor);
 			},
 			withProgress: async (_: unknown, task: () => Promise<unknown>) => task(),
+			registerWebviewViewProvider: (id: string, provider: Any) => {
+				webviews[id] = provider;
+				return { dispose: () => delete webviews[id] };
+			},
 			showWarningMessage: message,
 			showInformationMessage: message,
 			showErrorMessage: message,
@@ -463,7 +525,13 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 				commands[id] = run;
 				return { dispose() {} };
 			},
-			executeCommand: async (id: string, ...args: Any[]) => (id === 'vscode.open' ? vscode.window.showTextDocument(args[0]) : commands[id]?.(...args)),
+			executeCommand: async (id: string, ...args: Any[]) => {
+				if (id === 'vscode.diff') {
+					diffs.push(args as [Uri, Uri, string]);
+					return undefined;
+				}
+				return id === 'vscode.open' ? vscode.window.showTextDocument(args[0]) : commands[id]?.(...args);
+			},
 		},
 	};
 	const context: Any = {
@@ -481,16 +549,25 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 			onDidChange: secretChanged.event,
 		},
 		globalStorageUri: Uri.file(storage),
+		extensionUri: Uri.file(root),
+		workspaceState: {
+			get: (key: string) => workspaceState.get(key),
+			// Like VS Code: what is kept is a copy, as JSON would make it.
+			update: async (key: string, value: unknown) => void workspaceState.set(key, value === undefined ? undefined : JSON.parse(JSON.stringify(value))),
+		},
 	};
 
 	// A fresh copy of the extension for every start: its modules keep state, and hold on to the `vscode` they were loaded with.
-	current = vscode;
-	for (const key of Object.keys(require.cache)) {
-		if (key.startsWith(path.join(root, 'out') + path.sep) && !key.includes(`${path.sep}test${path.sep}`)) {
-			delete require.cache[key];
+	const activate = () => {
+		current = vscode;
+		for (const key of Object.keys(require.cache)) {
+			if (key.startsWith(path.join(root, 'out') + path.sep) && !key.includes(`${path.sep}test${path.sep}`)) {
+				delete require.cache[key];
+			}
 		}
-	}
-	(require('../extension') as { activate(context: Any): void }).activate(context);
+		(require('../extension') as { activate(context: Any): void }).activate(context);
+	};
+	activate();
 
 	const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
 	const find = async (view: string, ...labels: string[]) => {
@@ -529,6 +606,43 @@ export async function start(prepare: (workspace: string, base: string) => void, 
 		answers,
 		asked,
 		messages,
+		webviews,
+		diffs,
+		external,
+		panel: (id) => {
+			const received = new EventEmitter();
+			const panel: Panel = { html: '', options: undefined, posted: [], send: (sent) => received.fire(sent) };
+			webviews[id].resolveWebviewView({
+				webview: {
+					cspSource: 'vscode-resource:',
+					asWebviewUri: (uri: Uri) => `vscode-resource:${uri.path}`,
+					postMessage: async (posted: Any) => void panel.posted.push(JSON.parse(JSON.stringify(posted))),
+					onDidReceiveMessage: received.event,
+					set html(html: string) {
+						panel.html = html;
+					},
+					set options(options: Any) {
+						panel.options = options;
+					},
+				},
+				onDidDispose: () => ({ dispose() {} }),
+			});
+			return panel;
+		},
+		select: (startLine, startCharacter, endLine, endCharacter) => {
+			vscode.window.activeTextEditor.selection = new Selection(new Position(startLine, startCharacter), new Position(endLine, endCharacter));
+			selectionChanged.fire({ textEditor: vscode.window.activeTextEditor });
+		},
+		type: (relative, content) => {
+			documentFor(Uri.file(path.join(workspace, relative))).content = content;
+		},
+		reopen: async () => {
+			context.subscriptions.splice(0).forEach((subscription: Any) => subscription.dispose());
+			documents.clear();
+			vscode.window.activeTextEditor = undefined;
+			activate();
+			await settle();
+		},
 		reads,
 		watchers: () => liveWatchers.size,
 		holdStat: () => {

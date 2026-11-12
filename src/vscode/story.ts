@@ -53,7 +53,7 @@ export function storyLabel(story: string): string {
 }
 
 /** The marker for a story folder that was laid out by hand or by an earlier version: the folders it uses. */
-function markerOfIndex(index: FolderIndex): Marker {
+export function markerOfIndex(index: FolderIndex): Marker {
 	const lore = index.folders('lore').filter((folder) => folder && index.library.entries().some((entry) => entry.id.startsWith(`${folder}/`)));
 	const chapters = index.root('chapter');
 	return {

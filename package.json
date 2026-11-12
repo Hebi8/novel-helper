@@ -77,6 +77,11 @@
         {
           "id": "novelHelper.settings",
           "name": "%view.settings%"
+        },
+        {
+          "id": "novelHelper.assistant",
+          "name": "%view.assistant%",
+          "type": "webview"
         }
       ]
     },
@@ -166,6 +171,18 @@
         "command": "novelHelper.setDailyLimit",
         "title": "%command.setDailyLimit%",
         "category": "Novel Helper"
+      },
+      {
+        "command": "novelHelper.assistant.newSession",
+        "title": "%command.assistant.newSession%",
+        "category": "Novel Helper",
+        "icon": "$(add)"
+      },
+      {
+        "command": "novelHelper.assistant.history",
+        "title": "%command.assistant.history%",
+        "category": "Novel Helper",
+        "icon": "$(history)"
       },
       {
         "command": "novelHelper.book.newChapter",
@@ -311,6 +328,16 @@
           "command": "novelHelper.lore.new",
           "when": "view == novelHelper.lore",
           "group": "navigation"
+        },
+        {
+          "command": "novelHelper.assistant.newSession",
+          "when": "view == novelHelper.assistant",
+          "group": "navigation@1"
+        },
+        {
+          "command": "novelHelper.assistant.history",
+          "when": "view == novelHelper.assistant",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -603,6 +630,41 @@
           "minimum": 0,
           "markdownDescription": "%config.usage.dailyLimitUsd%"
         },
+        "novelHelper.assistant.agent": {
+          "type": "string",
+          "enum": [
+            "claude",
+            "custom"
+          ],
+          "enumDescriptions": [
+            "%config.assistant.agent.claude%",
+            "%config.assistant.agent.custom%"
+          ],
+          "default": "claude",
+          "scope": "machine",
+          "markdownDescription": "%config.assistant.agent%"
+        },
+        "novelHelper.assistant.command": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "%config.assistant.command%"
+        },
+        "novelHelper.assistant.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "%config.assistant.args%"
+        },
+        "novelHelper.assistant.snapshots.keep": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "markdownDescription": "%config.assistant.snapshots.keep%"
+        },
         "novelHelper.files.storyFolder": {
           "type": "string",
           "default": "",
@@ -760,13 +822,14 @@
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "package": "npm run check-types && npm run lint && node esbuild.js --production",
-    "check-types": "tsc --noEmit",
+    "check-types": "tsc --noEmit && tsc --noEmit -p src/webview",
     "lint": "eslint src",
     "pretest": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\" && tsc -p . --outDir out",
     "test": "node --test \"out/test/**/*.test.js\"",
     "watch-tests": "tsc -p . -w --outDir out"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^2.6.0",
     "yaml": "^2.9.1"
   },
   "devDependencies": {
