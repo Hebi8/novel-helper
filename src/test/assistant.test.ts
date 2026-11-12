@@ -6,6 +6,7 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { after, describe, test } from 'node:test';
+import { type BuoyFile, buoyPath } from '../core/buoy';
 import { SNAPSHOT_DIR, type SnapshotRecord } from '../core/snapshot';
 import { MARKER_FILE, serializeMarker } from '../core/story';
 import type { Item } from '../core/transcript';
@@ -246,6 +247,18 @@ describe('what the agent may do', () => {
 		assert.equal(talk.one.read('正文/第一卷/第2章.md'), 'asked');
 	});
 
+	test('so does changing what the extension keeps of the story in its own folder, and going back takes it along', async () => {
+		const talk = await chat();
+		await talk.say('ask edit .novel-helper/templates/人物.md\nask edit .novel-helper/project.json');
+		assert.equal(talk.said(), 'answer: yesanswer: yes');
+		assert.deepEqual(talk.of('ask'), []);
+		const turn = talk.of('turn')[0];
+		assert.deepEqual(turn.changes.map((change) => change.path), ['.novel-helper/project.json', '.novel-helper/templates/人物.md']);
+		await talk.goBack(turn.record!);
+		assert.equal(talk.one.read(MARKER_FILE), MARKER);
+		assert.ok(!talk.one.files().includes('.novel-helper/templates/人物.md'));
+	});
+
 	test('a command is put to the writer, and runs only when allowed', async () => {
 		const talk = await chat();
 		talk.begin('run rm -rf 正文');
@@ -255,8 +268,8 @@ describe('what the agent may do', () => {
 			id: '1',
 			title: 'rm -rf 正文',
 			detail: '',
+			// The agent also offered "Always allow": only yes or no to this one request is put to the writer.
 			options: [
-				{ id: 'always', name: 'Always allow', kind: 'allow_always' },
 				{ id: 'yes', name: 'Allow Once', kind: 'allow_once' },
 				{ id: 'no', name: 'Do Not Allow', kind: 'reject_once' },
 			],
@@ -273,27 +286,30 @@ describe('what the agent may do', () => {
 		assert.equal(talk.said(), 'answer: yes');
 	});
 
-	test('a path outside the story folder, or in a hidden folder of it, is asked about; no answer is no', async () => {
+	test('a path outside the story folder, in a hidden folder of it, or among the snapshots is asked about; no answer is no', async () => {
 		const talk = await chat();
-		talk.begin('ask edit ../outside.md\nask edit .novel-helper/project.json\nask read ../outside.md');
-		for (const [n, title] of ['edit ../outside.md', 'edit .novel-helper/project.json', 'read ../outside.md'].entries()) {
+		const asked = ['edit ../outside.md', 'edit .vscode/settings.json', `edit ${SNAPSHOT_DIR}/turns/000001.json`, 'read ../outside.md'];
+		talk.begin(asked.map((one) => `ask ${one}`).join('\n'));
+		for (const [n, title] of asked.entries()) {
 			const ask = await until(() => talk.of('ask')[n], `question ${n}`);
 			assert.equal(ask.title, title);
-			assert.equal(ask.detail, n === 1 ? '.novel-helper/project.json' : path.join(talk.one.base, 'outside.md'));
-			talk.panel.send({ type: 'answer', id: ask.id, option: 'no' });
+			assert.equal(ask.detail, n === 1 || n === 2 ? title.slice('edit '.length) : path.join(talk.one.base, 'outside.md'));
+			// An answer the panel did not offer is no answer.
+			talk.panel.send({ type: 'answer', id: ask.id, option: n === 1 ? 'always' : 'no' });
 		}
 		await talk.idle();
-		assert.equal(talk.said(), 'answer: noanswer: noanswer: no');
+		assert.equal(talk.said(), 'answer: noanswer: cancelledanswer: noanswer: no');
+		assert.equal(talk.of('ask')[1].closed, true);
 		assert.equal(fs.existsSync(path.join(talk.one.base, 'outside.md')), false);
-		assert.equal(talk.one.read(MARKER_FILE), MARKER);
+		assert.ok(!talk.one.files().some((file) => file.startsWith('.vscode/') || file.startsWith(`${SNAPSHOT_DIR}/turns/000001`)));
 
 		// Stopping the turn while a question is open answers it with no.
 		talk.begin('run curl example.com\nwait');
-		await until(() => talk.of('ask')[3], 'the open question');
+		await until(() => talk.of('ask')[4], 'the open question');
 		talk.panel.send({ type: 'stop' });
 		await talk.idle();
-		assert.equal(talk.of('ask')[3].closed, true);
-		assert.equal(talk.of('ask')[3].answer, undefined);
+		assert.equal(talk.of('ask')[4].closed, true);
+		assert.equal(talk.of('ask')[4].answer, undefined);
 	});
 
 	test('a link inside the story folder that leads out of it counts as outside', async () => {
@@ -503,25 +519,75 @@ describe('an agent that cannot be used', () => {
 	});
 });
 
+describe('the buoys', () => {
+	const OUTLINED = { ...STORY, '大纲/第1章.md': '## 来信\n\n信送不出去。\n\n## 等门\n\n等到傍晚。\n', '正文/第1章.md': '---\ntitle: 第1章\n---\n清晨的雾。\n阿栀推开了门。\n' };
+	const BUOYS = buoyPath('正文/第1章.md');
+	const moveTo = (title: string) => JSON.stringify({ by: 'assistant', state: { kind: 'in', nodes: [{ id: `大纲/第1章.md#${title}`, title }] } });
+	const marks = (talk: Chat) => (JSON.parse(talk.one.read(BUOYS)) as BuoyFile).marks;
+	const shown = async (talk: Chat) => {
+		await talk.one.settle();
+		return talk.one.views['novelHelper.outline'].message as string;
+	};
+
+	test('a mark the agent adds with only the buoys in it is filled in from the chapter, and the outline view and the status bar follow; so they do on going back', async () => {
+		const talk = await chat(OUTLINED);
+		const { one } = talk;
+		await one.vscode.window.showTextDocument(one.vscode.Uri.file(path.join(one.workspace, '正文/第1章.md')));
+		assert.equal(await shown(talk), '第1章: no position on the outline yet');
+
+		await talk.say(`write ${BUOYS} {"version":1,"chapter":"正文/第1章.md","marks":[${moveTo('来信')}]}`);
+		assert.deepEqual(talk.of('ask'), []);
+		assert.equal(await shown(talk), '第1章: in 【来信】');
+		assert.match(one.statusItem.tooltip, /\n\n第1章 on the outline: in 【来信】\n\n/);
+		const text = OUTLINED['正文/第1章.md'];
+		const body = '清晨的雾。\n阿栀推开了门。\n'.length;
+		const [first] = marks(talk);
+		assert.deepEqual({ ...first, time: '' }, { at: text.length, before: text.slice(-30), chars: body, time: '', by: 'assistant', state: JSON.parse(moveTo('来信')).state });
+		assert.ok(Date.now() - Date.parse(first.time) < 60_000);
+
+		// The next one is appended to what the extension wrote back; the chapter has grown since.
+		one.type('正文/第1章.md', `${text}她等了很久。`);
+		await talk.say(`write ${BUOYS} ${JSON.stringify({ version: 1, chapter: '正文/第1章.md', marks: [first, JSON.parse(moveTo('等门'))] })}`);
+		assert.equal(await shown(talk), '第1章: in 【等门】');
+		assert.deepEqual(marks(talk).map((mark) => [mark.by, mark.chars, mark.state.nodes[0].title]), [['assistant', body, '来信'], ['assistant', body + 6, '等门']]);
+		assert.deepEqual(marks(talk)[0], first, 'a mark that is whole is left as it is');
+
+		// A node that is not in the outline: the buoys are lost, by the rule for any mark.
+		await talk.say(`write ${BUOYS} ${JSON.stringify({ version: 1, chapter: '正文/第1章.md', marks: [...marks(talk), JSON.parse(moveTo('没有的'))] })}`);
+		assert.equal(await shown(talk), '第1章: lost: 【没有的】 is no longer in the outline');
+		assert.equal(marks(talk).length, 3);
+
+		// Going back puts the file back, and what is shown follows.
+		const turns = talk.of('turn');
+		assert.deepEqual(turns.map((turn) => turn.changes.map((change) => change.path)), [[BUOYS], [BUOYS], [BUOYS]]);
+		await talk.goBack(turns[2].record!);
+		assert.equal(await shown(talk), '第1章: in 【等门】');
+		assert.match(one.statusItem.tooltip, /\n\n第1章 on the outline: in 【等门】\n\n/);
+		await talk.goBack(turns[0].record!);
+		assert.ok(!one.files().includes(BUOYS));
+		assert.equal(await shown(talk), '第1章: no position on the outline yet');
+	});
+});
+
 describe('conversations', () => {
 	const sessionOf = (talk: Chat) => talk.said().split(' ')[0];
 
-	test('a new conversation clears the panel and is a new session for the agent; not while a turn is running', async () => {
+	test('a new conversation clears the panel and is a new session for the agent; a turn that is running is stopped first', async () => {
 		const talk = await chat(STORY, ['--close']);
 		await talk.say('session');
 		const first = sessionOf(talk);
-		talk.begin('wait');
-		await until(() => last(talk.panel, 'state')?.status === 'The agent is working…', 'the turn');
-		await talk.one.commands['novelHelper.assistant.newSession']();
-		assert.equal(talk.one.messages.at(-1), 'Stop the turn that is running first.');
-		talk.panel.send({ type: 'stop' });
-		await talk.idle();
-
+		talk.begin(`write ${CHAPTER} 改到一半。\nrun ls\nwait`);
+		await until(() => talk.of('ask')[0], 'the question of the turn that is running');
 		await talk.one.commands['novelHelper.assistant.newSession']();
 		assert.deepEqual(talk.items(), []);
+		assert.equal(last(talk.panel, 'state')?.busy, false);
+		// The turn was wound up like any that is stopped: what it changed is kept and can be gone back from.
+		assert.deepEqual(talk.records().at(-1)?.changes?.map((change) => change.path), [CHAPTER]);
+
 		await talk.say('session');
 		assert.notEqual(sessionOf(talk), first);
 		assert.ok(talk.said().endsWith(`closed=${first}`));
+		assert.deepEqual(talk.of('ask'), []);
 	});
 
 	test('a window that is opened again shows the conversation and goes on in the same session, when the agent can', async () => {

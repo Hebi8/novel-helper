@@ -10,8 +10,8 @@ Built for long Chinese web novels first (one chapter per file, hundreds of chapt
 
 ## Install
 
-1. Build `novel-helper-0.3.4.vsix` (see [Build from source](#build-from-source)).
-2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.3.4.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
+1. Build `novel-helper-0.4.0.vsix` (see [Build from source](#build-from-source)).
+2. In VS Code: Extensions view → `⋯` → **Install from VSIX…**, or run `code --install-extension novel-helper-0.4.0.vsix`. In a Remote-SSH window, install it from that window so it runs next to your files.
 
 ## Set an API key
 
@@ -275,15 +275,23 @@ These settings are read from your user settings only (remote settings in a remot
 
 **What it knows**
 
-- At the start of every conversation the extension gives it a brief on the workspace: how the folder is laid out (with the folder names this book uses), how outlines and summaries pair with chapters, the frontmatter fields of lore entries, and what it may change.
+- At the start of every conversation the extension gives it a brief on the workspace: how the folder is laid out (with the folder names this book uses), how outlines and summaries pair with chapters, the frontmatter fields of lore entries, how to read the outline graph and move the buoys, and what it may change.
 - Every message takes along the file you have open, the line the cursor is on, and the selected text with its place; the line above the input box says what goes with the next one. So "this paragraph" and "this chapter" work.
 - Before a message is sent, unsaved files of the story folder are saved: Claude Code reads and writes the disk itself, not the editor.
 
 **Permissions**
 
-- Reading, searching and changing files inside the story folder, chapters included, goes through without a question for each.
-- Everything else is asked about on the panel, and is not allowed unless you click: running commands, the network, paths outside the story folder, folders in it whose names start with a dot (`.git`, `.vscode`, `.novel-helper`: these hold what tools go by, and the snapshots themselves), and files that snapshots do not hold (not text, or over 5 MB; see below), since a change to those could not be gone back from. A symbolic link counts as the place it points to.
+- Reading, searching and changing files inside the story folder, chapters included, goes through without a question for each. What is in `.novel-helper/` apart from the snapshots (the buoys of each chapter, the lore templates, `project.json`) is part of the story too: it goes through the same way, and snapshots hold it, so it can be gone back from.
+- Everything else is asked about on the panel, and is not allowed unless you click: running commands, the network, paths outside the story folder, the other folders in it whose names start with a dot (`.git`, `.vscode`: these hold what tools go by), the snapshots in `.novel-helper/snapshots/`, and files that snapshots do not hold (not text, or over 5 MB; see below), since a change to those could not be gone back from. A symbolic link counts as the place it points to.
+- A question has two answers: allow this once, or do not allow. Where the agent offers more (an "always allow"), the panel does not show it: one answer that stands for later requests would let those past the rules above.
 - For Claude Code, the extension puts the session into its ask-every-time mode and applies the rules above. Allow rules you wrote into Claude Code's own settings still come first, and commands Claude Code considers read-only (`ls`, `cat`, `echo` and the like) are not asked about either. A custom agent runs in its own default mode.
+
+**Moving the buoys**
+
+- The assistant can move where a chapter is on the [outline graph](#the-outline-as-a-graph-and-where-a-chapter-is-on-it): when you ask it to, or after it changed headings or the structure of the outline, for the chapters that no longer match (the brief tells it to).
+- It does so by appending a mark that only says where the buoys are (`{ "by": "assistant", "state": … }`) to the chapter's buoy file. How far the text was and how long it was then are numbers a model does not get right, so it is told not to write them: the extension fills them in from the chapter as it is the next time it reads the file, and writes the file back.
+- A mark that names a node the outline does not have counts as lost, like any other, and the model searches for the position at the next request for ghost text.
+- After a turn, and after going back, the **Outline** view and the position in the status bar's tooltip follow. Buoy files are in the snapshots: a wrong move is undone by going back to before the turn.
 
 **Snapshots and going back**
 
@@ -311,7 +319,7 @@ These settings are read from your user settings only (remote settings in a remot
 
 - A conversation lasts while the window is open. A window that is opened again shows it; where the agent can pick the session up (Claude Code can), it goes on, and where not, the panel says that this is a new one.
 - When the agent's process ends in the middle, the panel says so, and the next message starts it again and picks the session up.
-- **+** in the view's title bar starts a new conversation. **Stop** ends the turn that is running; permission requests still open count as not allowed.
+- **+** in the view's title bar starts a new conversation; a turn that is running is stopped first, then the panel is cleared. **Stop** ends the turn that is running; permission requests still open count as not allowed.
 - When the agent cannot be started, the panel says which case it is and what to do: `npx` not found, the agent not logged in, or the process ending right away (with what it wrote last). What the agent writes to stderr is in the Output panel under Novel Helper.
 
 ## Look up lore
@@ -380,8 +388,8 @@ npm test
 npx @vscode/vsce package
 ```
 
-`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, the story folder's path and state, the marker file, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, the outline graph (nodes, order, links), buoys (states, marks, moving along links, the prompts that ask the model and reading its answers), cutting ghost text and its paragraphs, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), the model client against a local fake server, and the extension as a whole, run in a temporary folder against a stand-in for the `vscode` module (renaming, initializing, paths that lead out, lore fields, the story folder, switching ghost text off during a wait, where a chapter starts on the outline, the automatic updates, moving the buoys by hand, and following a rename). For the assistant: taking, comparing, going back to and pruning snapshots, the workspace brief and what goes with a message, the rules for what goes through unasked, folding session updates into the panel's list, and the panel's Markdown reader; the ACP client is tested against a fake agent run as a child process (`src/test/fakeAgent.ts`), and the panel as a whole runs against it in the `vscode` stand-in.
+`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, the story folder's path and state, the marker file, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, the outline graph (nodes, order, links), buoys (states, marks, moving along links, the prompts that ask the model and reading its answers), cutting ghost text and its paragraphs, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), the model client against a local fake server, and the extension as a whole, run in a temporary folder against a stand-in for the `vscode` module (renaming, initializing, paths that lead out, lore fields, the story folder, switching ghost text off during a wait, where a chapter starts on the outline, the automatic updates, moving the buoys by hand, and following a rename). For the assistant: taking, comparing, going back to and pruning snapshots, the workspace brief and what goes with a message, the rules for what goes through unasked, filling in the buoy marks the assistant adds, folding session updates into the panel's list, and the panel's Markdown reader; the ACP client is tested against a fake agent run as a child process (`src/test/fakeAgent.ts`), and the panel as a whole runs against it in the `vscode` stand-in.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The third-party code bundled into the extension (the Agent Client Protocol SDK, zod, yaml) and its licenses are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

@@ -125,7 +125,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		buoys.onDidChange(showPosition),
 		new LoreView(indexes),
 		new SettingsView(indexes, context.secrets, usage),
-		new AssistantView(context, indexes, log),
+		new AssistantView(context, indexes, log, () => buoys.refresh()),
 		indexes.onDidChange(describeWorkspace),
 		reportChanged,
 		usage.onDidChange(() => reportChanged.fire(USAGE_URI)),

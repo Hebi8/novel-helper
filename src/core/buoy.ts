@@ -24,8 +24,8 @@ export interface BuoyState {
 	nodes: BuoyRef[];
 }
 
-/** Who set the buoys: the first guess, the model's regular look, the writer, the model's search over the whole outline. */
-export type MarkSource = 'init' | 'auto' | 'manual' | 'relocate';
+/** Who set the buoys: the first guess, the model's regular look, the writer, the model's search over the whole outline, the assistant in the side panel. */
+export type MarkSource = 'init' | 'auto' | 'manual' | 'relocate' | 'assistant';
 
 export interface Mark {
 	/** Offset in the chapter file (UTF-16 units) up to which the text was looked at. */
@@ -73,8 +73,21 @@ function isState(value: unknown): value is BuoyState {
 	);
 }
 
-/** What a chapter's buoy file holds; undefined for text that is not one. Marks that cannot be read are left out. */
-export function parseBuoyFile(text: string): BuoyFile | undefined {
+/**
+ * A mark as the assistant adds it: `{ "by": "assistant", "state": … }`. It
+ * says where the buoys are and nothing about the text: offsets and counts
+ * are not what a model gets right, so they are left for the extension to
+ * fill in when it next reads the file.
+ */
+type OpenMark = Pick<Mark, 'state'>;
+
+function isWhole(mark: Mark | OpenMark): mark is Mark {
+	const whole = mark as Mark;
+	return typeof whole.at === 'number' && typeof whole.before === 'string' && typeof whole.chars === 'number';
+}
+
+/** A buoy file as written, with the marks whose buoys can be read; undefined for text that is not one. */
+function readMarks(text: string): { version: number; chapter: string; marks: Array<Mark | OpenMark> } | undefined {
 	let data: unknown;
 	try {
 		data = JSON.parse(text);
@@ -85,10 +98,22 @@ export function parseBuoyFile(text: string): BuoyFile | undefined {
 	if (typeof data !== 'object' || data === null || typeof file.version !== 'number' || typeof file.chapter !== 'string' || !Array.isArray(file.marks)) {
 		return undefined;
 	}
-	const marks = file.marks.filter(
-		(mark) => typeof mark?.at === 'number' && typeof mark.before === 'string' && typeof mark.chars === 'number' && isState(mark.state),
-	);
-	return { version: file.version, chapter: file.chapter, marks };
+	return { version: file.version, chapter: file.chapter, marks: file.marks.filter((mark) => isState(mark?.state)) };
+}
+
+/** Whether a buoy file has marks that only say where the buoys are: `parseBuoyFile` needs a `fill` to keep those. */
+export function hasOpenMarks(text: string): boolean {
+	return readMarks(text)?.marks.some((mark) => !isWhole(mark)) ?? false;
+}
+
+/**
+ * What a chapter's buoy file holds; undefined for text that is not one.
+ * Marks that cannot be read are left out. A mark that only says where the
+ * buoys are is made whole by `fill`, and left out too when there is none.
+ */
+export function parseBuoyFile(text: string, fill?: (state: BuoyState) => Mark): BuoyFile | undefined {
+	const file = readMarks(text);
+	return file && { ...file, marks: file.marks.flatMap((mark) => (isWhole(mark) ? [mark] : fill ? [fill(mark.state)] : [])) };
 }
 
 /** Buoys with their nodes found in the outline as it is now. */

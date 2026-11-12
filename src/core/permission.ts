@@ -5,12 +5,18 @@
 // commands, the network, paths outside) is asked about.
 
 import * as path from 'node:path';
+import { SNAPSHOT_DIR } from './snapshot';
+
+/** The extension's folder in a story folder. */
+const OWN_FOLDER = '.novel-helper';
 
 /**
  * Where a file is, seen from the story folder:
- * - `inside`: in it, and in no folder whose name starts with a dot.
- * - `hidden`: in it, but below a dot folder (`.git`, `.vscode`, `.novel-helper`, an agent's own settings). Those hold
- *   what tools run or go by, and the snapshots themselves, so changing them is asked about.
+ * - `inside`: in it, and in no folder whose name starts with a dot. The extension's own folder counts as well, the
+ *   snapshots aside: where the chapters are on the outline, the templates and the story's marker are part of the
+ *   story, and snapshots hold them like the rest.
+ * - `hidden`: in it, but below a dot folder (`.git`, `.vscode`, an agent's own settings), or among the snapshots.
+ *   Those hold what tools run or go by, and what going back relies on, so changing them is asked about.
  * - `unkept`: in it, but nothing a snapshot holds (a folder, a file that is not text or is very large): a change
  *   there could not be gone back from, so it is asked about too. `locate` does not tell; see acp/places.ts.
  * - `outside`: not in the story folder.
@@ -24,7 +30,8 @@ export function locate(story: string, file: string): Exclude<Where, 'unkept'> {
 		return 'outside';
 	}
 	const folders = relative.split(path.sep).slice(0, -1);
-	return folders.some((folder) => folder.startsWith('.')) ? 'hidden' : 'inside';
+	const own = folders[0] === OWN_FOLDER && folders.slice(0, 2).join('/') !== SNAPSHOT_DIR;
+	return folders.slice(own ? 1 : 0).some((folder) => folder.startsWith('.')) ? 'hidden' : 'inside';
 }
 
 /** What a tool call is to be judged by; a subset of ACP's tool call. */

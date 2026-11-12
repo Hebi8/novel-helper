@@ -116,6 +116,8 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 	private starting?: AbortController;
 	/** The writer pressed stop during this turn. */
 	private stopped = false;
+	/** The turn, or the going back, that is under way. */
+	private running?: Promise<void>;
 	private readonly asks = new Map<string, (option?: string) => void>();
 	private askCount = 0;
 	private contextTimer?: ReturnType<typeof setTimeout>;
@@ -124,6 +126,8 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 		private readonly context: vscode.ExtensionContext,
 		private readonly indexes: WorkspaceIndexes,
 		private readonly log: vscode.LogOutputChannel,
+		/** Called after files of a story folder were changed from here: by a turn, or by going back. */
+		private readonly filesChanged: () => void,
 	) {
 		const saved = context.workspaceState.get<Saved>(STATE_KEY);
 		this.session = saved?.session;
@@ -353,12 +357,11 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 					return allowed;
 				}
 				const said = (call.content ?? []).flatMap((content) => (content.type === 'content' && content.content.type === 'text' ? [content.content.text] : []));
-				const options = request.options.map((option) => ({
-					id: option.optionId,
-					// "Yes" and "No" in the panel's language; an option that goes further keeps the agent's wording, which says how far.
-					name: option.kind === 'allow_once' ? t('Allow Once') : option.kind === 'reject_once' ? t('Do Not Allow') : option.name,
-					kind: option.kind,
-				}));
+				// Yes or no to this one request. What an agent offers beyond that ("always allow") is not shown: an answer
+				// that stands for later requests would let those past the rules above.
+				const options = request.options
+					.filter((option) => option.kind === 'allow_once' || option.kind === 'reject_once')
+					.map((option) => ({ id: option.optionId, name: option.kind === 'allow_once' ? t('Allow Once') : t('Do Not Allow'), kind: option.kind }));
 				return this.ask(call.title ?? t('The agent asks for permission'), [...said, ...files.map(name)].join('\n'), options, signal);
 			},
 			readFile: async (file) => {
@@ -473,6 +476,11 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 		if (!text || this.busy) {
 			return;
 		}
+		this.running = this.run(text);
+		await this.running;
+	}
+
+	private async run(text: string): Promise<void> {
 		const t = vscode.l10n.t;
 		if (!vscode.workspace.isTrusted) {
 			this.refuse(text, t('The assistant is off in Restricted Mode: an agent acts on what it reads in the folder. Trust the folder to use it.'));
@@ -545,6 +553,9 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 		[...this.asks.values()].forEach((settle) => settle());
 		const changes = await store.finish(record.id);
 		this.transcript.endTurn({ kind: 'turn', ...(changes.length && { record: record.id }), stop, changes }).forEach((at) => this.show(at));
+		if (changes.length) {
+			this.filesChanged();
+		}
 		if (failure) {
 			this.explain(failure, command, 'turn');
 		}
@@ -571,12 +582,10 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 		}
 	}
 
-	/** Ends the conversation and clears the panel. The snapshots stay. */
+	/** Ends the conversation and clears the panel; a turn that is running is stopped first. The snapshots stay. */
 	async newSession(): Promise<void> {
-		if (this.busy) {
-			void vscode.window.showInformationMessage(vscode.l10n.t('Stop the turn that is running first.'));
-			return;
-		}
+		this.stop();
+		await this.running;
 		await this.client?.close();
 		this.session = undefined;
 		this.notes = [];
@@ -609,6 +618,11 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 		if (this.busy) {
 			return;
 		}
+		this.running = this.goBack(id);
+		await this.running;
+	}
+
+	private async goBack(id: number): Promise<void> {
 		const t = vscode.l10n.t;
 		const index = await this.target();
 		if (!index) {
@@ -642,6 +656,7 @@ export class AssistantView implements vscode.WebviewViewProvider, vscode.Disposa
 				this.show(this.transcript.push({ kind: 'turn', record: record.id, stop: 'reverted', target: id, changes: record.changes }));
 				this.notes.push(revertNote(record.changes.map((change) => change.path), storyNames(index).language));
 				await this.save();
+				this.filesChanged();
 			}
 		} finally {
 			this.setBusy(false);

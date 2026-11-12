@@ -13,6 +13,7 @@ import {
 	buoyPath,
 	choices,
 	choose,
+	hasOpenMarks,
 	initialPosition,
 	inNode,
 	JUDGE_LEAD_CHARS,
@@ -121,9 +122,28 @@ export class Buoys implements vscode.Disposable {
 		this.changed.fire();
 	}
 
+	/** Buoy files were changed by something other than this class (the assistant, going back to a snapshot): what is shown of them is read again. */
+	refresh(): void {
+		void this.follow();
+	}
+
+	/**
+	 * A chapter's buoy file. A mark in it that only says where the buoys are
+	 * (the assistant adds them so) is taken to be about the chapter as it is
+	 * right now, to its end, and the file is written back with it made whole,
+	 * under the chapter it is the file of, whatever chapter it names inside.
+	 */
 	private async readFile(index: FolderIndex, chapter: string): Promise<BuoyFile | undefined> {
 		try {
-			return parseBuoyFile(new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(index.uri(buoyPath(chapter)))));
+			const written = new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(index.uri(buoyPath(chapter))));
+			if (!hasOpenMarks(written)) {
+				return parseBuoyFile(written);
+			}
+			const text = await readText(index.uri(chapter));
+			const now = new Date();
+			const file: BuoyFile = { ...parseBuoyFile(written, (state) => markAt(text, bodyLength(text), state, 'assistant', now))!, chapter };
+			await this.writeFile(index, file);
+			return file;
 		} catch {
 			return undefined;
 		}

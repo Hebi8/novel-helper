@@ -179,7 +179,6 @@
   "There is no story folder to work in yet. Run \"Novel Helper: Initialize Novel Workspace\" first.": "还没有可以用的故事目录。先运行「Novel Helper: 初始化小说工作区」。",
   "The agent is working…": "agent 正在处理……",
   "{0}: changed by this turn while it had unsaved edits in the editor. The editor still shows your version; saving it asks which one to keep.": "{0}：这一轮改了它，而编辑器里还有没保存的修改。编辑器里显示的仍是你的版本；保存时会问留哪一个。",
-  "Stop the turn that is running first.": "先停下正在进行的这一轮。",
   "That snapshot is no longer kept: only the last {0} are.": "这份快照已经清掉了：只保留最近 {0} 份。",
   "{0} (before ↔ after #{1})": "{0}（#{1} 之前 ↔ 之后）",
   "Going back…": "正在退回……",

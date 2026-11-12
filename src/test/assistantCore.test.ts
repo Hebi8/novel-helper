@@ -5,6 +5,8 @@ import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { describe, test } from 'node:test';
 import { editorContextBlock, editorContextLabel, MAX_SELECTION_CHARS, workspaceBrief } from '../core/assistantBrief';
+import { hasOpenMarks, markAt, parseBuoyFile, resolve } from '../core/buoy';
+import { buildOutline } from '../core/outline';
 import { allowOnce, decide, locate, pathsOf } from '../core/permission';
 import type { StoryNames } from '../core/scaffold';
 import { type Item, Transcript } from '../core/transcript';
@@ -25,8 +27,14 @@ describe('the brief on the workspace', () => {
 			'`设定/`、`人物/`、`资料/`：设定条目',
 			'`always: true`',
 			'`aliases`',
-			'包括正文，不用逐个问',
+			'包括正文，也包括 `.novel-helper/` 里快照以外的文件，不用逐个问',
 			'默认不放行',
+			'`.novel-helper/snapshots/` 是快照，不要动',
+			'## 大纲图和浮标',
+			'`正文/第一卷/第3章.md` → `.novel-helper/buoys/正文/第一卷/第3章.md.json`',
+			'不要写 `at`、`before`、`chars`、`time`',
+			'`{ "version": 1, "chapter": "正文/第一卷/第3章.md", "marks": [ … ] }`',
+			'你改了大纲的标题或结构的时候',
 			'`<editor-context>`',
 		]) {
 			assert.ok(brief.includes(part), part);
@@ -42,6 +50,36 @@ describe('the brief on the workspace', () => {
 		assert.doesNotMatch(brief, /正文\/|大纲\//);
 	});
 
+	test('the buoys: the ids the brief gives are the ids of the graph, and the mark it shows is one the extension takes', () => {
+		for (const names of [ZH, EN]) {
+			const zh = names.language === 'zh';
+			const brief = workspaceBrief(names);
+			const [volume, chapter, heading, below] = zh ? ['第一卷', '第3章', '渡海', '上船'] : ['Volume 1', 'Chapter 3', 'The crossing', 'Boarding'];
+			const file = `${names.outlines}/${volume}/${chapter}.md`;
+			const outline = (content: string) => buildOutline([{ path: file, dirs: [volume], content }], { name: names.book });
+			const graph = outline(`# ${chapter}\n\n## ${heading}\n\n## ${heading}\n`);
+			const deeper = outline(`## ${heading}\n\n### ${below}\n`);
+			// Every id the brief shows is in a graph of files so named.
+			for (const id of [`${file}#${heading}`, `${names.outlines}/${volume}/`]) {
+				assert.ok(brief.includes(`\`${id}\``), id);
+				assert.ok(graph.nodes.has(id), id);
+			}
+			assert.ok(graph.nodes.has(`${file}#${heading} (2)`));
+			assert.ok(brief.includes(`\`${file}#${heading}/${below}\``));
+			assert.ok(deeper.nodes.has(`${file}#${heading}/${below}`));
+			assert.equal(deeper.nodes.get(file)?.kind, 'file');
+
+			const mark = /```json\n(.*)\n```/.exec(brief)![1];
+			assert.deepEqual(Object.keys(JSON.parse(mark)), ['by', 'state']);
+			const written = `{ "version": 1, "chapter": "${names.chapters}/${volume}/${chapter}.md", "marks": [${mark}] }`;
+			assert.ok(brief.includes(`\`${written.replace(mark, ' … ')}\``));
+			assert.equal(hasOpenMarks(written), true);
+			const [filled] = parseBuoyFile(written, (state) => markAt('', 0, state, 'assistant', new Date(0)))!.marks;
+			assert.equal(filled.by, 'assistant');
+			assert.equal(resolve(graph, filled.state)?.nodes[0], graph.nodes.get(`${file}#${heading}`));
+		}
+	});
+
 	test('in English for a story with English names', () => {
 		const brief = workspaceBrief(EN);
 		for (const part of [
@@ -49,8 +87,13 @@ describe('the brief on the workspace', () => {
 			'`manuscript/Volume 1/Chapter 3.md` → `outlines/Volume 1/Chapter 3.md`',
 			'the outline of the whole book is `outlines/book.md`',
 			'- `lore/`: lore entries',
-			'chapters included, without asking for each one',
+			'chapters included, and what is in `.novel-helper/` apart from the snapshots, without asking for each one',
 			'not allowed by default',
+			'`.novel-helper/snapshots/` are the snapshots: leave them alone',
+			'## The outline graph and the buoys',
+			'`manuscript/Volume 1/Chapter 3.md` → `.novel-helper/buoys/manuscript/Volume 1/Chapter 3.md.json`',
+			'Do not write `at`, `before`, `chars` or `time`',
+			'when you changed headings or the structure of the outline',
 		]) {
 			assert.ok(brief.includes(part), part);
 		}
@@ -93,7 +136,15 @@ describe('which requests go through unasked', () => {
 	test('where a file is', () => {
 		assert.equal(locate(story, at('正文', '第一卷', '第1章.md')), 'inside');
 		assert.equal(locate(story, at('全书.md')), 'inside');
+		// The extension's own folder is part of the story, the snapshots aside.
+		assert.equal(locate(story, at('.novel-helper', 'project.json')), 'inside');
+		assert.equal(locate(story, at('.novel-helper', 'buoys', '正文', '第一卷', '第1章.md.json')), 'inside');
+		assert.equal(locate(story, at('.novel-helper', 'templates', '人物.md')), 'inside');
 		assert.equal(locate(story, at('.novel-helper', 'snapshots', 'turns', '000001.json')), 'hidden');
+		assert.equal(locate(story, at('.novel-helper', 'snapshots', '.gitignore')), 'hidden');
+		assert.equal(locate(story, at('.novel-helper', '.cache', 'x.json')), 'hidden');
+		assert.equal(locate(story, at('正文', '.novel-helper', 'project.json')), 'hidden');
+		assert.equal(locate(story, at('.vscode', 'settings.json')), 'hidden');
 		assert.equal(locate(story, at('.git', 'hooks', 'pre-commit')), 'hidden');
 		assert.equal(locate(story, at('资料', '.obsidian', 'app.json')), 'hidden');
 		assert.equal(locate(story, at('.gitignore')), 'inside');

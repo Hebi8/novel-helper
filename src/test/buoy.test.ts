@@ -6,6 +6,7 @@ import {
 	buoyPath,
 	choices,
 	choose,
+	hasOpenMarks,
 	initialPosition,
 	inNode,
 	JUDGE_INSTRUCTIONS,
@@ -149,6 +150,26 @@ describe('marks', () => {
 		assert.equal(parseBuoyFile('{"version":1}'), undefined);
 		const broken = { ...file, marks: [mark, { ...mark, state: { kind: 'bridge', nodes: mark.state.nodes } }, { at: 'x' }] };
 		assert.deepEqual(parseBuoyFile(JSON.stringify(broken))?.marks, [mark], 'a bridge needs two nodes');
+	});
+
+	test('a mark that only says where the buoys are, as the assistant adds them, is kept for the extension to fill in', () => {
+		const whole = markAt('正文', 2, stateOf(at('等门')), 'init', new Date(0));
+		const open = { by: 'assistant', state: stateOf(at('收信')) };
+		const written = JSON.stringify({ version: 1, chapter: '正文/第1章.md', marks: [whole, open, { by: 'assistant', state: { kind: 'in', nodes: [] } }] });
+		assert.equal(hasOpenMarks(written), true);
+		assert.equal(hasOpenMarks(serializeBuoyFile({ version: 1, chapter: '正文/第1章.md', marks: [whole] })), false);
+		assert.equal(hasOpenMarks('not json'), false);
+		assert.deepEqual(parseBuoyFile(written)?.marks, [whole], 'left out while nothing fills it in');
+
+		const chapter = '---\ntitle: 第1章\n---\n他推开门，走了进去。';
+		const filled = parseBuoyFile(written, (buoys) => markAt(chapter, 10, buoys, 'assistant', new Date(5)))!;
+		assert.deepEqual(filled.marks, [whole, { at: chapter.length, before: chapter, chars: 10, time: '1970-01-01T00:00:00.005Z', by: 'assistant', state: open.state }]);
+		assert.equal(said(resolve(G, filled.marks[1].state)), 'in: 收信');
+		assert.equal(hasOpenMarks(serializeBuoyFile(filled)), false, 'written back, it is a mark like the others');
+		// Numbers the assistant wrote all the same are taken as they are.
+		const numbered = JSON.stringify({ version: 1, chapter: '正文/第1章.md', marks: [{ ...open, at: 3, before: '', chars: 3 }] });
+		assert.equal(hasOpenMarks(numbered), false);
+		assert.equal(parseBuoyFile(numbered)?.marks[0].at, 3);
 	});
 
 	test('renamed files: the ids of nodes in them, and in folders, follow', () => {
