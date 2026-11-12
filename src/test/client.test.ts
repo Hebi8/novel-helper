@@ -43,8 +43,9 @@ function request(protocol: 'anthropic' | 'openai', baseUrl: string, overrides: P
 	};
 }
 
+/** The limit is short, so that in the scripts below the second sentence runs over it. */
 function options(overrides: Partial<CompletionOptions> = {}): CompletionOptions {
-	return { signal: new AbortController().signal, before: '雨停了。', after: '', maxChars: 60, ...overrides };
+	return { signal: new AbortController().signal, before: '雨停了。', after: '', maxChars: 12, ...overrides };
 }
 
 const servers: Array<{ close(): Promise<void> }> = [];
@@ -93,7 +94,7 @@ describe('Anthropic Messages API', () => {
 		assert.deepEqual(body.messages, [{ role: 'user', content: [{ type: 'text', text: '正在写的一行' }] }]);
 	});
 
-	test('streams text deltas into one sentence', async () => {
+	test('streams text deltas into the ghost text', async () => {
 		const server = await serve((res) =>
 			stream(res, [ANTHROPIC_START, anthropicText('他推开'), anthropicText('门，走了进去。'), ANTHROPIC_END]),
 		);
@@ -224,7 +225,27 @@ describe('OpenAI-compatible Chat Completions', () => {
 });
 
 describe('stopping and failing', () => {
-	test('closes the connection as soon as the first sentence is complete', async () => {
+	test('within the limit the whole reply is the ghost text, paragraphs included', async () => {
+		const server = await serve((res) => stream(res, [OPENAI_START, openaiText('他推开门。\n'), openaiText('\n屋里很暗，什么也看不见。'), OPENAI_END]));
+		const outcome = await complete(request('openai', server.baseUrl), options({ maxChars: 100 }));
+		assert.deepEqual([outcome.status, outcome.text, outcome.stoppedEarly], ['ok', '他推开门。\n\n屋里很暗，什么也看不见。', false]);
+	});
+
+	test('cut off by the output cap, as either protocol reports it: the ghost text ends at the last sentence end', async () => {
+		const text = '他推开门。屋里很暗，什么';
+		const anthropic = (reason: string) =>
+			serve((res) => stream(res, [ANTHROPIC_START, anthropicText(text), ANTHROPIC_END.replace('end_turn', reason)]));
+		const openai = (reason: string) =>
+			serve((res) => stream(res, [OPENAI_START, openaiText(text), OPENAI_END.replace('"stop"', `"${reason}"`)]));
+		const shown = async (protocol: 'anthropic' | 'openai', server: { baseUrl: string }) =>
+			(await complete(request(protocol, server.baseUrl), options({ maxChars: 100 }))).text;
+		assert.equal(await shown('anthropic', await anthropic('max_tokens')), '他推开门。');
+		assert.equal(await shown('anthropic', await anthropic('end_turn')), text, 'the model stopped there by itself');
+		assert.equal(await shown('openai', await openai('length')), '他推开门。');
+		assert.equal(await shown('openai', await openai('stop')), text);
+	});
+
+	test('closes the connection as soon as the text is longer than the limit', async () => {
 		const server = await serve((res) =>
 			stream(res, [OPENAI_START, openaiText('他推开门，'), openaiText('走了进去。'), openaiText('屋里很'), { wait: 3000 }, openaiText('暗。'), OPENAI_END]),
 		);
@@ -339,16 +360,15 @@ describe('usage', () => {
 		assert.equal(calls, 1);
 	});
 
-	test('Anthropic, closed after the first sentence: the input side is exact, the output an estimate', async () => {
+	test('Anthropic, closed once the ghost text is in: the input side is exact, the output an estimate', async () => {
 		const server = await serve((res) =>
-			// The sentence is known to be over once the text after it starts.
-			stream(res, [ANTHROPIC_START, anthropicText('他推开门，走了进去。'), anthropicText('屋里'), { wait: 3000 }, ANTHROPIC_END]),
+			stream(res, [ANTHROPIC_START, anthropicText('他推开门，走了进去。'), anthropicText('屋里很'), { wait: 3000 }, ANTHROPIC_END]),
 		);
 		const started = Date.now();
 		const { outcome, usage } = await run(request('anthropic', server.baseUrl, { usageWaitMs: 2000 }));
 		assert.ok(Date.now() - started < 1000, 'message_start was in: no waiting');
 		assert.equal(outcome.stoppedEarly, true);
-		assert.deepEqual(usage, { input: 40, cacheRead: 900, cacheWrite: 300, output: 12, outputEstimated: true });
+		assert.deepEqual(usage, { input: 40, cacheRead: 900, cacheWrite: 300, output: 13, outputEstimated: true });
 		assert.equal(await server.received[0].closed, true);
 	});
 
@@ -359,7 +379,7 @@ describe('usage', () => {
 		assert.deepEqual(usage, { input: 25, output: 12 });
 	});
 
-	test('OpenAI: asks for usage and stays for it after the first sentence, without holding up the answer', async () => {
+	test('OpenAI: asks for usage and stays for it once the ghost text is in, without holding up the answer', async () => {
 		const server = await serve((res) =>
 			stream(res, [
 				OPENAI_START,
@@ -454,7 +474,7 @@ describe('usage', () => {
 });
 
 describe('when the connection closes', () => {
-	test('the sentence is in, the connection still open for the usage: cancelling then closes it at once', async () => {
+	test('the ghost text is in, the connection still open for the usage: cancelling then closes it at once', async () => {
 		const server = await serve((res) =>
 			stream(res, [
 				OPENAI_START,

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ContextLimits } from '../core/context';
 import type { Pricing, Rates } from '../core/usage';
 import type { ModelRequest } from '../llm/client';
-import { MAX_OUTPUT_TOKENS, PROVIDERS, REQUEST_TIMEOUT_MS, type ProviderId } from '../llm/providers';
+import { maxOutputTokens, PROVIDERS, REQUEST_TIMEOUT_MS, type ProviderId } from '../llm/providers';
 
 export const SECTION = 'novelHelper';
 
@@ -60,7 +60,7 @@ export function completionSettings(): CompletionSettings {
 		enabled: c.get<boolean>('enabled', true),
 		trigger: c.get<'auto' | 'manual'>('trigger', 'auto'),
 		debounceMs: c.get<number>('debounceMs', 750),
-		maxSuggestionChars: c.get<number>('maxSuggestionChars', 60),
+		maxSuggestionChars: c.get<number>('maxSuggestionChars', 100),
 	};
 }
 
@@ -87,7 +87,7 @@ export function modelSettings(): ModelSettings {
 		protocol: preset.protocol,
 		baseUrl: custom ? c.get<string>('openaiCompatible.baseUrl', '') : preset.baseUrl,
 		model: c.get<string>(`${provider}.model`, '') || preset.defaultModel,
-		maxTokens: MAX_OUTPUT_TOKENS,
+		maxTokens: maxOutputTokens(completionSettings().maxSuggestionChars),
 		maxTokensField: preset.maxTokensField,
 		extraBody: { ...preset.extraBody, ...c.get<Record<string, unknown>>('extraRequestBody', {}) },
 		cacheBreakpoints: preset.cacheBreakpoints,

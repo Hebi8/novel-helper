@@ -256,10 +256,10 @@ describe('ghost text', () => {
 		const document = await one.vscode.workspace.openTextDocument(one.vscode.Uri.file(path.join(one.workspace, '正文/第1章.md')));
 		return one.providers.inline.provideInlineCompletionItems(document, document.positionAt(document.getText().length), { triggerKind: 1 }, token);
 	};
-	const setup = async () => {
-		const server = await fakeServer((res) => stream(res, [OPENAI_START, openaiText('灯还亮着。'), OPENAI_END]));
+	const setup = async (reply = '灯还亮着。', chapter = '雾从海上来。\n') => {
+		const server = await fakeServer((res) => stream(res, [OPENAI_START, openaiText(reply), OPENAI_END]));
 		const one = await workspace(
-			{ '正文/第1章.md': '雾从海上来。\n' },
+			{ '正文/第1章.md': chapter },
 			{ 'novelHelper.provider': 'openaiCompatible', 'novelHelper.openaiCompatible.baseUrl': server.baseUrl, 'novelHelper.openaiCompatible.model': 'local', 'novelHelper.debounceMs': 0 },
 		);
 		return { server, one, lock: path.join(one.storage, 'usage.lock') };
@@ -289,6 +289,20 @@ describe('ghost text', () => {
 			fs.rmSync(lock);
 			assert.equal((await pending)[0].insertText, '灯还亮着。');
 			assert.equal(server.received.length, 1);
+		} finally {
+			await server.close();
+		}
+	});
+
+	test('several paragraphs come as one insertion at the cursor, written the way the chapter writes them; the request asks for the length set', async () => {
+		const { server, one } = await setup('\n\n灯还亮着。\n\n她推开门，屋里没有人。', '　　雾从海上来。\n　　潮声很远。');
+		try {
+			const [item] = await suggest(one);
+			assert.equal(item.insertText, '\n　　灯还亮着。\n　　她推开门，屋里没有人。');
+			assert.deepEqual([item.range.start, item.range.end].map((at) => [at.line, at.character]), [[1, 7], [1, 7]], 'nothing is replaced');
+			const { body } = server.received[0];
+			assert.equal(body.max_tokens, 200);
+			assert.match((body.messages as Array<{ content: string }>)[1].content, /最多 100 个字。$/);
 		} finally {
 			await server.close();
 		}

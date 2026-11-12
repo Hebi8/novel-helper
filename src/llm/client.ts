@@ -1,6 +1,6 @@
 // Streams one continuation from Anthropic's Messages API or an OpenAI-compatible
-// Chat Completions endpoint, and has the answer as soon as the first sentence
-// is complete. Never throws: failures come back as an outcome.
+// Chat Completions endpoint, and has the answer as soon as the text that will
+// be shown is in. Never throws: failures come back as an outcome.
 
 import type { PromptBlock } from '../core/context';
 import { extractSuggestion, type Suggestion } from '../core/suggestion';
@@ -33,7 +33,7 @@ export interface ModelRequest {
 	/** Merged into the request body last; a `null` value removes the field. */
 	extraBody: Record<string, unknown>;
 	timeoutMs: number;
-	/** How long a request that has given its sentence stays open for its usage to arrive. */
+	/** How long a request that has given its ghost text stays open for its usage to arrive. */
 	usageWaitMs: number;
 }
 
@@ -115,6 +115,8 @@ interface Part {
 	text?: string;
 	usage?: Usage;
 	done?: boolean;
+	/** The model ran into the output cap: its text stops mid-way. */
+	cutOff?: boolean;
 }
 
 function count(value: unknown): number | undefined {
@@ -149,8 +151,8 @@ export function anthropicPart(event: SseEvent): Part {
 			}),
 		};
 	}
-	if (json.type === 'message_delta' && json.usage) {
-		return { usage: known({ output: count(json.usage.output_tokens) }) };
+	if (json.type === 'message_delta') {
+		return { usage: known({ output: count(json.usage?.output_tokens) }), cutOff: json.delta?.stop_reason === 'max_tokens' };
 	}
 	return {};
 }
@@ -169,7 +171,7 @@ export function openaiPart(event: SseEvent): Part {
 	if (json.error) {
 		throw new Error(json.error.message ?? JSON.stringify(json.error));
 	}
-	const part: Part = {};
+	const part: Part = { cutOff: json.choices?.[0]?.finish_reason === 'length' };
 	const content = json.choices?.[0]?.delta?.content;
 	if (typeof content === 'string' && content) {
 		part.text = content;
@@ -222,7 +224,7 @@ export interface CompletionOutcome {
 	/** Everything the model sent before the answer was settled. */
 	raw: string;
 	error?: string;
-	/** True when the answer was settled before the stream ended, because a full sentence had arrived. */
+	/** True when the answer was settled before the stream ended, because the text had reached the length that is shown. */
 	stoppedEarly: boolean;
 	firstTokenMs?: number;
 	totalMs: number;
@@ -238,7 +240,7 @@ export interface CompletionOptions {
 	 * the connection is closed; not called when it refused the request or
 	 * could not be reached.
 	 * This can be after `complete` has returned: a request that has given its
-	 * sentence stays open for up to `usageWaitMs` so that the usage can
+	 * ghost text stays open for up to `usageWaitMs` so that the usage can
 	 * arrive. Fields the provider never reported are left undefined.
 	 */
 	onUsage?(usage: Usage): void;
@@ -251,9 +253,9 @@ export interface CompletionOptions {
 }
 
 /**
- * Resolves as soon as the answer is settled: a full sentence has arrived, the
- * stream ended, the caller cancelled, or the request failed. The connection
- * can stay open a little longer, see `onClose`.
+ * Resolves as soon as the answer is settled: the text has reached the length
+ * that is shown, the stream ended, the caller cancelled, or the request
+ * failed. The connection can stay open a little longer, see `onClose`.
  */
 export function complete(req: ModelRequest, options: CompletionOptions): Promise<CompletionOutcome> {
 	return new Promise((resolve) => void run(req, options, resolve).finally(() => options.onClose?.()));
@@ -266,6 +268,7 @@ async function run(req: ModelRequest, options: CompletionOptions, resolve: (outc
 	/** All of the model's text, to estimate the output count from if it never arrives. */
 	let received = '';
 	let firstTokenMs: number | undefined;
+	let cutOff = false;
 	let settled = false;
 	/** The provider took the request, so it may bill for it. */
 	let answered = false;
@@ -298,7 +301,7 @@ async function run(req: ModelRequest, options: CompletionOptions, resolve: (outc
 	}, req.timeoutMs);
 
 	const judge = (final: boolean): Suggestion =>
-		extractSuggestion(raw, { before: options.before, after: options.after, maxChars: options.maxChars, final });
+		extractSuggestion(raw, { before: options.before, after: options.after, maxChars: options.maxChars, final, cutOff });
 	const parse = req.protocol === 'anthropic' ? anthropicPart : openaiPart;
 
 	try {
@@ -314,6 +317,7 @@ async function run(req: ModelRequest, options: CompletionOptions, resolve: (outc
 		for await (const event of readSse(response.body)) {
 			const part = parse(event);
 			Object.assign(usage, part.usage);
+			cutOff ||= part.cutOff === true;
 			received += part.text ?? '';
 			if (settled) {
 				// Only here for the usage.
@@ -336,7 +340,7 @@ async function run(req: ModelRequest, options: CompletionOptions, resolve: (outc
 				if (hasUsage() || req.usageWaitMs <= 0) {
 					break;
 				}
-				// The sentence is in but the usage is not: stay for it, not for long.
+				// The ghost text is in but the usage is not: stay for it, not for long.
 				wait = setTimeout(() => controller.abort(), req.usageWaitMs);
 			}
 		}

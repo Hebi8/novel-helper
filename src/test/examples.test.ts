@@ -66,6 +66,7 @@ test('examples: the second chapter gets the outlines of the book, its volume and
 		documentPath: chapter,
 		before: read(chapter),
 		after: '',
+		maxChars: defaults['novelHelper.maxSuggestionChars'].default as number,
 		entries: library.entries(),
 		matcher: library.matcher(),
 		levels: library.levelsOf(chapter).map((level) => ({

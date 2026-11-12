@@ -38,7 +38,7 @@
   "cancelled: you kept typing": "已取消：你继续打字了",
   "error: {0}": "出错：{0}",
   "first text after {0} ms, ": "首字 {0} ms，",
-  " (stopped once the first sentence arrived)": "（拿到第一句后就断开了）",
+  " (stopped once the ghost text was complete)": "（灰字够了就断开了）",
   "{0} ms in total": "总计 {0} ms",
   "Nothing sent yet": "还没有发过请求",
   "Pause at the end of a line in a chapter file, or press Alt+\\ in any Markdown or plain-text file, then open this again.": "在章节文件的行尾停一下，或在任意 Markdown / 纯文本里按 Alt+\\，然后再打开这里。",

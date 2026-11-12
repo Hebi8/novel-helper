@@ -26,7 +26,7 @@
   "config.trigger.auto": "After a pause, when the cursor is at the end of a line in a chapter file. **Alt+\\\\** also asks anywhere in Markdown or plain text.",
   "config.trigger.manual": "Only when you press **Alt+\\\\** (Trigger Inline Suggestion).",
   "config.debounceMs": "How long to wait after you stop typing before a request is sent, in milliseconds.",
-  "config.maxSuggestionChars": "Longest ghost text, in characters. A suggestion normally ends at its first sentence end before reaching this.",
+  "config.maxSuggestionChars": "Longest ghost text, in characters; punctuation, line breaks and indents count. The model may stop at a sentence end before this; text that runs past it is cut after the last sentence end within it.",
   "config.provider": "Where requests go. Set the key with **Novel Helper: Set or Clear API Key**.",
   "config.provider.anthropic": "Anthropic Messages API",
   "config.provider.openai": "OpenAI Chat Completions",

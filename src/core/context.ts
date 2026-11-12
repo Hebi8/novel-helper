@@ -10,7 +10,7 @@
 //   text:     this chapter from its start to the cursor,
 //             cut into pieces at line ends                 (only ever appended to)
 //   tail:     the line being written, the cursor, the
-//             text after it                                (changes every request)
+//             text after it, how much to write             (changes every request)
 // Cache breakpoints go after the outlines and after the last two finished
 // pieces before the tail: a request reads everything up to the previous
 // breakpoint from the cache and adds one piece to it.
@@ -21,15 +21,21 @@ import { chunkEnds, frontmatterLength, headChars, splitFrontmatter, stem, steppe
 
 export const CURSOR = '⟨光标⟩';
 
-export const INSTRUCTIONS = `你是小说写作助手，负责行内续写：从正文里 ${CURSOR} 所在的位置接着往下写。
+// The same text for every request: what changes (how long the continuation may be) is said at the end of the user message.
+export const INSTRUCTIONS = `你是小说写作助手，负责行内续写：从正文里 ${CURSOR} 所在的位置接着往下写。作者会一次次收下你写的内容再让你接着写，所以每一次续写都要让故事往前走一步。
 
 要求：
 1. 只输出要插在光标处的文字，从光标处直接接上，不要重复光标前已有的字。
-2. 只写一句：写到第一个句号、问号、感叹号或省略号就停；不换行，不分段。
-3. 不解释，不打招呼，不加标题、引号包裹或任何标记，也不要输出 ${CURSOR}。
-4. 用和正文相同的语言，保持原文的人称、时态、文风和标点习惯。
-5. 人物的言行、称呼和关系要和资料一致；资料里没有的关键设定不要自己编。
-6. 光标后面如果已经有文字，续写要能自然接上它。`;
+2. 长度不超过最后给出的字数上限（标点算在内；正文是英文时按字符算）。不必写满：在句末的自然停顿处结束，只写一两句也可以，不要停在半句话上。
+3. 可以分段，分段的写法跟随正文已有的习惯：段与段之间是空一行还是只换行、段首有没有全角空格缩进，都和前文保持一致。光标前的那一段已经写完、接下来该另起一段时，先换行再写。
+4. 不解释，不打招呼，不加标题、引号包裹或任何标记，也不要输出 ${CURSOR}。
+5. 用和正文相同的语言，保持原文的人称、时态、文风和标点习惯。
+6. 推进情节，不要原地打转：
+   - 有 <本章大纲> 时，先对照正文判断大纲里哪些内容已经写到，续写朝下一个还没写到的点走。已经写过的点不要重写，也不要一步跳到很后面的点，中间该有的过程照常写。大纲里的内容都写完了，就顺着写本章的收尾，不要另起大纲里没有的大事件。
+   - 没有 <本章大纲> 时，每次续写都要带来新东西：新的动作、对话、信息或局面变化。
+   - 上文已经表达过的动作、情绪和描写，不要换个说法再写一遍。
+7. 人物的言行、称呼和关系不能和资料冲突，也不要编造资料里没有的关键设定（世界规则、人物背景和关系）。情节往前发展，以及场景里的小细节（动作、神态、环境、对话的具体内容），可以自己写。
+8. 光标后面如果已经有文字，续写要能自然接上它。`;
 
 /** Size of the pieces the chapter text is cut into for caching. */
 export const TEXT_CHUNK_CHARS = 300;
@@ -77,6 +83,8 @@ export interface ContextInput {
 	before: string;
 	/** Document text after the cursor. */
 	after: string;
+	/** Longest continuation to ask for, in characters. */
+	maxChars: number;
 	entries: readonly LoreEntry[];
 	matcher: Matcher;
 	/** The book first, then each level down to the chapter's folder. */
@@ -282,7 +290,7 @@ export function buildContext(input: ContextInput): { prompt: Prompt; trace: Cont
 		CURSOR +
 		afterText +
 		(afterCut.truncated && afterText ? '（后略）' : '') +
-		`\n</当前章节>\n\n从 ${CURSOR} 处接着写一句。`;
+		`\n</当前章节>\n\n从 ${CURSOR} 处接着往下写，最多 ${input.maxChars} 个字。`;
 
 	const user: PromptBlock[] = [
 		...(outlines.length ? [{ text: `${outlines.join('\n\n')}\n\n`, cache: true }] : []),

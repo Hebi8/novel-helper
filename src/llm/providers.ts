@@ -50,7 +50,7 @@ export interface ProviderPreset {
 	/** OpenAI-compatible only: mark cache breakpoints the way OpenAI's GPT-5.6 and later expect. */
 	cacheBreakpoints?: boolean;
 	/**
-	 * How long a request that has given its sentence stays open for the
+	 * How long a request that has given its ghost text stays open for the
 	 * provider to report what it used. Zero for local servers, where a
 	 * finished request should free the model at once.
 	 */
@@ -61,9 +61,10 @@ export interface ProviderPreset {
 
 /**
  * OpenAI-compatible endpoints report usage in the last event of the stream,
- * after text the ghost text no longer needs. A model told to write one
- * sentence usually ends there, so the wait is short and costs few tokens.
- * Anthropic reports the input side in the first event and never waits.
+ * after text the ghost text no longer needs. The output cap is close to the
+ * length that is shown, so the stream ends soon after: the wait is short and
+ * costs few tokens. Anthropic reports the input side in the first event and
+ * never waits.
  */
 const USAGE_WAIT_MS = 2000;
 
@@ -136,7 +137,19 @@ export const PROVIDERS: Record<ProviderId, ProviderPreset> = {
 	},
 };
 
-/** Output cap: one sentence is well under 100 tokens; this leaves room without paying for runaway text. */
-export const MAX_OUTPUT_TOKENS = 300;
-/** A request with no complete sentence after this long is dropped. */
+/**
+ * Chinese prose takes 0.8 to 1.35 tokens a character with the tokenizers that
+ * can be run locally (o200k, cl100k, Claude's older one), English about 0.25.
+ * Two a character leaves room for a tokenizer that needs more and for what is
+ * trimmed off the front. A model that still runs into the cap is cut at its
+ * last sentence end, see `cutOff` in the suggestion.
+ */
+const OUTPUT_TOKENS_PER_CHAR = 2;
+
+/** Output cap for ghost text of at most `maxChars` characters: enough for it, with little to pay for beyond it. */
+export function maxOutputTokens(maxChars: number): number {
+	return Math.ceil(maxChars * OUTPUT_TOKENS_PER_CHAR);
+}
+
+/** A request with no complete answer after this long is dropped. */
 export const REQUEST_TIMEOUT_MS = 30_000;

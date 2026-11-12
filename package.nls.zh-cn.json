@@ -26,7 +26,7 @@
   "config.trigger.auto": "停顿一下、光标在章节文件的行尾时自动请求；在任何 Markdown 或纯文本里按 **Alt+\\\\** 也能要一条。",
   "config.trigger.manual": "只在按 **Alt+\\\\**（触发内联建议）时请求。",
   "config.debounceMs": "停止打字后等多久才发请求，单位毫秒。",
-  "config.maxSuggestionChars": "灰字最多几个字。一般在这之前就会停在第一个句末标点。",
+  "config.maxSuggestionChars": "灰字最多几个字，标点、换行和段首缩进都算。模型可以在这之前的句末停下；写超了就截到这个长度以内的最后一个句末标点。",
   "config.provider": "请求发到哪里。用 **Novel Helper: 设置或清除 API key** 设 key。",
   "config.provider.anthropic": "Anthropic Messages API",
   "config.provider.openai": "OpenAI Chat Completions",

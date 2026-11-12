@@ -90,7 +90,7 @@ function timing(outcome: CompletionOutcome | undefined, t: Translate): string {
 		return '';
 	}
 	const first = outcome.firstTokenMs === undefined ? '' : t('first text after {0} ms, ', outcome.firstTokenMs);
-	const early = outcome.stoppedEarly ? t(' (stopped once the first sentence arrived)') : '';
+	const early = outcome.stoppedEarly ? t(' (stopped once the ghost text was complete)') : '';
 	return `${first}${t('{0} ms in total', outcome.totalMs)}${early}`;
 }
 

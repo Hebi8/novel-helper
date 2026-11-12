@@ -2,7 +2,7 @@
 
 [中文说明](README.zh-CN.md)
 
-Ghost-text continuation for writing fiction in VS Code that reads your lore. Pause at the end of a line in a chapter and a one-sentence continuation appears in gray; **Tab** takes it. Each request carries what the scene needs: the chapter so far, the lore entries for names that appear in it, entries you marked always-on (style rules, world basics), the outlines from the whole book down to this chapter, and the summaries or endings of the previous chapters. What it costs in tokens and dollars is always on view.
+Ghost-text continuation for writing fiction in VS Code that reads your lore. Pause at the end of a line in a chapter and a short continuation appears in gray (up to 100 characters by default, over several paragraphs if it takes them); **Tab** takes it. Each request carries what the scene needs: the chapter so far, the lore entries for names that appear in it, entries you marked always-on (style rules, world basics), the outlines from the whole book down to this chapter, and the summaries or endings of the previous chapters. What it costs in tokens and dollars is always on view.
 
 Lore is one key away too: hover a name to see its card, press **F12** to open its file.
 
@@ -148,7 +148,10 @@ Chapters are ordered by path, numbers compared by value: 第2章 before 第10章
 - Pause at the end of a line in a chapter file: after 750 ms the gray text appears. **Tab** takes it; **Esc** or typing on drops it, and cancels a request still in flight.
 - **Alt+\\** asks for a suggestion right away, anywhere in a Markdown or plain-text file.
 - The status bar item shows on, off and requesting; click it to switch. Set `novelHelper.trigger` to `manual` to ask only with Alt+\\.
-- A suggestion is one sentence: it ends at the first 。！？… (with any closing quotes after it), 60 characters at most. Replies that talk about the task ("好的，以下是续写：…") are not shown.
+- A suggestion is at most 100 characters (`novelHelper.maxSuggestionChars`; punctuation, line breaks and indents count), in as many sentences and paragraphs as fit. The model may stop earlier, at a natural pause after a sentence. Text that runs past the limit is cut after the last 。！？… within it (with any closing quotes after it), and at the limit itself only when there is no sentence end before it.
+- Paragraphs are written the way the chapter writes them: a blank line between them or just a line break, a full-width indent at their start or none. That is read from the text before the cursor and applied to what the model wrote. When the line before the cursor is finished (it ends a sentence or with a colon, or it is a heading), a suggestion may begin with a new paragraph.
+- The prompt asks for the story to move on with every suggestion. With a chapter outline: work out which of its points the text has reached and head for the next one, without rewriting what is written or jumping far ahead. Without one: bring something new each time (action, dialogue, information, a change in the situation) and do not restate what the text already said. Nothing may contradict the lore, and key facts the lore does not have (rules of the world, a character's background and relations) are not made up; where the plot goes and the small details of a scene are the model's to write.
+- Replies that talk about the task ("好的，以下是续写：…") are not shown.
 - While an input method is still composing (pinyin right after Chinese text), no automatic request is sent.
 
 ## See what the model was given
@@ -202,7 +205,8 @@ A prompt that is too short is not cached (Anthropic needs 512 tokens, OpenAI 1,0
 The counts are what the provider reported for each request. Cost is tokens times price: an estimate, and the provider's bill is what counts. Some details:
 
 - A request cut short by your typing is closed at once. If the provider had reported usage by then, it is counted as usual (Anthropic reports the input side at the start of the stream, so it usually had); if not, the request is counted with its usage unknown.
-- Ghost text takes the first sentence and does not wait for the rest. Anthropic reports the input side at the start of the stream, so the connection closes at once and the output count is estimated from the text received, marked as an estimate. OpenAI-compatible endpoints report usage at the very end, so after the first sentence the connection stays open for up to 2 seconds to get it; if it does not come, the usage is recorded as unknown rather than made up. Local models are not waited for.
+- When the model stops within the length limit, the stream ends normally and the usage arrives as usual. When its text runs past the limit, ghost text does not wait for the rest. Anthropic reports the input side at the start of the stream, so the connection closes at once and the output count is estimated from the text received, marked as an estimate. OpenAI-compatible endpoints report usage at the very end, so the connection then stays open for up to 2 seconds to get it; if it does not come, the usage is recorded as unknown rather than made up. Local models are not waited for.
+- The output cap of a request is two tokens per character of the length limit (200 by default): a Chinese character takes about 0.8 to 1.35 tokens, an English character about 0.25. When the model runs into the cap, the ghost text is cut at its last sentence end.
 - With a model other than the default, the extension has no price and counts tokens only. To get a cost, add the price to `novelHelper.usage.prices`:
 
   ```json
@@ -229,7 +233,7 @@ The counts are what the provider reported for each request. Cost is tokens times
 | `novelHelper.enabled` | `true` | Ghost text on or off; the status bar item switches it |
 | `novelHelper.trigger` | `auto` | `auto`: after a pause at a line end in chapter files, plus Alt+\\ anywhere; `manual`: Alt+\\ only |
 | `novelHelper.debounceMs` | `750` | Pause after typing before a request, in ms |
-| `novelHelper.maxSuggestionChars` | `60` | Longest suggestion |
+| `novelHelper.maxSuggestionChars` | `100` | Longest suggestion, in characters (it may span paragraphs) |
 | `novelHelper.provider` | `anthropic` | `anthropic`, `openai`, `deepseek`, `gemini`, `openaiCompatible` |
 | `novelHelper.anthropic.model` | `claude-haiku-5-5` | |
 | `novelHelper.openai.model` | `gpt-6-luna` | |
@@ -276,7 +280,7 @@ npm test
 npx @vscode/vsce package
 ```
 
-`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, the story folder's path and state, the marker file, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, sentence cutting, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), the model client against a local fake server, and the extension as a whole, run in a temporary folder against a stand-in for the `vscode` module (renaming, initializing, paths that lead out, lore fields, the story folder, switching ghost text off during a wait).
+`npm test` runs the unit tests with Node's test runner; they cover matching, chapter ordering, the story folder's path and state, the marker file, pairing outlines with levels, budgets, prompt assembly and cache breakpoints, cutting ghost text and its paragraphs, usage and cost, several windows recording usage at once, what the sidebar relies on (the next chapter's name, rewriting one frontmatter field, which paths a rename moves, lore groups and templates, what initializing creates), the model client against a local fake server, and the extension as a whole, run in a temporary folder against a stand-in for the `vscode` module (renaming, initializing, paths that lead out, lore fields, the story folder, switching ghost text off during a wait).
 
 ## License
 

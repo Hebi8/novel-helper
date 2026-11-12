@@ -1,5 +1,6 @@
 // Ghost-text continuation: waits for a pause, gathers context, asks the model,
-// and shows the first sentence of its reply. Tab accepts (VS Code's own key).
+// and shows its reply up to the length set, in one paragraph or several.
+// Tab accepts (VS Code's own key).
 
 import * as vscode from 'vscode';
 import { buildContext, type ChapterSource, type LevelSource } from '../core/context';
@@ -139,6 +140,7 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 			documentPath,
 			before,
 			after,
+			maxChars: settings.maxSuggestionChars,
 			entries: library?.entries() ?? [],
 			matcher: library?.matcher() ?? NO_LORE,
 			levels,
@@ -148,6 +150,7 @@ export class ContinuationProvider implements vscode.InlineCompletionItemProvider
 		});
 		const request = { ...model, apiKey, ...prompt };
 		const { url, body } = buildHttpRequest(request);
+		// An empty range at the cursor: the text is inserted there, line breaks and all, and what follows the cursor stays after it.
 		const item = (suggestion: string) => [new vscode.InlineCompletionItem(suggestion, new vscode.Range(position, position))];
 		// VS Code asks again when the cursor comes back to a spot; the same request gets the same answer.
 		const key = JSON.stringify([url, body, settings.maxSuggestionChars]);

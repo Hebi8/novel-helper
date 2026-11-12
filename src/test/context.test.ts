@@ -32,6 +32,7 @@ function input(overrides: Partial<ContextInput> = {}): ContextInput {
 		documentPath: '正文/第3章 夜雾.md',
 		before: `张三丰走了。${'。'.repeat(50)}三哥笑了。李四说`,
 		after: '',
+		maxChars: 100,
 		entries: lib.entries(),
 		matcher: lib.matcher(),
 		levels: [],
@@ -167,7 +168,7 @@ describe('buildContext: chapters and text', () => {
 		const user = userText(prompt);
 		const at = (text: string) => user.indexOf(text);
 		assert.ok(at('<前文>') < at('<本章大纲>') && at('<本章大纲>') < at('<本章涉及的资料>') && at('<本章涉及的资料>') < at('<当前章节'));
-		assert.ok(user.endsWith(`从 ${CURSOR} 处接着写一句。`));
+		assert.ok(user.endsWith(`从 ${CURSOR} 处接着往下写，最多 100 个字。`));
 	});
 
 	test('text around the cursor: frontmatter dropped, cursor marked, text after the cursor capped', () => {
@@ -177,10 +178,16 @@ describe('buildContext: chapters and text', () => {
 		assert.deepEqual(trace.after, { chars: 20, truncated: true });
 		assert.deepEqual(prompt.user, [
 			{
-				text: `<当前章节 文件="第3章 夜雾">\n第一行。\n他说${CURSOR}」\n下一段${'。'.repeat(15)}（后略）\n</当前章节>\n\n从 ${CURSOR} 处接着写一句。`,
+				text: `<当前章节 文件="第3章 夜雾">\n第一行。\n他说${CURSOR}」\n下一段${'。'.repeat(15)}（后略）\n</当前章节>\n\n从 ${CURSOR} 处接着往下写，最多 100 个字。`,
 				cache: false,
 			},
 		]);
+	});
+
+	test('the instructions name the chapter outline by the tag it is sent in', () => {
+		const { prompt } = buildContext(input({ outline: { path: 'o.md', content: '大纲' } }));
+		assert.ok(userText(prompt).includes('<本章大纲>\n大纲\n</本章大纲>'));
+		assert.ok(INSTRUCTIONS.includes('有 <本章大纲> 时') && INSTRUCTIONS.includes('没有 <本章大纲> 时'));
 	});
 
 	test('no previous chapters, outline or lore: one block, nothing to cache in it', () => {
@@ -212,7 +219,7 @@ describe('buildContext: one request is a prefix of the next', () => {
 				['<当前章节 文件="第3章 夜雾">\n'.length + 300, false],
 				[300, true],
 				[300, true],
-				[100 + `李四说${CURSOR}\n</当前章节>\n\n从 ${CURSOR} 处接着写一句。`.length, false],
+				[100 + `李四说${CURSOR}\n</当前章节>\n\n从 ${CURSOR} 处接着往下写，最多 100 个字。`.length, false],
 			],
 		);
 		assert.ok(user[3].text.startsWith('0006') && user[3].text.endsWith('\n'));
@@ -248,6 +255,16 @@ describe('buildContext: one request is a prefix of the next', () => {
 		assert.deepEqual(start(61), [true, 2050, '0020']);
 		assert.deepEqual(start(80), [true, 3000, '0020']);
 		assert.deepEqual(start(81), [true, 2050, '0040']);
+	});
+
+	test('how much to write is said last, so that changing it leaves everything before it as it was', () => {
+		const [short, long] = [60, 200].map((maxChars) => buildContext(input({ before: `${lines(8)}李四说`, outline, limits, maxChars })).prompt);
+		assert.equal(short.system, long.system);
+		assert.ok(short.user.length > 2);
+		assert.deepEqual(short.user.slice(0, -1), long.user.slice(0, -1));
+		assert.ok(userText(short).endsWith(`从 ${CURSOR} 处接着往下写，最多 60 个字。`));
+		assert.ok(userText(long).endsWith(`从 ${CURSOR} 处接着往下写，最多 200 个字。`));
+		assert.doesNotMatch(INSTRUCTIONS, /\d\d/, 'the instructions carry no limit of their own');
 	});
 
 	test('names are searched in all of the text that is sent', () => {

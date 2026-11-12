@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 (2026-11-12)
+
+- Ghost text is no longer one sentence. It runs up to `novelHelper.maxSuggestionChars` characters (100 by default, was 60), in as many sentences and paragraphs as fit. The model may stop earlier at a natural pause; text that runs past the limit is cut after the last sentence end within it (with its closing quotes), or at the limit when there is none. The connection closes as soon as the text is longer than the limit.
+- Paragraphs follow the chapter: whether a blank line or just a line break separates them, and the indent they start with (　　), are read from the text before the cursor and applied to what the model wrote. A suggestion may begin with a new paragraph when the one before the cursor is finished.
+- The prompt asks for the story to move on. With a chapter outline: towards the next point the text has not reached, without rewriting what is written or jumping far ahead. Without one: something new each time (action, dialogue, information, a change in the situation), and no restating of what the text already said. The lore still binds, in that nothing may contradict it and key facts it does not have (rules of the world, a character's background and relations) are not made up, but the plot and the small details of a scene are the model's to write.
+- The output cap follows the length setting: two tokens per character, 200 by default (was a fixed 300). A reply that ends at the cap is cut at its last sentence end instead of being shown mid-sentence.
+
 ## 0.3.2 (2026-11-12)
 
 Fixes from a review of 0.3.0 and 0.3.1. Where it is not certain that a file can be rewritten or renamed without loss, nothing is touched and you are told why.

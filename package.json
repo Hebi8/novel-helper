@@ -2,7 +2,7 @@
   "name": "novel-helper",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "publisher": "dreaife",
   "license": "MIT",
   "repository": {
@@ -407,7 +407,7 @@
         },
         "novelHelper.maxSuggestionChars": {
           "type": "number",
-          "default": 60,
+          "default": 100,
           "minimum": 10,
           "markdownDescription": "%config.maxSuggestionChars%"
         },
