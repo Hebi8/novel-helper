@@ -13,6 +13,7 @@
 //   wait                       waits to be cancelled
 //   refuse                     ends the turn as refused
 //   stderr TEXT | exit CODE    writes to stderr; ends the process
+// A JSON array can also name a command and its arguments, for paths with spaces.
 //
 // Flags: --resume, --system-prompt and --close declare those capabilities,
 // --modes starts sessions in a mode called `auto` next to one called
@@ -20,6 +21,7 @@
 // a login. --init-fails answers the first request with an error and lives
 // on; --init-hangs does not answer it at all. --pid=FILE writes the
 // process id to FILE on start.
+// --exit-on-start writes to stderr and exits before initialization.
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -31,6 +33,10 @@ async function main(): Promise<void> {
 	const pidFile = process.argv.find((flag) => flag.startsWith('--pid='))?.slice('--pid='.length);
 	if (pidFile) {
 		fs.writeFileSync(pidFile, String(process.pid));
+	}
+	if (flags.has('--exit-on-start')) {
+		process.stderr.write('fake agent could not start\n');
+		process.exit(1);
 	}
 	const cancels = new Map<string, () => void>();
 	let cwd = process.cwd();
@@ -123,7 +129,7 @@ async function main(): Promise<void> {
 				return response.outcome.outcome === 'selected' ? response.outcome.optionId : 'cancelled';
 			};
 			for (const line of blocks.at(-1)!.split('\n')) {
-				const [command, first = '', ...rest] = line.split(' ');
+				const [command, first = '', ...rest]: string[] = line.startsWith('[') ? JSON.parse(line) : line.split(' ');
 				const text = rest.join(' ');
 				const file = path.resolve(cwd, first);
 				switch (command) {

@@ -1,3 +1,4 @@
+import { assistantEvents } from '../assistant/events';
 import type { MenuCommand } from '../../shared/api';
 import type { useDocuments } from '../editor/useDocuments';
 interface CommandTarget {
@@ -12,6 +13,16 @@ export function commands(target: CommandTarget): Record<MenuCommand, () => void>
 	const active = () => docs.sessionRef.current.active;
 	const editor = () => (active() ? docs.handles.current.get(active()!) : undefined);
 	return {
+		'assistant:focus': () => {
+			target.right(2);
+			window.dispatchEvent(new Event(assistantEvents.focus));
+		},
+		'assistant:stop': () => {
+			window.dispatchEvent(new Event(assistantEvents.stop));
+		},
+		'assistant:history': () => {
+			window.dispatchEvent(new Event(assistantEvents.history));
+		},
 		closeTab: () => {
 			if (active()) {
 				void docs.close(active()!);

@@ -24,3 +24,5 @@
 !electron.vite.config.ts
 !playwright.config.ts
 !.prettierrc.json
+
+!src/test/macAssistant.test.ts

@@ -104,6 +104,14 @@ export function installMenu(ctx: MainContext): void {
 				],
 			},
 			{
+				label: zh.assistant,
+				submenu: [
+					action(zh.assistantFocus, 'assistant:focus', 'Cmd+L'),
+					action(zh.assistantStop, 'assistant:stop', 'Cmd+.'),
+					action(zh.assistantHistory, 'assistant:history'),
+				],
+			},
+			{
 				label: zh.help,
 				submenu: [
 					{

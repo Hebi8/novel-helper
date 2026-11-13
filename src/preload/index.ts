@@ -8,6 +8,18 @@ const listen = <T>(channel: string, listener: (value: T) => void) => {
 	};
 };
 const api: AppAPI = {
+	assistant: {
+		state: () => ipcRenderer.invoke(c.assistantState),
+		send: (text, context) => ipcRenderer.invoke(c.assistantSend, text, context),
+		stop: () => ipcRenderer.invoke(c.assistantStop),
+		newSession: () => ipcRenderer.invoke(c.assistantNewSession),
+		answer: (id, allow) => ipcRenderer.invoke(c.assistantAnswer, id, allow),
+		history: () => ipcRenderer.invoke(c.assistantHistory),
+		diff: (id, path) => ipcRenderer.invoke(c.assistantDiff, id, path),
+		revert: (id) => ipcRenderer.invoke(c.assistantRevert, id),
+		openLink: (href) => ipcRenderer.invoke(c.assistantLink, href),
+		onChanged: (listener) => listen(c.assistantChanged, listener),
+	},
 	book: {
 		onOpenResult: (listener) => listen(c.openResult, listener),
 		open: (root) => ipcRenderer.invoke(c.bookOpen, root),

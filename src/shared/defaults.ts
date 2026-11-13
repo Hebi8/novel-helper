@@ -15,7 +15,7 @@ export const defaults = {
 	'usage.dailyLimitUsd': 0,
 	'assistant.agent': 'claude',
 	'assistant.command': '',
-	'assistant.args': [],
+	'assistant.args': [] as string[],
 	'assistant.snapshots.keep': 50,
 	'files.storyFolder': '',
 	'files.lore': ['{设定,人物,角色,资料,世界观,lore,characters,worldbuilding}/**/*.{md,txt}'],

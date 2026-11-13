@@ -1,4 +1,5 @@
 import { zh } from '../strings';
+import { assistantEvents } from '../assistant/events';
 export function TopBar({ name, left, right }: { name?: string; left(): void; right(): void }) {
 	return (
 		<header className="topbar">
@@ -7,6 +8,11 @@ export function TopBar({ name, left, right }: { name?: string; left(): void; rig
 			</button>
 			<strong>{name ?? zh.app}</strong>
 			<span className="grow" />
+			<button aria-label={zh.assistantSnapshots} disabled={!name} onClick={() => window.dispatchEvent(new Event(assistantEvents.history))}>
+				<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+					<path d="M4 5.5h12v11H4zM6 3h8M2 9V7a7.5 7.5 0 1 1 0 6M2 9h4" />
+				</svg>
+			</button>
 			<button
 				aria-label={zh.settings}
 				onClick={() => {

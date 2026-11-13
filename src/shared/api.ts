@@ -2,6 +2,7 @@ import type { BookNode } from '../core/library';
 import type { Totals } from '../core/usage';
 import type { ProviderId } from '../llm/providers';
 import type { Settings, SettingKey } from './defaults';
+import type { AssistantAPI } from './assistant';
 export type { Settings, SettingKey };
 export interface Book {
 	root: string;
@@ -45,6 +46,9 @@ export type OpenResult =
 	| { kind: 'empty' }
 	| { kind: 'cancelled' };
 export type MenuCommand =
+	| 'assistant:focus'
+	| 'assistant:stop'
+	| 'assistant:history'
 	| 'closeTab'
 	| 'previousTab'
 	| 'nextTab'
@@ -68,6 +72,7 @@ export interface Bootstrap {
 	usage: UsageStatus;
 }
 export interface AppAPI {
+	assistant: AssistantAPI;
 	book: {
 		open(root?: string): Promise<OpenResult>;
 		read(path: string): Promise<DiskFile>;
@@ -101,6 +106,16 @@ export interface AppAPI {
 	};
 }
 export const channels = {
+	assistantState: 'assistant:state',
+	assistantSend: 'assistant:send',
+	assistantStop: 'assistant:stop',
+	assistantNewSession: 'assistant:newSession',
+	assistantAnswer: 'assistant:answer',
+	assistantHistory: 'assistant:history',
+	assistantDiff: 'assistant:diff',
+	assistantRevert: 'assistant:revert',
+	assistantLink: 'assistant:link',
+	assistantChanged: 'assistant:changed',
 	bookOpen: 'book:open',
 	openResult: 'book:openResult',
 	bookRead: 'book:read',
