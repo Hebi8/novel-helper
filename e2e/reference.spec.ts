@@ -237,7 +237,8 @@ test('lore type edits trim whitespace, reject empty types, and popovers preserve
 		const row = page.locator('.sidebar.left .lore-row').filter({ hasText: '潮汐钟' });
 		await row.click({ button: 'right' });
 		await page.getByRole('menuitem', { name: '改类型', exact: true }).click();
-		const type = page.getByRole('textbox', { name: '类型', exact: true });
+		// An input with a suggestion list is exposed as a combobox, not a textbox.
+		const type = page.getByRole('dialog', { name: '改类型', exact: true }).locator('input');
 		await type.fill('   ');
 		await expect(page.getByRole('button', { name: '确定', exact: true })).toBeDisabled();
 		await type.dispatchEvent('keydown', { key: 'Escape', isComposing: true });
