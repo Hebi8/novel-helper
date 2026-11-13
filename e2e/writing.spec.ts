@@ -54,11 +54,6 @@ async function withBook(
 		await run({ app, page, book, data, original, server });
 	} finally {
 		if (app) {
-			if (page && !page.isClosed()) {
-				const cdp = await page.context().newCDPSession(page);
-				await cdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
-				await cdp.detach();
-			}
 			await app.close();
 			await exited;
 		}
@@ -95,26 +90,31 @@ test('composition hides ghost text, cancellation restores it, and committing sta
 		await endOfChapter(page);
 		await expect(page.locator('.ghost-text')).toHaveText(continuation(1));
 		const cdp = await page.context().newCDPSession(page);
-		await cdp.send('Input.imeSetComposition', { text: 'ni', selectionStart: 2, selectionEnd: 2 });
-		await expect(page.locator('.ghost-text')).toHaveCount(0);
-		await page.waitForTimeout(1200);
-		expect(server.received).toHaveLength(1);
-		expect(await readFile(join(book, chapter), 'utf8')).toBe(original);
-		await cdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
-		await expect(page.locator('.ghost-text')).toHaveText(continuation(1), { timeout: 500 });
-		expect(server.received).toHaveLength(1);
-		await page.waitForTimeout(900);
-		expect(server.received).toHaveLength(1);
-		await expect(page.locator('.ghost-text')).toHaveText(continuation(1));
-		await cdp.send('Input.imeSetComposition', { text: 'hao', selectionStart: 3, selectionEnd: 3 });
-		await page.waitForTimeout(1100);
-		expect(await readFile(join(book, chapter), 'utf8')).toBe(original);
-		await cdp.send('Input.insertText', { text: '你好' });
-		await expect(page.locator('.ghost-text')).toHaveCount(0);
-		await expect(page.locator('.ghost-text')).toHaveText(continuation(2));
-		expect(server.received).toHaveLength(2);
-		await expect.poll(() => readFile(join(book, chapter), 'utf8')).toBe(original + '你好');
-		await cdp.detach();
+		try {
+			await cdp.send('Input.imeSetComposition', { text: 'ni', selectionStart: 2, selectionEnd: 2 });
+			await expect(page.locator('.ghost-text')).toHaveCount(0);
+			await page.waitForTimeout(1200);
+			expect(server.received).toHaveLength(1);
+			expect(await readFile(join(book, chapter), 'utf8')).toBe(original);
+			await cdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
+			await expect(page.locator('.ghost-text')).toHaveText(continuation(1), { timeout: 500 });
+			expect(server.received).toHaveLength(1);
+			await page.waitForTimeout(900);
+			expect(server.received).toHaveLength(1);
+			await expect(page.locator('.ghost-text')).toHaveText(continuation(1));
+			await cdp.send('Input.imeSetComposition', { text: 'hao', selectionStart: 3, selectionEnd: 3 });
+			await page.waitForTimeout(1100);
+			expect(await readFile(join(book, chapter), 'utf8')).toBe(original);
+			await cdp.send('Input.insertText', { text: '你好' });
+			await expect(page.locator('.ghost-text')).toHaveCount(0);
+			await expect(page.locator('.ghost-text')).toHaveText(continuation(2));
+			expect(server.received).toHaveLength(2);
+			await expect.poll(() => readFile(join(book, chapter), 'utf8')).toBe(original + '你好');
+		} finally {
+			// A simulated composition does not end on its own, and the window waits for it before saving and closing.
+			await cdp.send('Input.imeSetComposition', { text: '', selectionStart: 0, selectionEnd: 0 });
+			await cdp.detach();
+		}
 	});
 });
 test('selection and search focus do not request, and a crashed renderer can close', async () => {
@@ -136,8 +136,9 @@ test('selection and search focus do not request, and a crashed renderer can clos
 				window.webContents.once('render-process-gone', () => resolve());
 				window.webContents.forcefullyCrashRenderer();
 			});
+			const closed = new Promise<boolean>((resolve) => window.once('closed', () => resolve(true)));
 			window.close();
-			return window.isDestroyed();
+			return closed;
 		});
 		expect(closed).toBe(true);
 	});

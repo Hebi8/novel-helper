@@ -233,13 +233,15 @@ test('saving a chapter and its watcher event never reread the other chapters', a
 	const { book, index } = await fixture(t);
 	const original = (await index.read(chapter)).text;
 
+	// The watcher also reports the copy that made this fixture; let those events pass first.
+	index.start();
+	await sleep(300);
 	const read = fs.readFile;
 	const readPaths: string[] = [];
 	const spy = t.mock.method(fs, 'readFile', async (...args: Parameters<typeof fs.readFile>) => {
 		readPaths.push(String(args[0]));
 		return read(...args);
 	});
-	index.start();
 	await index.save(chapter, original + '自己写的。', original);
 	await sleep(250);
 	spy.mock.restore();

@@ -396,14 +396,14 @@ describe('usage', () => {
 			]),
 		);
 		const started = Date.now();
-		let answeredAfter = 0;
+		let answeredAfter = -1;
 		const usage = await new Promise<Usage>((resolve) => {
 			void complete(request('openai', server.baseUrl, { usageWaitMs: 2000 }), options({ onUsage: resolve })).then((outcome) => {
 				answeredAfter = Date.now() - started;
 				assert.deepEqual([outcome.text, outcome.raw, outcome.stoppedEarly], ['他推开门，走了进去。', '他推开门，走了进去。屋里很暗。', true]);
 			});
 		});
-		assert.ok(answeredAfter > 0 && answeredAfter < 250, `answered after ${answeredAfter} ms, before the rest of the stream`);
+		assert.ok(answeredAfter >= 0 && answeredAfter < 250, `answered after ${answeredAfter} ms, before the rest of the stream`);
 		assert.deepEqual(usage, { input: 40, cacheRead: 900, cacheWrite: 300, output: 17 });
 		assert.deepEqual(server.received[0].body.stream_options, { include_usage: true });
 	});
