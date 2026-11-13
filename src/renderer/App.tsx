@@ -1,3 +1,7 @@
+import { Initialize } from './scaffold/Initialize';
+import { StructureInput } from './scaffold/StructureInput';
+import { Search } from './scaffold/Search';
+import type { StructureAction } from '../shared/finish';
 import { QuickOpen } from './reference/QuickOpen';
 import { useReferences } from './reference/useReferences';
 import { errorMessage } from './errors';
@@ -25,6 +29,26 @@ export function App() {
 	const [error, setError] = useState('');
 	const docs = useDocuments();
 	const [quick, setQuick] = useState(false);
+	const [search, setSearch] = useState(false);
+	const [focus, setFocus] = useState(false);
+	const [structure, setStructure] = useState<{ action: StructureAction; path?: string }>();
+	const showStructure = (action: StructureAction, path?: string) => {
+		if (book) {
+			setStructure({ action, path: path ?? docs.sessionRef.current.active });
+		}
+	};
+	const toggleFocus = () => {
+		if (!book) {
+			return;
+		}
+		void window.novel.finish
+			.focus(!focus)
+			.then(() => {
+				setFocus(!focus);
+				docs.focus();
+			})
+			.catch((error) => setError(errorMessage(error)));
+	};
 	const chapter = useRef<string | undefined>(undefined);
 	if (book && docs.session.active && isChapter(book.tree, docs.session.active)) {
 		chapter.current = docs.session.active;
@@ -41,6 +65,13 @@ export function App() {
 	const { session, documents, handles } = docs;
 	const actions = commands({
 		documents: docs,
+		newChapter: () => showStructure('chapter'),
+		searchBook: () => {
+			if (book) {
+				setSearch(true);
+			}
+		},
+		focus: toggleFocus,
 		quickOpen: () => setQuick(true),
 		toggleLeft: () => setLeftOpen((value) => !value),
 		toggleRight: () => setRightOpen((value) => !value),
@@ -101,6 +132,8 @@ export function App() {
 		<WorkspaceContext
 			value={{
 				book,
+				structure: showStructure,
+				searchBook: () => setSearch(true),
 				session,
 				current: docs.current,
 				reference,
@@ -116,7 +149,33 @@ export function App() {
 				saveAll: docs.saveAll,
 			}}
 		>
-			<div className="app">
+			<div className={`app ${focus ? 'focus-mode' : ''}`}>
+				{openResult?.kind === 'empty' && openResult.root ? (
+					<Initialize root={openResult.root} close={() => setOpenResult(undefined)} opened={setOpenResult} />
+				) : null}
+				{structure && book ? (
+					<StructureInput
+						{...structure}
+						close={() => {
+							setStructure(undefined);
+							docs.focus();
+						}}
+						submit={async (input) => {
+							if (!(await docs.saveAll())) {
+								throw new Error(zh.assistantSaveFailed);
+							}
+							const result = await window.novel.finish.create(input);
+							if (result.renames) {
+								docs.remap(result.renames);
+							}
+							if (result.path) {
+								await docs.open(result.path);
+							}
+							return true;
+						}}
+					/>
+				) : null}
+				{search && book ? <Search close={() => setSearch(false)} /> : null}
 				{quick && book ? <QuickOpen close={() => setQuick(false)} /> : null}
 				<TopBar name={book?.name} left={actions['left:toggle']} right={actions['right:toggle']} />
 				{openResult?.kind === 'error' && book ? (
@@ -153,7 +212,7 @@ export function App() {
 					<div className="workspace">
 						{book ? (
 							<LeftSidebar
-								hidden={!leftOpen}
+								hidden={focus || !leftOpen}
 								book={book}
 								selected={session.active}
 								section={left}
@@ -173,14 +232,20 @@ export function App() {
 								}}
 							/>
 
-							<div className={`editor-panes ${docs.panes ? 'split' : ''}`}>
+							<div className={`editor-panes ${docs.panes && !focus ? 'split' : ''}`}>
 								{session.tabs.map((tab) => (
 									<Editor
 										key={tab.path}
 										document={documents.current.get(tab.path)!}
 										tab={tab}
 										active={tab.path === session.active}
-										visible={docs.panes ? tab.path === docs.panes.left || tab.path === docs.panes.right : tab.path === session.active}
+										visible={
+											focus
+												? tab.path === session.active
+												: docs.panes
+													? tab.path === docs.panes.left || tab.path === docs.panes.right
+													: tab.path === session.active
+										}
 										side={docs.panes?.right === tab.path ? 'right' : 'left'}
 										focused={() => {
 											if (session.active !== tab.path) {
@@ -203,7 +268,7 @@ export function App() {
 								))}
 							</div>
 						</main>
-						{book ? <RightSidebar hidden={!rightOpen} section={right} select={setRight} /> : null}
+						{book ? <RightSidebar hidden={focus || !rightOpen} section={right} select={setRight} /> : null}
 					</div>
 				) : (
 					<Welcome recent={initial?.recent ?? []} result={openResult} open={openBook} dismiss={() => setOpenResult(undefined)} />

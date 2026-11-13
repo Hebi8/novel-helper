@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions } from 'electron';
+import { mkdirSync } from 'node:fs';
+import { app, BrowserWindow, dialog, Menu, shell, type MenuItemConstructorOptions } from 'electron';
 import { channels, type MenuCommand } from '../../shared/api';
 import { zh } from '../../renderer/strings';
 import type { MainContext } from '../context';
@@ -20,7 +21,7 @@ export function installMenu(ctx: MainContext): void {
 		}
 	};
 	const open = async () => {
-		const { filePaths } = await dialog.showOpenDialog({ properties: ['openDirectory'] });
+		const { filePaths } = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
 		if (filePaths[0]) {
 			await openRoot(filePaths[0]);
 		}
@@ -51,6 +52,7 @@ export function installMenu(ctx: MainContext): void {
 						})),
 					},
 					{ type: 'separator' },
+					action(zh.newChapter, 'newChapter', 'Cmd+N'),
 					action(zh.quickOpen, 'quickOpen', 'Cmd+P'),
 					action(zh.closeTab, 'closeTab', 'Cmd+W'),
 					action(zh.previousTab, 'previousTab', 'Cmd+Shift+['),
@@ -68,12 +70,14 @@ export function installMenu(ctx: MainContext): void {
 					{ label: zh.paste, role: 'paste' },
 					{ label: zh.selectAll, role: 'selectAll' },
 					action(zh.find, 'find', 'Cmd+F'),
+					action(zh.searchBook, 'searchBook', 'Cmd+Shift+F'),
 				],
 			},
 			{
 				label: zh.view,
 				submenu: [
 					action(zh.split, 'split', 'Cmd+\\'),
+					action(zh.focus, 'focus', 'Ctrl+Cmd+F'),
 					action(zh.left, 'left:toggle', 'Cmd+0'),
 					action(zh.right, 'right:toggle', 'Alt+Cmd+0'),
 					action(zh.chapters, 'left:0', 'Cmd+1'),
@@ -118,6 +122,14 @@ export function installMenu(ctx: MainContext): void {
 			{
 				label: zh.help,
 				submenu: [
+					{
+						label: zh.openLogs,
+						click: () => {
+							const logs = app.getPath('logs');
+							mkdirSync(logs, { recursive: true });
+							shell.showItemInFolder(logs);
+						},
+					},
 					{
 						label: zh.helpTitle,
 						click: () => {

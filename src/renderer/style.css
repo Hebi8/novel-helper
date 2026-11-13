@@ -212,7 +212,7 @@ select:focus-visible {
 }
 .cm-scroller {
 	font:
-		17px/1.95 'PingFang SC',
+		var(--writing-size, 17px)/1.95 var(--writing-font, 'PingFang SC'),
 		sans-serif !important;
 	overflow: auto !important;
 }
@@ -977,4 +977,109 @@ select:focus-visible {
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
+}
+
+.focus-mode > .topbar,
+.focus-mode > .statusbar,
+.focus-mode .tabs {
+	display: none;
+}
+
+.cm-editor.center-line .cm-content {
+	padding-top: 45vh !important;
+	padding-bottom: 50vh !important;
+}
+.input-popover textarea {
+	width: 100%;
+	resize: vertical;
+	font-family: monospace;
+}
+.scaffold-items {
+	max-height: 45vh;
+	overflow: auto;
+}
+.scaffold-items label {
+	display: flex;
+	flex-direction: row;
+	gap: 8px;
+	align-items: baseline;
+	margin: 10px 0;
+}
+.scaffold-items input {
+	width: auto;
+}
+.scaffold-items small {
+	display: block;
+	color: var(--soft);
+}
+.folder-path {
+	overflow-wrap: anywhere;
+	color: var(--soft);
+}
+.search-query {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.search-query input {
+	flex: 1;
+	min-width: 0;
+}
+.search-query output {
+	white-space: nowrap;
+	color: var(--soft);
+}
+.book-search h4 {
+	font-size: 12px;
+	margin: 14px 10px 6px;
+	color: var(--soft);
+}
+.book-search [role='option'] {
+	display: flex;
+	flex-direction: row;
+	gap: 12px;
+	white-space: pre-wrap;
+	text-align: left;
+}
+.book-search [role='option'] span {
+	overflow-wrap: anywhere;
+}
+.settings-window {
+	overflow: auto;
+	height: 100vh;
+}
+.settings-window h2 {
+	font-size: 13px;
+	color: var(--soft);
+	margin-top: 24px;
+}
+.setting {
+	gap: 14px;
+}
+.setting-value {
+	max-width: 55%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.inline-setting {
+	display: flex;
+	flex: 1;
+	gap: 4px;
+	min-width: 0;
+}
+.inline-setting input {
+	width: 100%;
+	min-width: 0;
+}
+
+.finish-popover,
+.quick-open.book-search {
+	width: min(560px, 85vw);
+	margin: 30px auto;
+	max-height: calc(100vh - 60px);
+	overflow: auto;
+}
+.book-search [role='listbox'] {
+	max-height: min(400px, calc(100vh - 160px));
 }

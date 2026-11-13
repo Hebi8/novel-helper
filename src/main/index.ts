@@ -1,3 +1,4 @@
+import { prepareOpen } from './scaffold/initialize';
 import { inspectRememberedBook, restoreBooks } from './window/reopen';
 import { CloseGate } from './window/closeGate';
 import { app, BrowserWindow, ipcMain, webContents } from 'electron';
@@ -33,6 +34,7 @@ if (!app.requestSingleInstanceLock()) {
 			app.dock?.hide();
 		}
 		const directory = app.getPath('userData');
+		app.setAppLogsPath(join(directory, 'logs'));
 		const settings = new SettingsStore(directory);
 		const secrets = new SecretStore(directory);
 		const usage = new UsageStore(join(directory, 'usage'));
@@ -116,6 +118,9 @@ if (!app.requestSingleInstanceLock()) {
 			return window;
 		};
 		const context: MainContext = {
+			reindexBooks: async () => {
+				await Promise.all([...books.values()].map((book) => book.reconfigure(settings.get())));
+			},
 			settings,
 			secrets,
 			completion,
@@ -127,6 +132,18 @@ if (!app.requestSingleInstanceLock()) {
 			windowFor: (event) => BrowserWindow.fromWebContents(event.sender)!,
 			broadcast: (channel, data) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channel, data)),
 			open: async (root, source) => {
+				try {
+					const prepared = await prepareOpen(root, settings.get());
+					if (prepared.roots) {
+						return { kind: 'choices', roots: prepared.roots };
+					}
+					if (prepared.initialize) {
+						return { kind: 'empty', root: prepared.root };
+					}
+					root = prepared.root;
+				} catch (error) {
+					return { kind: 'error', message: String(error) };
+				}
 				const inspected = await inspectRememberedBook(root, windows);
 				if ('error' in inspected) {
 					installMenu(context);
@@ -136,6 +153,7 @@ if (!app.requestSingleInstanceLock()) {
 					return inspected.roots.length ? { kind: 'choices', roots: inspected.roots } : { kind: 'empty' };
 				}
 				const index = inspected.index;
+				await index.reconfigure(settings.get());
 				const existing = [...books].find(([, book]) => book.root === index.root);
 				if (existing) {
 					index.dispose();

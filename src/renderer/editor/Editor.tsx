@@ -1,3 +1,4 @@
+import { writingPreferences } from './preferences';
 import { ConflictBar } from './ConflictBar';
 import { loreExtension, updateLore } from '../reference/loreExtension';
 import { useWorkspace } from '../workspace';
@@ -68,6 +69,7 @@ export function Editor({
 
 			ghost.extension(),
 			prose,
+			writingPreferences(settings),
 			markdown(),
 			EditorView.lineWrapping,
 			EditorState.phrases.of(zh.search),

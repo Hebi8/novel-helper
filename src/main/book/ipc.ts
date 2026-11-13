@@ -5,7 +5,7 @@ import type { MainContext } from '../context';
 export function registerBook(ctx: MainContext): void {
 	ipcMain.handle(channels.bookOpen, async (event, root?: string) => {
 		const window = ctx.windowFor(event);
-		const selected = root ?? (await dialog.showOpenDialog(window, { properties: ['openDirectory'] })).filePaths[0];
+		const selected = root ?? (await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })).filePaths[0];
 		return selected ? ctx.open(selected, window) : { kind: 'cancelled' };
 	});
 	ipcMain.handle(channels.bookRead, (event, path: string) => ctx.bookFor(event)!.read(bookPath(path)));

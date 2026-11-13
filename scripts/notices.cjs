@@ -6,7 +6,7 @@ const packages = Object.entries(lock.packages)
 	.sort((a, b) => (a.title < b.title ? -1 : 1));
 fs.writeFileSync(
 	'THIRD-PARTY-NOTICES.md',
-	'# Third-party notices\n\nPackages distributed with Novel Helper and their licenses.\n\n' +
+	'# Third-party notices\n\nProduction packages distributed with Novel Helper for Mac and their licenses. Electron includes its own license files in the application bundle.\n\n' +
 		packages
 			.map(({ folder, title }) => `## ${title}\n\n\`\`\`text\n${fs.readFileSync(`${folder}/LICENSE`, 'utf8').trimEnd()}\n\`\`\`\n`)
 			.join('\n'),

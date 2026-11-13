@@ -1,7 +1,8 @@
 out
 dist
 node_modules
-*.vsix
 
 test-results
 playwright-report
+
+release/

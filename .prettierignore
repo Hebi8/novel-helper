@@ -27,3 +27,5 @@
 
 !src/test/macAssistant.test.ts
 !src/test/reference.test.ts
+
+!src/test/scaffold.test.ts

@@ -45,9 +45,12 @@ export type OpenResult =
 	| { kind: 'error'; message: string }
 	| { kind: 'opened' }
 	| { kind: 'choices'; roots: string[] }
-	| { kind: 'empty' }
+	| { kind: 'empty'; root?: string }
 	| { kind: 'cancelled' };
 export type MenuCommand =
+	| 'newChapter'
+	| 'searchBook'
+	| 'focus'
 	| 'assistant:focus'
 	| 'assistant:stop'
 	| 'assistant:history'
@@ -78,6 +81,7 @@ export interface Bootstrap {
 	usage: UsageStatus;
 }
 export interface AppAPI {
+	finish: import('./finish').FinishAPI;
 	assistant: AssistantAPI;
 	book: {
 		open(root?: string): Promise<OpenResult>;
@@ -187,6 +191,7 @@ export interface QuickItem {
 	line?: number;
 }
 export interface OpenOptions {
+	offset?: number;
 	line?: number;
 	beside?: boolean;
 }

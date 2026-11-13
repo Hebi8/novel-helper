@@ -28,6 +28,9 @@ export class AssistantRegistry {
 		this.closing.set(root, pending);
 		return pending;
 	}
+	async busy(root: string): Promise<boolean> {
+		return (await this.live.get(root))?.state().busy ?? false;
+	}
 	async closeAll(): Promise<void> {
 		await Promise.all([...this.live.keys()].map((root) => this.close(root)).concat([...this.closing.values()]));
 	}

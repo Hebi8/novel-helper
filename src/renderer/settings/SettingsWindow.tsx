@@ -1,25 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { PROVIDERS, type ProviderId } from '../../llm/providers';
-import type { Settings } from '../../shared/api';
+import type { Settings, SettingKey } from '../../shared/api';
+import { settingGroups, saveSettingText, jsonSettings } from '../../shared/settings';
+import { Popover } from '../scaffold/Popover';
+import { errorMessage } from '../errors';
 import { zh } from '../strings';
 export function SettingsWindow() {
-	useEffect(
-		() =>
-			window.novel.window.onCommand((command) => {
-				if (command === 'closeTab') {
-					window.novel.window.close();
-				}
-			}),
-		[],
-	);
 	const [settings, update] = useState<Settings>();
 	const [hasKey, setHasKey] = useState(false);
-	const [editing, setEditing] = useState<'model' | 'key'>();
+	const [editing, setEditing] = useState<SettingKey | 'key'>();
 	const [value, setValue] = useState('');
 	const [error, setError] = useState('');
+	const [pending, setPending] = useState(false);
+	const composing = useRef(false);
 	useEffect(() => {
 		void window.novel.settings.get().then(update);
-		return window.novel.settings.onChanged(update);
+		const off = window.novel.settings.onChanged(update);
+		const commands = window.novel.window.onCommand((command) => {
+			if (command === 'closeTab') {
+				window.novel.window.close();
+			}
+		});
+		return () => {
+			off();
+			commands();
+		};
 	}, []);
 	const provider = settings?.provider as ProviderId | undefined;
 	useEffect(() => {
@@ -38,126 +43,165 @@ export function SettingsWindow() {
 	if (!settings || !provider) {
 		return null;
 	}
-	const set = window.novel.settings.set;
+	const label = (key: SettingKey) => zh.settingLabels[key as keyof typeof zh.settingLabels];
+	const close = () => {
+		setEditing(undefined);
+		setValue('');
+		setError('');
+	};
+	const set = (key: SettingKey, value: Settings[SettingKey]) => {
+		void window.novel.settings.set(key, value).catch((error) => setError(errorMessage(error)));
+	};
+	const edit = (key: SettingKey | 'key') => {
+		setEditing(key);
+		setValue(key === 'key' ? '' : jsonSettings.includes(key) ? JSON.stringify(settings[key], null, 2) : String(settings[key]));
+		setError('');
+	};
 	const commit = async () => {
+		if (!editing || pending || composing.current) {
+			return;
+		}
+		setPending(true);
 		try {
-			if (editing === 'model') {
-				await set(`${provider}.model`, value);
-			} else {
+			if (editing === 'key') {
 				await window.novel.secrets.set(provider, value);
 				setHasKey(!!value);
+			} else {
+				await saveSettingText(editing, value, window.novel.settings.set);
 			}
-			setValue('');
-			setEditing(undefined);
-			setError('');
+			close();
 		} catch (error) {
-			setError(String(error));
+			setError(errorMessage(error));
+		} finally {
+			setPending(false);
 		}
 	};
+	const inline = (key: SettingKey | 'key') => (
+		<div className="inline-setting">
+			<input
+				autoFocus
+				aria-label={key === 'key' ? zh.apiKey : label(key)}
+				type={key === 'key' ? 'password' : 'text'}
+				autoComplete="off"
+				value={value}
+				disabled={pending}
+				onChange={(event) => setValue(event.target.value)}
+				onCompositionStart={() => {
+					composing.current = true;
+				}}
+				onCompositionEnd={() => {
+					composing.current = false;
+				}}
+				onKeyDown={(event) => {
+					if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) {
+						return;
+					}
+					if (event.key === 'Enter') {
+						event.preventDefault();
+						void commit();
+					} else if (event.key === 'Escape') {
+						close();
+					}
+				}}
+			/>
+			<button disabled={pending} onClick={() => void commit()}>
+				{zh.confirm}
+			</button>
+			<button disabled={pending} onClick={close}>
+				{zh.cancel}
+			</button>
+		</div>
+	);
 	return (
 		<main className="settings-window">
 			<h1>{zh.settings}</h1>
-			<div className="settings-rows">
-				<button
-					className="setting"
-					onClick={() => {
-						void set('enabled', !settings.enabled);
-					}}
-				>
-					<span>{zh.continuation}</span>
-					<strong>{settings.enabled ? zh.on : zh.off}</strong>
-				</button>
-				<button
-					className="setting"
-					onClick={() => {
-						void set('trigger', settings.trigger === 'auto' ? 'manual' : 'auto');
-					}}
-				>
-					<span>
-						{zh.auto} / {zh.manual}
-					</span>
-					<strong>{settings.trigger === 'auto' ? zh.auto : zh.manual}</strong>
-				</button>
-				<label className="setting">
-					<span>{zh.provider}</span>
-					<select
-						value={provider}
-						onChange={(e) => {
-							setEditing(undefined);
-							setValue('');
-							void set('provider', e.target.value);
-						}}
-					>
-						{Object.keys(PROVIDERS).map((id) => (
-							<option key={id} value={id}>
-								{zh.providers[id as ProviderId]}
-							</option>
-						))}
-					</select>
-				</label>
-				<button
-					className="setting"
-					onClick={() => {
-						setEditing('model');
-						setValue(settings[`${provider}.model`]);
-					}}
-				>
-					<span>{zh.model}</span>
-					<strong>{settings[`${provider}.model`] || PROVIDERS[provider].defaultModel || '—'}</strong>
-				</button>
-				<div className="setting">
-					<span>{zh.apiKey}</span>
-					<span className="key-controls">
-						<span>{hasKey ? zh.keySet : zh.keyUnset}</span>
-						<button
-							onClick={() => {
-								setEditing('key');
-								setValue('');
-							}}
-						>
-							{hasKey ? zh.replaceKey : zh.setKey}
-						</button>
-						{hasKey ? (
-							<button
-								onClick={() => {
-									void window.novel.secrets.clear(provider).then(() => setHasKey(false));
-								}}
-							>
-								{zh.clear}
-							</button>
+			{settingGroups.map((group) => (
+				<section key={group.name}>
+					<h2>{group.name}</h2>
+					<div className="settings-rows">
+						{group.keys.map((key) => {
+							const current = settings[key];
+							const options =
+								key === 'provider'
+									? Object.keys(PROVIDERS).map((id) => ({ value: id, title: zh.providers[id as ProviderId] }))
+									: key === 'trigger'
+										? [
+												{ value: 'auto', title: zh.auto },
+												{ value: 'manual', title: zh.manual },
+											]
+										: key === 'assistant.agent'
+											? [
+													{ value: 'claude', title: 'Claude Code' },
+													{ value: 'custom', title: zh.settingLabels['assistant.command'] },
+												]
+											: undefined;
+							return (
+								<div key={key} className="setting">
+									<span>{label(key)}</span>
+									{options ? (
+										<select
+											aria-label={label(key)}
+											value={String(current)}
+											onChange={(event) => {
+												close();
+												set(key, event.target.value);
+											}}
+										>
+											{options.map((option) => (
+												<option key={option.value} value={option.value}>
+													{option.title}
+												</option>
+											))}
+										</select>
+									) : typeof current === 'boolean' ? (
+										<button aria-label={label(key)} aria-pressed={current} onClick={() => set(key, !current)}>
+											{current ? zh.on : zh.off}
+										</button>
+									) : editing === key && !jsonSettings.includes(key) ? (
+										inline(key)
+									) : (
+										<button className="setting-value" aria-label={label(key)} onClick={() => edit(key)}>
+											{typeof current === 'object' ? JSON.stringify(current) : String(current) || '—'}
+										</button>
+									)}
+								</div>
+							);
+						})}
+						{group.name === zh.settingsModel ? (
+							<div className="setting">
+								<span>{zh.apiKey}</span>
+								{editing === 'key' ? (
+									inline('key')
+								) : (
+									<span className="key-controls">
+										<span>{hasKey ? zh.keySet : zh.keyUnset}</span>
+										<button onClick={() => edit('key')}>{hasKey ? zh.replaceKey : zh.setKey}</button>
+										{hasKey ? (
+											<button
+												onClick={() =>
+													void window.novel.secrets
+														.clear(provider)
+														.then(() => setHasKey(false))
+														.catch((error) => setError(errorMessage(error)))
+												}
+											>
+												{zh.clear}
+											</button>
+										) : null}
+									</span>
+								)}
+							</div>
 						) : null}
-					</span>
-				</div>
-			</div>
-			{editing ? (
-				<form
-					className="setting-edit"
-					onSubmit={(event) => {
-						event.preventDefault();
-						void commit();
-					}}
-				>
-					<input
-						aria-label={editing === 'model' ? zh.model : zh.apiKey}
-						autoFocus
-						type={editing === 'key' ? 'password' : 'text'}
-						autoComplete="off"
-						value={value}
-						onChange={(e) => setValue(e.target.value)}
-					/>
-					<button type="submit">{zh.confirm}</button>
-					<button
-						type="button"
-						onClick={() => {
-							setEditing(undefined);
-							setValue('');
-						}}
-					>
-						{zh.cancel}
-					</button>
-				</form>
-			) : null}
+					</div>
+				</section>
+			))}
 			{error ? <p role="alert">{error}</p> : null}
+			{editing && editing !== 'key' && jsonSettings.includes(editing) ? (
+				<Popover title={label(editing)} close={close} submit={() => void commit()} multiline pending={pending}>
+					<textarea aria-label={label(editing)} rows={12} value={value} onChange={(event) => setValue(event.target.value)} />
+					{error ? <p role="alert">{error}</p> : null}
+				</Popover>
+			) : null}
 		</main>
 	);
 }

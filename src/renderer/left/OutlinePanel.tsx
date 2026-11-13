@@ -1,8 +1,13 @@
+import { useState } from 'react';
+import { TreeMenu } from '../scaffold/TreeMenu';
+import { errorMessage } from '../errors';
 import { useWorkspace } from '../workspace';
 import { comparePaths } from '../../core/naturalSort';
 import { zh } from '../strings';
 export function OutlinePanel() {
 	const workspace = useWorkspace();
+	const [menu, setMenu] = useState<{ path: string; x: number; y: number }>();
+	const [error, setError] = useState('');
 	const paths = [...workspace.reference.outlines].sort(comparePaths);
 	const branch = (prefix: string, depth: number) => {
 		const segments = [...new Set(paths.filter((path) => path.startsWith(prefix)).map((path) => path.slice(prefix.length).split('/')[0]))];
@@ -29,7 +34,15 @@ export function OutlinePanel() {
 					name
 				);
 				return (
-					<div key={path} role="treeitem">
+					<div
+						key={path}
+						role="treeitem"
+						onContextMenu={(event) => {
+							event.preventDefault();
+							event.stopPropagation();
+							setMenu({ path: file ? prefix + file : path, x: event.clientX, y: event.clientY });
+						}}
+					>
 						{folder ? (
 							<details open>
 								<summary style={{ paddingLeft: 12 + depth * 14 }}>{label}</summary>
@@ -46,7 +59,22 @@ export function OutlinePanel() {
 	};
 	return (
 		<div className="tree" role="tree" aria-label={zh.outline}>
+			{error ? <p role="alert">{error}</p> : null}
 			{branch('', 0)}
+			{menu ? (
+				<TreeMenu
+					{...menu}
+					close={() => setMenu(undefined)}
+					actions={[
+						{
+							label: zh.reveal,
+							run: () => {
+								void window.novel.finish.reveal(menu.path).catch((error) => setError(errorMessage(error)));
+							},
+						},
+					]}
+				/>
+			) : null}
 		</div>
 	);
 }

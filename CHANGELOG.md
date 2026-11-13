@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — Mac application
+
+- A standalone macOS writing application with React and CodeMirror, autosave, ghost text, lore cards, outline buoys, split editing and an ACP assistant with turn snapshots and diffs. The VS Code extension remains on the `vscode-extension` branch; book formats are compatible.
+- Initialize or discover books, create numbered chapters and nested volumes, and rename chapters with their outlines, summaries and buoy records through an atomic directory exchange.
+- Complete grouped settings, writing font and size, optional current-line centering, literal whole-book search, focus mode, Finder reveal and a log-directory menu item.
+- Add an unsigned arm64 directory build with `npm run pack`, update the source-running instructions and third-party notices.
+
 ## 0.4.0 (2026-11-12)
 
 - A new **Assistant** view in the sidebar: a conversation with an agent that reads and changes the whole story folder, where ghost text only writes on from the cursor. The agent is a process of its own, spoken to over the [Agent Client Protocol](https://agentclientprotocol.com). The preset is Claude Code through the adapter `@agentclientprotocol/claude-agent-acp` (fixed at 0.106.0, started with `npx`; needs Node.js 22 or later and a Claude Code that is logged in); with `novelHelper.assistant.agent` set to `custom`, `novelHelper.assistant.command` and `novelHelper.assistant.args` start any other ACP agent. The extension handles no keys: the agent uses its own login, and the API key for ghost text is not given to it. These settings count in user settings only, and the assistant is off in Restricted Mode.

@@ -1,3 +1,5 @@
+import { assertBookAvailable } from '../scaffold/activity';
+import { zh } from '../../renderer/strings';
 import { app, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,10 +14,19 @@ import { AssistantRegistry } from './registry';
 
 export function registerAssistant(ctx: MainContext): void {
 	const userData = app.getPath('userData');
-	void prepareAgentEnvironment().catch((error: Error) => appendFileSync(join(userData, 'assistant-startup.log'), `${error.message}\n`));
+	void prepareAgentEnvironment().catch((error: Error) =>
+		appendFileSync(join(app.getPath('logs'), 'assistant-startup.log'), `${error.message}\n`),
+	);
 	const services = new AssistantRegistry();
+	ctx.prepareBookRename = async (root) => {
+		if (await services.busy(root)) {
+			throw new Error(zh.renameBusy);
+		}
+		await services.close(root);
+	};
 	const service = (event: IpcMainInvokeEvent): Promise<AssistantService> => {
 		const book = ctx.bookFor(event)!;
+		assertBookAvailable(book.root);
 		return services.get(book.root, async () => {
 			const assistant = new AssistantService({
 				root: book.root,

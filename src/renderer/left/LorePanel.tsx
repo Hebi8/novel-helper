@@ -101,6 +101,16 @@ export function LorePanel() {
 						>
 							{zh.setType}
 						</button>
+						<button
+							role="menuitem"
+							onClick={() => {
+								const path = menu.entry.id;
+								closeMenu();
+								void window.novel.finish.reveal(path).catch((error) => setError(errorMessage(error)));
+							}}
+						>
+							{zh.reveal}
+						</button>
 					</div>
 				</div>
 			) : null}

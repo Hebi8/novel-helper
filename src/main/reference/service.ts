@@ -1,3 +1,4 @@
+import { MARKER_FILE, parseMarker } from '../../core/story';
 import { join } from 'node:path';
 import type { BookIndex } from '../book/indexer';
 import { scanFiles } from '../book/indexer';
@@ -9,7 +10,6 @@ import { builtinTemplate, fillTemplate, folderForNew, templateNames } from '../.
 import { nameProblem } from '../../core/book';
 import { firstLeaf, waysFrom } from '../../core/outline';
 import { dirSegments, stem } from '../../core/text';
-import { defaults } from '../../shared/defaults';
 import type { ReferenceData, QuickItem } from '../../shared/api';
 import { zh, translateReport } from '../../renderer/strings';
 export async function referenceData(index: BookIndex): Promise<ReferenceData> {
@@ -54,7 +54,7 @@ export async function setLoreField(index: BookIndex, path: string, field: 'alway
 }
 export async function createLore(index: BookIndex, name: string, type: string): Promise<string> {
 	const entries = index.library.entries();
-	const folder = folderForNew(type, entries, defaults['files.lore'].flatMap(globFolders));
+	const folder = folderForNew(type, entries, index.configuration['files.lore'].flatMap(globFolders));
 	if (
 		nameProblem(
 			name,
@@ -89,7 +89,11 @@ export async function openCompanion(index: BookIndex, nodePath: string, kind: 'o
 	bookPath(nodePath);
 	const find = (node: BookNode): BookNode | undefined => (node.path === nodePath ? node : node.children.map(find).find(Boolean));
 	const node = find(index.book.tree)!;
-	const root = index.library.roots(kind)[0] ?? defaults[kind === 'outline' ? 'files.outlines' : 'files.summaries'].flatMap(globFolders)[0];
+	const marker = parseMarker((await readOptional(join(index.root, MARKER_FILE))) ?? '');
+	const root =
+		index.library.roots(kind)[0] ??
+		marker?.folders?.[kind === 'outline' ? 'outlines' : 'summaries'] ??
+		index.configuration[kind === 'outline' ? 'files.outlines' : 'files.summaries'].flatMap(globFolders)[0];
 	const path = bookPath(node[kind] ?? [root, ...node.dirs, `${node.name}.md`].join('/'));
 	await index.mutate(path, (raw) => (raw === undefined ? '' : undefined));
 	return path;

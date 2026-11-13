@@ -1,4 +1,7 @@
 export const defaults = {
+	'editor.fontFamily': 'PingFang SC',
+	'editor.fontSize': 17,
+	'editor.centerLine': false,
 	enabled: true,
 	trigger: 'auto',
 	debounceMs: 750,

@@ -1,3 +1,4 @@
+import { assertBookAvailable } from '../scaffold/activity';
 import { dirname } from 'node:path';
 import { buildOutline, type OutlineGraph } from '../../core/outline';
 import { readdir, realpath, stat, mkdir } from 'node:fs/promises';
@@ -5,16 +6,17 @@ import { watch, type FSWatcher } from 'node:fs';
 import { join, basename, matchesGlob } from 'node:path';
 import { Library, globRootDepth, globFolders, type FileKind } from '../../core/library';
 import { MARKER_FILE, SCAN_DEPTH, SCAN_EXCLUDE, parseMarker, storyState, storiesFromMarkers, isUsable } from '../../core/story';
-import { defaults } from '../../shared/defaults';
+import { defaults, type Settings } from '../../shared/defaults';
 import type { Book, DiskFile, SaveResult } from '../../shared/api';
 import { atomicWrite, readOptional, readDocument, FileFormatError, type LineEnding } from './files';
-const groups = [
-	['lore', defaults['files.lore']],
-	['chapter', defaults['files.chapters']],
-	['outline', defaults['files.outlines']],
-	['summary', defaults['files.summaries']],
-] as const;
-const roots = [...new Set(groups.flatMap(([, patterns]) => patterns.flatMap(globFolders)))];
+const groupsFor = (settings: Settings) =>
+	[
+		['lore', settings['files.lore']],
+		['chapter', settings['files.chapters']],
+		['outline', settings['files.outlines']],
+		['summary', settings['files.summaries']],
+	] as const;
+
 function ignored(error: unknown): boolean {
 	return ['ENOENT', 'EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '');
 }
@@ -79,7 +81,17 @@ export async function findStories(root: string): Promise<string[]> {
 		.map((path) => join(root, path));
 }
 export class BookIndex {
-	readonly library = new Library(defaults['files.bookNames']);
+	library = new Library(defaults['files.bookNames']);
+	private settings: Settings = defaults;
+	get configuration(): Settings {
+		return this.settings;
+	}
+	private get groups() {
+		return groupsFor(this.settings);
+	}
+	private get roots() {
+		return [...new Set(this.groups.flatMap(([, patterns]) => patterns.flatMap(globFolders)))];
+	}
 	private referenceVersion = 0;
 	private buoyVersion = 0;
 	private referenceContents = new Map<string, string | undefined>();
@@ -111,17 +123,27 @@ export class BookIndex {
 	private fileChanged(file: DiskFile): void {
 		this.fileListeners.forEach((listener) => listener(file));
 	}
-	constructor(readonly root: string) {}
+	constructor(
+		readonly root: string,
+		settings: Settings = defaults,
+	) {
+		this.settings = settings;
+		this.library = new Library(settings['files.bookNames']);
+	}
 	async load(): Promise<void> {
 		try {
 			const marker = await readOptional(join(this.root, MARKER_FILE));
-			this.marked = marker !== undefined && parseMarker(marker) !== undefined;
+			const metadata = marker !== undefined ? parseMarker(marker) : undefined;
+			this.marked = metadata !== undefined;
+			if (metadata?.book && this.library.empty) {
+				this.library = new Library([...new Set([metadata.book, ...this.settings['files.bookNames']])]);
+			}
 		} catch (error) {
 			if (!ignored(error) && !(error instanceof FileFormatError)) {
 				throw error;
 			}
 		}
-		const paths = (await Promise.all(roots.map((root) => scanFiles(this.root, root)))).flat();
+		const paths = (await Promise.all(this.roots.map((root) => scanFiles(this.root, root)))).flat();
 		await Promise.all(paths.map((path) => this.updateFile(path, false)));
 	}
 	get book(): Book {
@@ -147,7 +169,7 @@ export class BookIndex {
 				this.notify();
 				return;
 			}
-			if (!roots.some((root) => path === root || path.startsWith(root + '/')) && !this.opened.has(path)) {
+			if (!this.roots.some((root) => path === root || path.startsWith(root + '/')) && !this.opened.has(path)) {
 				return;
 			}
 			if (!visiblePath(path)) {
@@ -188,6 +210,7 @@ export class BookIndex {
 		return { path, text: content?.text ?? '' };
 	}
 	save(path: string, text: string, base: string, force = false): Promise<SaveResult> {
+		assertBookAvailable(this.root);
 		return this.enqueue(async () => {
 			const disk = await readDocument(join(this.root, path));
 			if (!force && disk?.text !== base) {
@@ -204,7 +227,7 @@ export class BookIndex {
 	}
 	private add(path: string, text?: string): void {
 		this.files.add(path);
-		for (const [kind, patterns] of groups) {
+		for (const [kind, patterns] of this.groups) {
 			for (const pattern of patterns) {
 				if (!matchesGlob(path, pattern)) {
 					continue;
@@ -340,6 +363,7 @@ export class BookIndex {
 		this.notify();
 	}
 	mutate(path: string, change: (raw: string | undefined) => string | undefined): Promise<void> {
+		assertBookAvailable(this.root);
 		return this.enqueue(async () => {
 			const full = join(this.root, path);
 			const before = await readOptional(full);
@@ -351,6 +375,39 @@ export class BookIndex {
 			await atomicWrite(full, after);
 			await this.updateFile(path, true);
 			this.notify();
+		});
+	}
+	async reconfigure(settings: Settings): Promise<void> {
+		await this.exclusive(async () => {
+			this.settings = settings;
+		});
+	}
+	/** Stop the watcher while a prepared directory transaction is committed. */
+	exclusive<T>(operation: () => Promise<T>): Promise<T> {
+		return this.enqueue(async () => {
+			const watching = !!this.watcher;
+			this.watcher?.close();
+			this.watcher = undefined;
+			clearTimeout(this.timer);
+			this.pending.clear();
+			try {
+				const result = await operation();
+				this.library = new Library(this.settings['files.bookNames']);
+				this.files.clear();
+				this.contents.clear();
+				this.lineEndings.clear();
+				this.referenceContents.clear();
+				this.referenceVersion++;
+				this.buoyVersion++;
+				this.graph = undefined;
+				await this.load();
+				this.notify();
+				return result;
+			} finally {
+				if (watching) {
+					this.start();
+				}
+			}
 		});
 	}
 	dispose(): void {

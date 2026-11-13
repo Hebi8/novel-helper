@@ -6,7 +6,7 @@ const { spawnSync } = require('node:child_process');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-tests-'));
 let result;
 try {
-	for (const folder of ['out', 'examples']) {
+	for (const folder of ['out', 'examples', 'dist/native']) {
 		fs.cpSync(folder, path.join(root, folder), { recursive: true });
 	}
 	fs.symlinkSync(path.resolve('node_modules'), path.join(root, 'node_modules'));

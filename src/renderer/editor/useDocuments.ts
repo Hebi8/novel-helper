@@ -1,3 +1,5 @@
+import { movedPath } from '../../shared/paths';
+import type { Rename } from '../../core/library';
 import { errorMessage } from '../errors';
 import { useRef, useState } from 'react';
 import type { DiskFile, SessionState, OpenOptions, ReportKind } from '../../shared/api';
@@ -89,13 +91,15 @@ export function useDocuments() {
 			setSplit(current.active === panesRef.current.right ? { ...panesRef.current, right: path } : { ...panesRef.current, left: path });
 		}
 		const offset =
-			options.line === undefined
-				? undefined
-				: documents.current
-						.get(path)!
-						.text.split('\n')
-						.slice(0, options.line)
-						.reduce((sum, line) => sum + line.length + 1, 0);
+			options.offset !== undefined
+				? options.offset
+				: options.line === undefined
+					? undefined
+					: documents.current
+							.get(path)!
+							.text.split('\n')
+							.slice(0, options.line)
+							.reduce((sum, line) => sum + line.length + 1, 0);
 		if (offset !== undefined) {
 			const handle = handles.current.get(path);
 			handle?.view.dispatch({ selection: { anchor: Math.min(offset, handle.view.state.doc.length) }, scrollIntoView: true });
@@ -211,7 +215,25 @@ export function useDocuments() {
 			}
 		}
 	};
+	const remap = (renames: Rename[]) => {
+		const move = (path: string) => movedPath(path, renames);
+		const current = sessionRef.current;
+		const mapped = new Map<string, DocumentModel>();
+		for (const [path, model] of documents.current) {
+			model.path = move(path);
+			mapped.set(model.path, model);
+		}
+		documents.current = mapped;
+		if (panesRef.current) {
+			setSplit({
+				left: panesRef.current.left && move(panesRef.current.left),
+				right: panesRef.current.right && move(panesRef.current.right),
+			});
+		}
+		persist({ tabs: current.tabs.map((tab) => ({ ...tab, path: move(tab.path) })), active: current.active && move(current.active) });
+	};
 	return {
+		remap,
 		focus: () => {
 			const path = sessionRef.current.active;
 			if (path) {

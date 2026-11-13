@@ -8,6 +8,15 @@ const listen = <T>(channel: string, listener: (value: T) => void) => {
 	};
 };
 const api: AppAPI = {
+	finish: {
+		plan: (root, language) => ipcRenderer.invoke('finish:plan', root, language),
+		initialize: (root, language, selected) => ipcRenderer.invoke('finish:initialize', root, language, selected),
+		suggest: (action, path) => ipcRenderer.invoke('finish:suggest', action, path),
+		create: (input) => ipcRenderer.invoke('finish:create', input),
+		reveal: (path) => ipcRenderer.invoke('finish:reveal', path),
+		search: (query) => ipcRenderer.invoke('finish:search', query),
+		focus: (enabled) => ipcRenderer.invoke('finish:focus', enabled),
+	},
 	assistant: {
 		state: () => ipcRenderer.invoke(c.assistantState),
 		send: (text, context) => ipcRenderer.invoke(c.assistantSend, text, context),

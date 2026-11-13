@@ -1,7 +1,9 @@
+import { useWorkspace } from '../workspace';
 import { SplitButton, FindButton } from '../reference/ReferenceTools';
 import { zh } from '../strings';
 import { assistantEvents } from '../assistant/events';
 export function TopBar({ name, left, right }: { name?: string; left(): void; right(): void }) {
+	const workspace = useWorkspace();
 	return (
 		<header className="topbar">
 			<button aria-label={zh.left} onClick={left}>
@@ -9,6 +11,9 @@ export function TopBar({ name, left, right }: { name?: string; left(): void; rig
 			</button>
 			<SplitButton />
 			<strong>{name ?? zh.app}</strong>
+			<button aria-label={zh.newChapter} disabled={!name} onClick={() => workspace.structure('chapter')}>
+				＋
+			</button>
 			<span className="grow" />
 			<button aria-label={zh.assistantSnapshots} disabled={!name} onClick={() => window.dispatchEvent(new Event(assistantEvents.history))}>
 				<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">

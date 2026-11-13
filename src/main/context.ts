@@ -6,6 +6,8 @@ import type { BookIndex } from './book/indexer';
 import type { WindowStore } from './window/state';
 import type { OpenResult } from '../shared/api';
 export interface MainContext {
+	reindexBooks?(): Promise<void>;
+	prepareBookRename?(root: string): Promise<void>;
 	settings: SettingsStore;
 	secrets: SecretStore;
 	completion: CompletionService;

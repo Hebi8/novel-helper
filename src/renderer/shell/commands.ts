@@ -2,6 +2,9 @@ import { assistantEvents } from '../assistant/events';
 import type { MenuCommand } from '../../shared/api';
 import type { useDocuments } from '../editor/useDocuments';
 interface CommandTarget {
+	newChapter(): void;
+	searchBook(): void;
+	focus(): void;
 	documents: ReturnType<typeof useDocuments>;
 	toggleLeft(): void;
 	toggleRight(): void;
@@ -14,6 +17,9 @@ export function commands(target: CommandTarget): Record<MenuCommand, () => void>
 	const active = () => docs.sessionRef.current.active;
 	const editor = () => (active() ? docs.handles.current.get(active()!) : undefined);
 	return {
+		newChapter: target.newChapter,
+		searchBook: target.searchBook,
+		focus: target.focus,
 		'assistant:focus': () => {
 			target.right(2);
 			window.dispatchEvent(new Event(assistantEvents.focus));

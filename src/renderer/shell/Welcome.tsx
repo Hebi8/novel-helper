@@ -24,6 +24,9 @@ export function Welcome({
 			<button className="open-folder" onClick={() => open()}>
 				{zh.openFolder}
 			</button>
+			<button className="open-folder" onClick={() => open()}>
+				{zh.newBook}
+			</button>
 			{recent.length ? (
 				<section>
 					<h2>{zh.recent}</h2>

@@ -40,7 +40,7 @@ export class DocumentModel {
 	private saving: Promise<void> = Promise.resolve();
 	onChanged: () => void = () => {};
 	constructor(
-		readonly path: string,
+		public path: string,
 		text: string,
 		private readonly api: AppAPI,
 		readonly readOnly = false,
