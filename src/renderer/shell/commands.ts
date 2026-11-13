@@ -7,6 +7,7 @@ interface CommandTarget {
 	toggleRight(): void;
 	left(section: number): void;
 	right(section: number): void;
+	quickOpen(): void;
 }
 export function commands(target: CommandTarget): Record<MenuCommand, () => void> {
 	const docs = target.documents;
@@ -22,6 +23,14 @@ export function commands(target: CommandTarget): Record<MenuCommand, () => void>
 		},
 		'assistant:history': () => {
 			window.dispatchEvent(new Event(assistantEvents.history));
+		},
+		split: () => docs.toggleSplit(),
+		quickOpen: target.quickOpen,
+		report: () => {
+			void docs.openReport('report');
+		},
+		usageReport: () => {
+			void docs.openReport('usageReport');
 		},
 		closeTab: () => {
 			if (active()) {

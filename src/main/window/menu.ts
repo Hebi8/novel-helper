@@ -51,6 +51,7 @@ export function installMenu(ctx: MainContext): void {
 						})),
 					},
 					{ type: 'separator' },
+					action(zh.quickOpen, 'quickOpen', 'Cmd+P'),
 					action(zh.closeTab, 'closeTab', 'Cmd+W'),
 					action(zh.previousTab, 'previousTab', 'Cmd+Shift+['),
 					action(zh.nextTab, 'nextTab', 'Cmd+Shift+]'),
@@ -72,6 +73,7 @@ export function installMenu(ctx: MainContext): void {
 			{
 				label: zh.view,
 				submenu: [
+					action(zh.split, 'split', 'Cmd+\\'),
 					action(zh.left, 'left:toggle', 'Cmd+0'),
 					action(zh.right, 'right:toggle', 'Alt+Cmd+0'),
 					action(zh.chapters, 'left:0', 'Cmd+1'),
@@ -94,6 +96,8 @@ export function installMenu(ctx: MainContext): void {
 						},
 					},
 					action(zh.ask, 'manual', 'Alt+\\'),
+					action(zh.report, 'report'),
+					action(zh.usageReport, 'usageReport'),
 				],
 			},
 			{

@@ -1,3 +1,4 @@
+import { registerReference } from './reference/ipc';
 import type { MainContext } from './context';
 import { registerBook } from './book/ipc';
 import { registerCompletion } from './completion/ipc';
@@ -9,6 +10,7 @@ import { registerAssistant } from './assistant/ipc';
 // Keep each feature on its own line for independent additions.
 // prettier-ignore
 const features = [
+	registerReference,
 	registerBook,
 	registerCompletion,
 	registerSettings,

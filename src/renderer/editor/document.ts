@@ -43,6 +43,7 @@ export class DocumentModel {
 		readonly path: string,
 		text: string,
 		private readonly api: AppAPI,
+		readonly readOnly = false,
 	) {
 		this.text = this.base = text;
 	}
@@ -53,6 +54,9 @@ export class DocumentModel {
 		return this.dirty || this.conflict !== undefined;
 	}
 	edit(text: string): void {
+		if (this.readOnly) {
+			return;
+		}
 		this.text = text;
 		clearTimeout(this.timer);
 		if (!this.composing) {
@@ -81,6 +85,9 @@ export class DocumentModel {
 		return 'reload';
 	}
 	save(force = false): Promise<void> {
+		if (this.readOnly) {
+			return Promise.resolve();
+		}
 		if (this.composing) {
 			return this.compositionDone!.then(() => this.save(force));
 		}

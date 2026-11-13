@@ -1,3 +1,5 @@
+import { QuickOpen } from './reference/QuickOpen';
+import { useReferences } from './reference/useReferences';
 import { errorMessage } from './errors';
 import { useEffect, useRef, useState } from 'react';
 import type { Bootstrap, Book, OpenResult } from '../shared/api';
@@ -23,9 +25,24 @@ export function App() {
 	const [openResult, setOpenResult] = useState<OpenResult>();
 	const [error, setError] = useState('');
 	const docs = useDocuments();
+	const [quick, setQuick] = useState(false);
+	const chapter = useRef<string | undefined>(undefined);
+	if (book && docs.session.active && isChapter(book.tree, docs.session.active)) {
+		chapter.current = docs.session.active;
+	}
+	if (book && chapter.current && !isChapter(book.tree, chapter.current)) {
+		chapter.current = undefined;
+	}
+	const { reference, buoy } = useReferences(
+		book,
+		chapter.current,
+		() => (chapter.current ? docs.documents.current.get(chapter.current)?.text : undefined),
+		setError,
+	);
 	const { session, documents, handles } = docs;
 	const actions = commands({
 		documents: docs,
+		quickOpen: () => setQuick(true),
 		toggleLeft: () => setLeftOpen((value) => !value),
 		toggleRight: () => setRightOpen((value) => !value),
 		left: (section) => {
@@ -56,6 +73,9 @@ export function App() {
 			.catch((error) => setError(errorMessage(error)));
 		const unsubscribes = [
 			window.novel.book.onOpenResult(setOpenResult),
+			window.novel.reports.onChanged(() => {
+				void docs.refreshReports().catch((error) => setError(errorMessage(error)));
+			}),
 			window.novel.book.onChanged(setBook),
 			window.novel.book.onFileChanged(docs.external),
 			window.novel.settings.onChanged((settings) => setInitial((value) => (value ? { ...value, settings } : value))),
@@ -84,11 +104,20 @@ export function App() {
 				book,
 				session,
 				current: docs.current,
+				reference,
+				buoy: buoy?.chapter === chapter.current ? buoy : undefined,
+				chapter: chapter.current,
+				split: docs.toggleSplit,
+				find: actions.find,
+				quickOpen: () => setQuick(true),
+				report: docs.openReport,
+				showOutline: actions['right:0'],
 				open: docs.open,
 				saveAll: docs.saveAll,
 			}}
 		>
 			<div className="app">
+				{quick && book ? <QuickOpen close={() => setQuick(false)} /> : null}
 				<TopBar name={book?.name} left={actions['left:toggle']} right={actions['right:toggle']} />
 				{openResult?.kind === 'error' && book ? (
 					<div role="alert" className="notice">
@@ -120,18 +149,20 @@ export function App() {
 				) : book && openResult?.kind === 'empty' ? (
 					<div className="notice">{zh.empty}</div>
 				) : null}
-				{book && initial ? (
+				{initial && (book || session.tabs.length) ? (
 					<div className="workspace">
-						<LeftSidebar
-							hidden={!leftOpen}
-							book={book}
-							selected={session.active}
-							section={left}
-							select={setLeft}
-							open={(path) => {
-								void docs.open(path);
-							}}
-						/>
+						{book ? (
+							<LeftSidebar
+								hidden={!leftOpen}
+								book={book}
+								selected={session.active}
+								section={left}
+								select={setLeft}
+								open={(path) => {
+									void docs.open(path);
+								}}
+							/>
+						) : null}
 						<main className="writing">
 							<Tabs
 								tabs={session.tabs}
@@ -149,28 +180,37 @@ export function App() {
 									}
 								}}
 							/>
-							{session.tabs.map((tab) => (
-								<Editor
-									key={tab.path}
-									document={documents.current.get(tab.path)!}
-									tab={tab}
-									active={tab.path === session.active}
-									chapter={isChapter(book.tree, tab.path)}
-									settings={initial.settings}
-									limited={initial.usage.state === 'limit'}
-									nextRequestId={docs.nextRequestId}
-									ready={(handle) => {
-										if (handle) {
-											handles.current.set(tab.path, handle);
-										} else {
-											handles.current.delete(tab.path);
-										}
-									}}
-									cursor={(anchor, head) => docs.cursor(tab.path, anchor, head)}
-								/>
-							))}
+							<div className={`editor-panes ${docs.panes ? 'split' : ''}`}>
+								{session.tabs.map((tab) => (
+									<Editor
+										key={tab.path}
+										document={documents.current.get(tab.path)!}
+										tab={tab}
+										active={tab.path === session.active}
+										visible={docs.panes ? tab.path === docs.panes.left || tab.path === docs.panes.right : tab.path === session.active}
+										side={docs.panes?.right === tab.path ? 'right' : 'left'}
+										focused={() => {
+											if (session.active !== tab.path) {
+												docs.select(tab.path);
+											}
+										}}
+										chapter={book ? isChapter(book.tree, tab.path) : false}
+										settings={initial.settings}
+										limited={initial.usage.state === 'limit'}
+										nextRequestId={docs.nextRequestId}
+										ready={(handle) => {
+											if (handle) {
+												handles.current.set(tab.path, handle);
+											} else {
+												handles.current.delete(tab.path);
+											}
+										}}
+										cursor={(anchor, head) => docs.cursor(tab.path, anchor, head)}
+									/>
+								))}
+							</div>
 						</main>
-						<RightSidebar hidden={!rightOpen} section={right} select={setRight} />
+						{book ? <RightSidebar hidden={!rightOpen} section={right} select={setRight} /> : null}
 					</div>
 				) : (
 					<Welcome recent={initial?.recent ?? []} result={openResult} open={openBook} dismiss={() => setOpenResult(undefined)} />

@@ -26,3 +26,4 @@
 !.prettierrc.json
 
 !src/test/macAssistant.test.ts
+!src/test/reference.test.ts

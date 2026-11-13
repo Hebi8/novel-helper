@@ -756,3 +756,214 @@ select:focus-visible {
 .assistant-merge .cm-mergeViewEditor {
 	overflow: hidden;
 }
+.editor-panes {
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	min-width: 0;
+}
+.editor-panes > .editor {
+	flex: 1;
+	min-width: 0;
+}
+.editor-panes.split {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+}
+.editor-panes.split > .pane-left {
+	grid-column: 1;
+	grid-row: 1;
+}
+.editor-panes.split > .pane-right {
+	grid-column: 2;
+	grid-row: 1;
+	border-left: 1px solid var(--line);
+}
+.editor-panes.split .cm-content {
+	padding-left: 24px;
+	padding-right: 24px;
+}
+.lore-name {
+	text-decoration: underline dotted var(--faint);
+	text-underline-offset: 4px;
+}
+.lore-tooltip {
+	max-width: 380px;
+	max-height: 360px;
+	overflow: auto;
+	color: var(--ink);
+	background: var(--panel);
+}
+.lore-card,
+.outline-card {
+	margin: 10px 12px;
+	padding: 12px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--paper);
+}
+.lore-card h3,
+.outline-card h3 {
+	font-size: 14px;
+	margin: 0 0 6px;
+}
+.lore-card p {
+	margin: 8px 0;
+}
+.lore-meta,
+.outline-link {
+	font-size: 11px;
+	color: var(--soft);
+}
+.reference-text {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	line-height: 1.75;
+}
+.reference-panel {
+	height: 100%;
+	overflow: auto;
+}
+.reference-list {
+	max-height: 45%;
+	overflow: auto;
+}
+.reference-panel .lore-card {
+	max-height: 55%;
+	overflow: auto;
+}
+.panel-search {
+	display: block;
+	width: calc(100% - 24px);
+	margin: 12px;
+}
+.panel-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 8px 12px;
+}
+.panel-actions button,
+.lore-card button,
+.outline-card button {
+	border: 1px solid var(--line);
+	border-radius: 5px;
+	padding: 3px 8px;
+	background: var(--paper);
+}
+.position-summary {
+	padding: 4px 12px;
+	font-size: 12px;
+	color: var(--soft);
+}
+.buoy-mark,
+.status-buoy {
+	color: var(--accent);
+}
+.outline-card.next {
+	opacity: 0.65;
+}
+.outline-row,
+.lore-row {
+	flex-wrap: wrap;
+	text-align: left;
+}
+.outline-row small,
+.lore-row small {
+	white-space: normal;
+}
+.outline-link.broken,
+.panel-error {
+	color: var(--accent);
+}
+.panel-error {
+	padding: 0 12px;
+}
+.tree summary,
+.reference-list summary {
+	cursor: pointer;
+	padding: 5px 12px;
+	color: var(--soft);
+}
+.tree-row > button,
+.tree-row small button {
+	padding: 0;
+	text-align: left;
+}
+.tree-row small {
+	display: flex;
+	gap: 5px;
+}
+.popover-backdrop,
+.menu-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 30;
+	background: #0002;
+	-webkit-app-region: no-drag;
+}
+.menu-backdrop {
+	background: transparent;
+}
+.quick-open,
+.input-popover {
+	margin: 90px auto 0;
+	width: min(560px, 85vw);
+	padding: 16px;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	box-shadow: 0 12px 48px #0003;
+}
+.quick-open input,
+.input-popover input {
+	width: 100%;
+	padding: 8px;
+	border: 1px solid var(--line);
+	border-radius: 5px;
+	background: var(--paper);
+	color: var(--ink);
+}
+.quick-open [role='listbox'] {
+	max-height: 400px;
+	overflow: auto;
+	margin-top: 8px;
+}
+.quick-open [role='option'] {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	padding: 8px;
+	text-align: left;
+	border-radius: 5px;
+}
+.quick-open [aria-selected='true'] {
+	background: var(--hover);
+}
+.quick-open small {
+	color: var(--soft);
+}
+.input-popover {
+	width: 360px;
+}
+.input-popover label {
+	display: block;
+	margin: 12px 0;
+}
+.input-popover h3 {
+	margin-top: 0;
+}
+.context-menu {
+	position: fixed;
+	display: flex;
+	flex-direction: column;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 7px;
+	box-shadow: 0 4px 16px #0003;
+	padding: 5px;
+}
+.context-menu button {
+	text-align: left;
+	padding: 6px 14px;
+}
