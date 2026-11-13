@@ -2,14 +2,18 @@ import { readlink, realpath } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { FileFormatError, readOptional } from '../book/files';
 
-/** ACP hides ordinary errors, so keep the actionable decoding error in its response. */
+/** ACP hides the message of an ordinary error, so one the agent can act on is sent as a request error. */
+export async function agentError(message: string): Promise<Error> {
+	const { RequestError } = await import('@agentclientprotocol/sdk');
+	return RequestError.internalError(undefined, message);
+}
+
 export async function readForAgent(file: string): Promise<string | undefined> {
 	try {
 		return await readOptional(file);
 	} catch (error) {
 		if (error instanceof FileFormatError) {
-			const { RequestError } = await import('@agentclientprotocol/sdk');
-			throw RequestError.internalError(undefined, error.message);
+			throw await agentError(error.message);
 		}
 		throw error;
 	}

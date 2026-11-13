@@ -16,7 +16,7 @@ import { assistantMessages as m } from '../../renderer/strings';
 import { atomicWrite, readOptional } from '../book/files';
 import { bookPath } from '../book/paths';
 import { prepareAgentEnvironment } from './environment';
-import { readForAgent, writeTarget } from './files';
+import { agentError, readForAgent, writeTarget } from './files';
 
 interface Saved {
 	session?: { agent: string; id?: string };
@@ -209,24 +209,33 @@ export class AssistantService {
 			readFile: async (file) => {
 				const full = await writeTarget(resolve(root, file));
 				if (this.stopped || this.disposed || ((await whereIs(root, full)) === 'outside' && !(await this.confirm(m.readOutside, full)))) {
-					throw new Error(m.denied);
+					throw await agentError(m.denied);
 				}
 				const text = await readForAgent(full);
 				if (text === undefined) {
-					throw new Error(m.fileMissing);
+					throw await agentError(m.fileMissing);
 				}
 				this.seenFiles.set(full, this.hash(text));
 				return text;
 			},
 			writeFile: async (file, content) => {
 				const full = await writeTarget(resolve(root, file));
-				if (this.stopped || this.disposed || ((await whereIs(root, full)) !== 'inside' && !(await this.confirm(m.writeUnkept, full)))) {
-					throw new Error(m.denied);
+				if (this.stopped || this.disposed) {
+					throw await agentError(m.denied);
 				}
-				const current = await readForAgent(full);
-				if (current !== undefined && this.hash(current) !== this.seenFiles.get(full)) {
-					const { RequestError } = await import('@agentclientprotocol/sdk');
-					throw RequestError.internalError(undefined, m.fileChanged);
+				const refuseChanged = async () => {
+					const current = await readForAgent(full);
+					if (current !== undefined && this.hash(current) !== this.seenFiles.get(full)) {
+						throw await agentError(m.fileChanged);
+					}
+				};
+				await refuseChanged();
+				if ((await whereIs(root, full)) !== 'inside') {
+					if (!(await this.confirm(m.writeUnkept, full))) {
+						throw await agentError(m.denied);
+					}
+					// The file may have changed while the question was open.
+					await refuseChanged();
 				}
 				await mkdir(dirname(full), { recursive: true });
 				await atomicWrite(full, content);

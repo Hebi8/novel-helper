@@ -242,12 +242,22 @@ test('client filesystem operations read and atomically write inside, while outsi
 	assert.match(said(service), /客户端改的/);
 	assert.equal(await readFile(join(book, chapter), 'utf8'), '客户端改的\n');
 	await writeFile(join(root, 'outside.txt'), '外面');
-	for (const text of ['fsread ../outside.txt', 'fswrite ../outside.txt 不该写']) {
-		const running = service.send(text);
-		const ask = await until(() => itemsOf(service, 'ask').find((item) => !item.answer && !item.closed), 'filesystem permission');
-		service.answer(ask.id, false);
-		await running;
-	}
+	const pending = () => until(() => itemsOf(service, 'ask').find((item) => !item.answer && !item.closed), 'filesystem permission');
+	const reading = service.send('fsread ../outside.txt\nfsread 不存在.md');
+	service.answer((await pending()).id, false);
+	await reading;
+	assert.match(said(service), /could not read \.\.\/outside\.txt: .*未获允许/);
+	assert.match(said(service), /could not read 不存在\.md: .*文件已不存在/);
+	// An existing file the agent has not read is refused before anyone is asked.
+	const asked = itemsOf(service, 'ask').length;
+	await service.send('fswrite ../outside.txt 不该写');
+	assert.equal(itemsOf(service, 'ask').length, asked);
+	assert.match(said(service), /could not write \.\.\/outside\.txt: .*重新读取/);
+	const refused = service.send('fsread ../outside.txt\nfswrite ../outside.txt 不该写');
+	service.answer((await pending()).id, true);
+	service.answer((await pending()).id, false);
+	await refused;
+	assert.match(said(service), /could not write \.\.\/outside\.txt: .*未获允许/);
 	assert.equal(await readFile(join(root, 'outside.txt'), 'utf8'), '外面');
 	const running = service.send('fsread ../outside.txt\nfswrite ../outside.txt 允许这一次');
 	for (let request = 0; request < 2; request++) {
@@ -532,8 +542,14 @@ test('existing and dangling external symlinks require permission; denied writes 
 			await writeFile(target, '外面的原文');
 		}
 		await symlink(target, join(book, alias));
-		let running = service.send(command('fswrite', alias, '未允许的内容'));
-		let ask = await until(() => itemsOf(service, 'ask').find((item) => !item.answer && !item.closed), 'linked write permission');
+		// An existing target has to be read first: a write to a file the agent has not seen is refused without asking.
+		let running = service.send([...(exists ? [command('fsread', alias)] : []), command('fswrite', alias, '未允许的内容')].join('\n'));
+		let ask;
+		if (exists) {
+			ask = await until(() => itemsOf(service, 'ask').find((item) => !item.answer && !item.closed), 'read before the denied write');
+			service.answer(ask.id, true);
+		}
+		ask = await until(() => itemsOf(service, 'ask').find((item) => !item.answer && !item.closed), 'linked write permission');
 		service.answer(ask.id, false);
 		await running;
 		assert.equal(existsSync(target), exists);
