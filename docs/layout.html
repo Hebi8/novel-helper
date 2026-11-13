@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=1440">
+<title>Novel Helper 窗口布局</title><style>
+:root {
+	--paper: #fbfaf7; --chrome: #f2f0eb; --panel: #f6f4ef; --line: #e3e0d8;
+	--ink: #2b2a27; --soft: #6f6b63; --faint: #a39f96; --ghost: #b3aea4;
+	--accent: #b4532a; --accent-bg: #f4e4da; --bubble: #ebe8e1; --hover: #eceae4;
+}
+@media (prefers-color-scheme: dark) {
+	:root {
+		--paper: #1b1b1b; --chrome: #232323; --panel: #202020; --line: #333231;
+		--ink: #dcd9d3; --soft: #a19d95; --faint: #6f6c66; --ghost: #5f5c57;
+		--accent: #e08a5f; --accent-bg: #3a2a22; --bubble: #2c2b2a; --hover: #2a2a29;
+	}
+}
+:root[data-mode=dark] {
+	--paper: #1b1b1b; --chrome: #232323; --panel: #202020; --line: #333231;
+	--ink: #dcd9d3; --soft: #a19d95; --faint: #6f6c66; --ghost: #5f5c57;
+	--accent: #e08a5f; --accent-bg: #3a2a22; --bubble: #2c2b2a; --hover: #2a2a29;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font: 13px/1.5 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; color: var(--ink); background: var(--paper); }
+.window { width: 1440px; height: 900px; display: grid; grid-template-rows: 44px 1fr 28px; overflow: hidden; }
+.top { display: flex; align-items: center; gap: 14px; padding: 0 14px; background: var(--chrome); border-bottom: 1px solid var(--line); color: var(--soft); }
+.lights { display: flex; gap: 8px; margin-right: 6px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+.lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+.top .book { color: var(--ink); font-weight: 600; font-size: 14px; }
+.top .grow { flex: 1; }
+.top svg { display: block; }
+.top .on { color: var(--accent); }
+.body { display: flex; min-height: 0; }
+.col { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.col.l { border-right: 1px solid var(--line); } .col.r { border-left: 1px solid var(--line); }
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tabs { height: 34px; display: flex; align-items: stretch; background: var(--chrome); border-bottom: 1px solid var(--line); color: var(--faint); }
+.tabs span { padding: 0 16px; display: flex; align-items: center; gap: 10px; }
+.tabs span.on { color: var(--ink); background: var(--paper); box-shadow: inset 0 -2px 0 var(--ink); }
+.tabs em { font-style: normal; opacity: .6; }
+.page { flex: 1; overflow: hidden; padding: 44px 0 0; }
+.text { width: 720px; max-width: calc(100% - 96px); margin: 0 auto; font-size: 17px; line-height: 1.95; }
+.text p { margin: 0 0 .9em; }
+.text h1 { font-size: 20px; margin: 0 0 1.1em; font-weight: 600; }
+.text h1 b { color: var(--faint); font-weight: 400; margin-right: .4em; }
+.text u { text-decoration: none; border-bottom: 1px dotted var(--faint); }
+.ghost { color: var(--ghost); }
+.caret { display: inline-block; width: 2px; height: 1.15em; background: var(--accent); vertical-align: -.2em; margin-right: 1px; }
+.foot { display: flex; align-items: center; gap: 18px; padding: 0 14px; background: var(--chrome); border-top: 1px solid var(--line); color: var(--soft); font-size: 12px; }
+.foot .grow { flex: 1; } .foot b { color: var(--accent); font-weight: 500; }
+.seg { display: flex; gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.seg span { flex: 1; text-align: center; padding: 4px 0; border-radius: 6px; color: var(--soft); }
+.seg span.on { background: var(--bubble); color: var(--ink); font-weight: 600; }
+.head { padding: 10px 14px 6px; color: var(--faint); font-size: 12px; display: flex; justify-content: space-between; }
+.tree { padding: 4px 6px; overflow: hidden; }
+.tree div { padding: 4px 8px; border-radius: 6px; white-space: nowrap; display: flex; gap: 8px; align-items: baseline; }
+.tree .d1 { padding-left: 20px; } .tree .d2 { padding-left: 34px; } .tree .d3 { padding-left: 48px; } .tree .d4 { padding-left: 62px; }
+.tree .on { background: var(--hover); font-weight: 600; }
+.tree small { color: var(--faint); font-size: 11px; font-weight: 400; margin-left: auto; }
+.tree .dim { color: var(--faint); }
+.buoy { color: var(--accent); font-weight: 600; }
+.pill { display: inline-block; padding: 0 7px; border-radius: 9px; background: var(--accent-bg); color: var(--accent); font-size: 11px; font-weight: 500; }
+.node { margin: 6px 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); font-size: 13px; line-height: 1.7; }
+.node h4 { margin: 0 0 4px; font-size: 13px; display: flex; gap: 8px; align-items: center; }
+.node.next { opacity: .62; }
+.node p { margin: 0; color: var(--soft); }
+.acts { display: flex; gap: 6px; padding: 4px 12px 10px; flex-wrap: wrap; }
+.btn { padding: 2px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--soft); font-size: 12px; background: var(--paper); }
+.chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.msgs { flex: 1; min-height: 0; overflow: hidden; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; justify-content: flex-end; }
+.me { align-self: flex-end; max-width: 86%; background: var(--bubble); padding: 7px 11px; border-radius: 12px 12px 3px 12px; line-height: 1.6; }
+.ai { line-height: 1.7; color: var(--ink); }
+.change { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--paper); font-size: 12px; color: var(--soft); }
+.change div { display: flex; gap: 8px; align-items: center; }
+.change .acts { padding: 6px 0 0; }
+.input { margin: 0 12px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); padding: 8px 10px; }
+.input .ctx { color: var(--faint); font-size: 11px; margin-bottom: 4px; }
+.input .ph { color: var(--faint); }
+.divider { height: 1px; background: var(--line); position: relative; }
+.pane { display: none; flex: 1; min-height: 0; flex-direction: column; }
+.pane.on { display: flex; }
+.seg[data-switch] span { cursor: pointer; }
+.grp { padding: 10px 14px 2px; color: var(--faint); font-size: 12px; display: flex; justify-content: space-between; }
+.find { margin: 10px 12px 2px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--faint); }
+.card { margin: 8px 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); line-height: 1.7; }
+.card h4 { margin: 0 0 2px; font-size: 14px; display: flex; gap: 8px; align-items: center; }
+.card .meta { color: var(--faint); font-size: 12px; margin-bottom: 6px; }
+.card p { margin: 0 0 6px; color: var(--soft); }
+.tree .tag { color: var(--faint); font-size: 11px; font-weight: 400; margin-left: auto; }
+.divider::after { content: ""; position: absolute; left: 50%; top: -2px; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: var(--line); }
+</style></head>
+<body><div class="window">
+<div class="top">
+	<div class="lights"><i></i><i></i><i></i></div>
+	<span class="on"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M7.5 3.5v13"/></svg></span><span><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M10 3.5v13"/></svg></span>
+	<span class="book">雾港</span><span><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4.5v11M4.5 10h11"/></svg></span>
+	<span class="grow"></span>
+	<span><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5"/><path d="M13 13l4 4"/></svg></span><span><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6.5"/><path d="M10 6.5V10l2.5 1.5"/></svg></span><span><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.5"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg></span><span class="on"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M12.5 3.5v13"/></svg></span>
+</div><div class="body"><div class="col l" style="width:250px">
+		<div class="seg" data-switch><span class="on" data-pane="chapters">章节</span><span data-pane="outline">大纲</span><span data-pane="lore">设定</span></div>
+		<div class="pane on" data-pane="chapters">
+			<div class="head"><span>书的结构</span><span>＋章　＋卷</span></div>
+			
+<div class="tree">
+	<div>全书<small>大纲 ✓</small></div>
+	<div class="d1">第一卷 雾港<small>大纲 ✓</small></div>
+	<div class="d2">第一幕 来信<small>大纲 ✓</small></div>
+	<div class="d3">第1章 雾里来信<small>大纲 ✓ · 摘要 ✓</small></div>
+	<div class="d3 on">第2章 灯塔<small>大纲 ✓ · 摘要 ✗</small></div>
+</div>
+		</div>
+		<div class="pane" data-pane="outline">
+			<div class="head"><span>大纲文件</span><span>＋大纲</span></div>
+			
+<div class="tree">
+	<div>全书<span class="tag">全书大纲</span></div>
+	<div class="d1">第一卷 雾港<span class="tag">卷纲</span></div>
+	<div class="d2">第一幕 来信<span class="tag">3 个要点</span></div>
+	<div class="d3">第1章 雾里来信</div>
+	<div class="d3 on">第2章 灯塔<span class="tag">3 个节点</span></div>
+</div>
+		</div>
+		<div class="pane" data-pane="lore">
+			<div class="head"><span>设定，按类型分组</span><span>＋条目</span></div>
+			
+<div class="grp"><span>人物 · 4</span></div>
+<div class="tree">
+	<div class="d1">林小满<span class="tag">小满、林姑娘</span></div>
+	<div class="d1">陆青<span class="tag">阿青</span></div>
+	<div class="d1">陆青山<span class="tag">青山叔</span></div>
+	<div class="d1">周伯<span class="tag">老周、守塔人</span></div>
+</div>
+<div class="grp"><span>地点 · 2</span></div>
+<div class="tree"><div class="d1">雾港<span class="tag">港城</span></div><div class="d1">北角灯塔<span class="tag">灯塔、旧灯塔</span></div></div>
+<div class="grp"><span>物件 · 1</span></div>
+<div class="tree"><div class="d1">潮汐钟<span class="tag">潮钟</span></div></div>
+<div class="grp"><span>文风 · 1</span></div>
+<div class="tree"><div class="d1">文风<span class="tag">常驻</span></div></div>
+		</div>
+	</div>
+	
+<div class="main">
+	<div class="tabs"><span class="on">第2章 灯塔 <em>×</em></span><span>周伯 <em>×</em></span><span>第2章 灯塔 · 大纲 <em>×</em></span></div>
+	<div class="page"><div class="text">
+		<h1><b>#</b>第2章 灯塔</h1>
+		<p>「那你等着吧。」<u>陆青</u>在石阶上坐下，「我叔说，<u>周伯</u>从风暴那年起就不怎么跟人说话了。」</p>
+		<p>她们一直等到傍晚。雾没有散，反而更浓了，海那边又传来钟声，一下，又一下。</p>
+		<p>门忽然开了一条缝。</p>
+		<p>一只枯瘦的手伸出来，没有去拿鱼篓，而是直直地朝<u>林小满</u>摊开。那只手只有三根手指。</p>
+		<p><u>林小满</u>愣了一下，把信放进那只手里。门后的人低头看了很久，开口时声音又哑又轻：</p>
+		<p><span class="caret"></span><span class="ghost">「明天，带我去北角灯塔。」</span></p>
+		<p class="ghost">林小满没反应过来。陆青在石阶上站起身，鱼篓磕在门框上，响了一声。</p>
+	</div></div>
+</div>
+	<div class="col r" style="width:380px">
+		<div class="seg" data-switch><span class="on" data-pane="outline">看大纲</span><span data-pane="lore">看设定</span><span data-pane="chat">助手</span></div>
+		<div class="pane on" data-pane="outline">
+			
+<div class="tree">
+	<div>第一卷 雾港</div>
+	<div class="d1">第一幕 来信</div>
+	<div class="d2 dim">第1章 雾里来信</div>
+	<div class="d2">第2章 灯塔</div>
+	<div class="d3 dim">等门</div>
+	<div class="d3 on"><span class="buoy">◉</span>周伯收信<small>第2章 写到这里</small></div>
+	<div class="d3">商量渡海</div>
+</div>
+			<div class="head"><span>选中的节点 · 只读</span><span>在中间打开 ↗</span></div>
+			
+<div class="node"><h4>周伯收信 <span class="pill">浮标</span></h4><p>周伯开门收下信，读完后说出第一句话：要林小满明天带他去北角灯塔。</p></div>
+<div class="node next"><h4>商量渡海 <span style="color:var(--faint);font-weight:400">下一个</span></h4><p>陆路会被潮水淹没，陆青提议找她叔叔陆青山摆渡。</p></div>
+<div class="acts"><span class="btn">‹ 后退一格</span><span class="btn">前进一格 ›</span><span class="btn">让 AI 重新定位</span><span class="btn">打开大纲文件</span></div>
+		</div>
+		<div class="pane" data-pane="lore">
+			<div class="find">找设定：名字或别名</div>
+			<div class="tree" style="padding-top:8px">
+				<div><b style="font-weight:600">人物</b><span class="tag">4</span></div>
+				<div class="d1">林小满</div><div class="d1">陆青</div><div class="d1">陆青山</div><div class="d1 on">周伯</div>
+				<div class="dim">地点<span class="tag">2</span></div>
+				<div class="dim">物件<span class="tag">1</span></div>
+				<div class="dim">文风<span class="tag">1</span></div>
+			</div>
+			<div class="head"><span>选中的条目 · 只读</span><span>在中间打开 ↗</span></div>
+			<div class="card">
+				<h4>周伯 <span class="pill">人物</span></h4>
+				<div class="meta">也叫：老周、守塔人</div>
+				<p>北角灯塔最后一任守塔人，七十多岁。风暴那年之后搬到镇子东头的旧屋，很少出门，白天不开门。</p>
+				<p>周伯的左手少了两根手指。镇上的人说是风暴那晚为了拉住铜钟的绳子弄的。</p>
+			</div>
+		</div>
+		<div class="pane" data-pane="chat">
+			<div class="head"><span>助手</span><span>＋ 新会话</span></div>
+			
+<div class="chat">
+	<div class="msgs">
+		<div class="me">周伯开口这句，能不能更像十年没怎么说话的人？</div><div class="ai">可以把句子再削短，让他先停一下再说。设定里他「很少出门，白天不开门」，开口应该是生的：先一个词，再补半句。我改了正文第 31 行，你看看。</div>
+		<div class="change"><div>本轮改动 · 正文/…/第2章 灯塔.md <span style="margin-left:auto">+2 −1</span></div><div class="acts"><span class="btn">看差异</span><span class="btn">退回到这一轮之前</span></div></div>
+		<div class="me">下一节商量渡海，陆青山凭什么不肯摆渡？给我三个理由挑。</div>
+		<div class="ai">按设定和大纲，有三个方向：一是潮汐钟响过，老船工忌讳这时候出海；二是他知道周伯那晚的事，不想再送他回去；三是船本身有问题，他不愿在侄女面前说。</div>
+	</div>
+	<div class="input"><div class="ctx">这次带上：第2章 灯塔 · 第 31 行</div><div class="ph">和助手说点什么…　↩ 发送</div></div>
+</div>
+		</div>
+	</div></div>
+<div class="foot">
+	<span><b>✦ 续写 开</b></span><span>今天 132 次 · $0.21</span><span>浮标：周伯收信</span>
+	<span class="grow"></span><span>本章 412 字</span>
+</div></div><script>
+for (const seg of document.querySelectorAll('.seg[data-switch]')) {
+	seg.addEventListener('click', (event) => {
+		const name = event.target.dataset && event.target.dataset.pane;
+		if (!name) return;
+		const col = seg.parentElement;
+		for (const el of col.querySelectorAll(':scope > .seg span, :scope > .pane')) el.classList.toggle('on', el.dataset.pane === name);
+	});
+}
+</script></body></html>
