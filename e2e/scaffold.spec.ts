@@ -32,7 +32,9 @@ async function withBook(
 		Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined && entry[0] !== 'ELECTRON_RUN_AS_NODE'),
 	);
 	const app = await electron.launch({ cwd: root, env, args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`] });
-	const exited = new Promise<void>((resolve) => app.process().once('exit', () => resolve()));
+	// The handle is taken now: once the application has quit, asking for its process throws.
+	const child = app.process();
+	const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
 	try {
 		const page = await app.firstWindow();
 		await page.waitForLoadState('domcontentloaded');
@@ -43,7 +45,7 @@ async function withBook(
 			app.evaluate(({ BrowserWindow }, command) => BrowserWindow.getAllWindows()[0].webContents.send('window:command', command), command);
 		await run({ page, app, book, root, data, menu });
 	} finally {
-		if (app.process().exitCode === null) {
+		if (child.exitCode === null) {
 			await app.close();
 		}
 		await exited;
@@ -262,6 +264,7 @@ test('focus hides chrome and restores sidebars; every left tree offers Finder re
 
 test('a renamed open chapter can still save edits and close its window normally', async () => {
 	await withBook(async ({ page, app, book }) => {
+		const child = app.process();
 		const tree = page.getByRole('tree', { name: '章节', exact: true });
 		await tree.getByRole('button', { name: '第2章 灯塔', exact: true }).click({ button: 'right' });
 		await page.getByRole('menuitem', { name: '重命名', exact: true }).click();
@@ -277,6 +280,6 @@ test('a renamed open chapter can still save edits and close its window normally'
 		await page.keyboard.insertText('AfterRename');
 		await expect.poll(() => readFile(join(book, path), 'utf8').catch(() => '')).toContain('AfterRename');
 		await page.evaluate(() => window.novel.window.close());
-		await expect.poll(() => app.process().exitCode).toBe(0);
+		await expect.poll(() => child.exitCode).toBe(0);
 	});
 });
