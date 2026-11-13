@@ -1,11 +1,12 @@
 import { test, expect, _electron as electron } from '@playwright/test';
-import { cp, mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fakeServer, stream, openaiText, openaiUsage, OPENAI_END } from '../src/test/fakeServer';
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 test('lore cards, quick open, grouped edits, manual buoys, split and last-request report', async () => {
-	const root = await mkdtemp(join(tmpdir(), 'novel-reference-e2e-'));
+	// Saved tabs are keyed by the book's real path, and the temporary directory sits behind a symlink.
+	const root = await realpath(await mkdtemp(join(tmpdir(), 'novel-reference-e2e-')));
 	const book = join(root, 'book');
 	const data = join(root, 'data');
 	await cp(resolve('examples'), book, { recursive: true });
@@ -33,13 +34,16 @@ test('lore cards, quick open, grouped edits, manual buoys, split and last-reques
 	const exited = new Promise<void>((resolve) => app.process().once('exit', () => resolve()));
 	try {
 		const page = await app.firstWindow();
+		// Menu shortcuts are handled by the system menu, which synthetic key presses do not reach.
+		const menu = (command: string) =>
+			app.evaluate(({ BrowserWindow }, command) => BrowserWindow.getAllWindows()[0].webContents.send('window:command', command), command);
 		await page.waitForLoadState('domcontentloaded');
 		await expect(page.locator('.status-buoy')).toContainText('周伯收信');
 		await expect(page.locator('.sidebar.right .buoy-mark')).toContainText('写到这里');
 		await expect(page.locator('.sidebar.right .position-summary')).toContainText('周伯收信');
 		expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every((window) => !window.isVisible()))).toBe(true);
 		const name = page.locator('.editor:visible .lore-name').filter({ hasText: '林小满' }).first();
-		await name.hover();
+		await name.hover({ position: { x: 3, y: 12 } });
 		await expect(page.locator('.lore-tooltip')).toContainText('林小满');
 		await page.keyboard.press('Escape');
 		await expect(page.locator('.lore-tooltip')).toHaveCount(0);
@@ -54,7 +58,7 @@ test('lore cards, quick open, grouped edits, manual buoys, split and last-reques
 		await page.keyboard.press('F12');
 		await expect(page.locator('.tabs [aria-selected=true]')).toContainText('林小满');
 		await expect(page.locator('.editor:visible .cm-content')).toContainText('aliases:');
-		await page.keyboard.press('Meta+p');
+		await menu('quickOpen');
 		await page.getByRole('textbox', { name: '快速打开', exact: true }).fill('潮汐');
 		await page.keyboard.press('Enter');
 		await expect(page.locator('.tabs [aria-selected=true]')).toContainText('潮汐钟');
@@ -71,26 +75,27 @@ test('lore cards, quick open, grouped edits, manual buoys, split and last-reques
 		await expect.poll(async () => JSON.parse(await readFile(buoyFile, 'utf8')).marks.length).toBe(originalMarks.length + 1);
 		expect(JSON.parse(await readFile(buoyFile, 'utf8')).marks.at(-1).by).toBe('manual');
 		await expect(page.locator('.status-buoy')).toContainText('商量渡海');
-		await page.keyboard.press('Meta+Backslash');
+		await menu('split');
 		await expect(page.locator('.editor-panes.split')).toBeVisible();
 		await expect(page.locator('.editor:visible')).toHaveCount(2);
-		await page.keyboard.press('Meta+Backslash');
+		await menu('split');
 		await expect(page.locator('.editor:visible')).toHaveCount(1);
 		await page.getByRole('tab').filter({ hasText: '第2章 灯塔' }).click();
 		await page.locator('.editor:visible .cm-content').click();
 		await page.keyboard.press('Meta+ArrowDown');
 		await page.keyboard.press('Alt+Backslash');
 		await expect(page.locator('.ghost-text')).toContainText('门后传来一声叹息。');
-		await app.evaluate(({ Menu, BrowserWindow }) => {
-			const menu = Menu.getApplicationMenu()!.items.find((item) => item.label === '续写')!.submenu!;
-			const item = menu.items.find((item) => item.label === '上次发给模型的内容')!;
-			if (item.label !== '上次发给模型的内容') {
-				throw new Error('Missing report menu item');
-			}
-			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'report');
-		});
+		expect(
+			await app.evaluate(({ Menu }) =>
+				Menu.getApplicationMenu()!
+					.items.find((item) => item.label === '续写')!
+					.submenu!.items.some((item) => item.label === '上次发给模型的内容'),
+			),
+		).toBe(true);
+		await menu('report');
 		await expect(page.locator('.tabs [aria-selected=true]')).toContainText('上次发给模型的内容');
-		await expect(page.locator('.editor:visible .cm-content')).toContainText('商量渡海');
+		// The editor only renders the lines in view; the buoy's place in the request is checked on the server below.
+		await expect(page.locator('.editor:visible .cm-content')).toContainText('用到的条目');
 		await expect(page.locator('.editor:visible .cm-content')).toHaveAttribute('contenteditable', 'false');
 		expect(server.received.length).toBeGreaterThan(0);
 		expect(JSON.stringify(server.received.at(-1)!.body)).toContain('商量渡海');
