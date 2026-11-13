@@ -1,104 +1,74 @@
 import { Prec, StateEffect, StateField } from '@codemirror/state';
-import {
-	Decoration,
-	EditorView,
-	ViewPlugin,
-	hoverTooltip,
-	closeHoverTooltips,
-	keymap,
-	showTooltip,
-	type DecorationSet,
-	type Tooltip,
-} from '@codemirror/view';
+import { Decoration, EditorView, ViewPlugin, keymap, showTooltip, type DecorationSet, type Tooltip } from '@codemirror/view';
 import { createRoot } from 'react-dom/client';
 import type { OpenOptions } from '../../shared/api';
 import type { LoreEntry } from '../../core/library';
 import { LoreCard } from './LoreCard';
 import { VisibleLore } from './matches';
+export const updateLore = StateEffect.define<readonly LoreEntry[]>();
+interface Card {
+	from: number;
+	to: number;
+	ids: string[];
+	source: 'hover' | 'keyboard';
+}
 export function loreExtension(entries: readonly LoreEntry[], open: (path: string, options?: OpenOptions) => Promise<void>) {
-	const lore = new VisibleLore(entries);
-	const byId = new Map(entries.map((entry) => [entry.id, entry]));
-	let cardIds: string[] = [];
-	const setCard = StateEffect.define<Tooltip | null>();
-	const card = StateField.define<Tooltip | null>({
+	const catalog = StateField.define<VisibleLore>({
+		create: () => new VisibleLore(entries),
+		update: (value, transaction) => {
+			for (const effect of transaction.effects) {
+				if (effect.is(updateLore)) {
+					return new VisibleLore(effect.value);
+				}
+			}
+			return value;
+		},
+	});
+	const setCard = StateEffect.define<Card | null>();
+	const card = StateField.define<Card | null>({
 		create: () => null,
 		update: (value, transaction) => {
 			for (const effect of transaction.effects) {
 				if (effect.is(setCard)) {
 					return effect.value;
 				}
+				if (effect.is(updateLore) && value) {
+					const ids = value.ids.filter((id) => effect.value.some((entry) => entry.id === id));
+					return ids.length ? { ...value, ids } : null;
+				}
 			}
 			return transaction.docChanged || transaction.selection ? null : value;
 		},
-		provide: (field) => showTooltip.from(field),
 	});
-	const close = (view: EditorView) => {
-		view.dispatch({ effects: closeHoverTooltips });
+	const close = (view: EditorView, focus = false) => {
 		view.dispatch({ effects: setCard.of(null) });
-		cardIds = [];
-		view.focus();
+		if (focus) {
+			view.focus();
+		}
 	};
 	const at = (view: EditorView, position: number) => {
 		const line = view.state.doc.lineAt(position);
-		const match = lore.matcher.at(line.text, position - line.from);
+		const match = view.state.field(catalog).matcher.at(line.text, position - line.from);
 		return match && { ...match, start: match.start + line.from, end: match.end + line.from };
 	};
-	const tip = (view: EditorView, position: number): Tooltip | null => {
+	const show = (view: EditorView, position: number, source: Card['source']) => {
 		const match = at(view, position);
-		if (!match) {
-			return null;
+		if (match) {
+			view.dispatch({ effects: setCard.of({ from: match.start, to: match.end, ids: match.ids, source }) });
 		}
-		return {
-			pos: match.start,
-			end: match.end,
-			above: true,
-			create: () => {
-				cardIds = match.ids;
-				const dom = document.createElement('div');
-				dom.className = 'lore-tooltip';
-				const root = createRoot(dom);
-				const openCard = (id: string, beside = false) => {
-					close(view);
-					open(id, { beside });
-				};
-				root.render(
-					<>
-						{match.ids.map((id) => (
-							<LoreCard key={id} entry={byId.get(id)!} open={() => openCard(id)} />
-						))}
-					</>,
-				);
-				dom.addEventListener('keydown', (event) => {
-					if (event.key === 'Escape') {
-						event.preventDefault();
-						close(view);
-					}
-					if (event.metaKey && event.key === 'Enter') {
-						event.preventDefault();
-						openCard(match.ids[0], event.altKey);
-					}
-				});
-				return {
-					dom,
-					destroy: () => {
-						root.unmount();
-						cardIds = [];
-					},
-				};
-			},
-		};
-	};
-	const show = (view: EditorView) => {
-		const tooltip = tip(view, view.state.selection.main.head);
-		if (!tooltip) {
-			return false;
-		}
-		view.dispatch({ effects: closeHoverTooltips });
-		view.dispatch({ effects: setCard.of(tooltip) });
 		return true;
 	};
-	const openAt = (view: EditorView, beside: boolean) => {
-		const match = at(view, view.state.selection.main.head);
+	const openCard = (view: EditorView, beside: boolean) => {
+		const id = view.state.field(card)?.ids[0];
+		if (!id) {
+			return false;
+		}
+		close(view, true);
+		void open(id, { beside });
+		return true;
+	};
+	const openAt = (view: EditorView, beside: boolean, position = view.state.selection.main.head) => {
+		const match = at(view, position);
 		if (!match) {
 			return false;
 		}
@@ -111,63 +81,156 @@ export function loreExtension(entries: readonly LoreEntry[], open: (path: string
 	};
 	const marks = (view: EditorView) =>
 		Decoration.set(
-			lore.find(view.state.doc, view.visibleRanges).map((match) => Decoration.mark({ class: 'lore-name' }).range(match.start, match.end)),
+			view.state
+				.field(catalog)
+				.find(view.state.doc, view.visibleRanges)
+				.map((match) => Decoration.mark({ class: 'lore-name' }).range(match.start, match.end)),
 			true,
 		);
-	return [
-		card,
-		ViewPlugin.fromClass(
-			class {
-				decorations: DecorationSet;
-				constructor(view: EditorView) {
-					this.decorations = marks(view);
-				}
-				update(update: import('@codemirror/view').ViewUpdate) {
-					if (update.docChanged || update.viewportChanged) {
-						this.decorations = marks(update.view);
+	const hover = ViewPlugin.fromClass(
+		class {
+			decorations: DecorationSet;
+			timer?: ReturnType<typeof setTimeout>;
+			element?: Element;
+			outside = (event: PointerEvent) => {
+				if (!this.view.dom.contains(event.target as Node)) {
+					this.stop();
+					if (this.view.state.field(card)) {
+						close(this.view);
 					}
 				}
-			},
-			{ decorations: (plugin) => plugin.decorations },
-		),
-		hoverTooltip((view, position) => tip(view, position), { hoverTime: 400 }),
+			};
+			constructor(readonly view: EditorView) {
+				this.decorations = marks(view);
+				document.addEventListener('pointerdown', this.outside);
+				view.dom.addEventListener('mousemove', this.move);
+				view.dom.addEventListener('mouseleave', this.leave);
+				view.dom.addEventListener('focusout', this.loseFocus);
+			}
+			update(update: import('@codemirror/view').ViewUpdate) {
+				if (update.docChanged || update.viewportChanged || update.startState.field(catalog) !== update.state.field(catalog)) {
+					this.decorations = marks(update.view);
+				}
+				if (
+					update.docChanged ||
+					update.startState.field(catalog) !== update.state.field(catalog) ||
+					update.state.field(card)?.source === 'keyboard'
+				) {
+					this.stop();
+				}
+			}
+			stop() {
+				clearTimeout(this.timer);
+				this.element = undefined;
+			}
+			move = (event: MouseEvent) => {
+				if (this.view.state.field(card)?.source === 'keyboard') {
+					return;
+				}
+				const target = event.target as Element;
+				const element = target.closest('.lore-name');
+				if (element === this.element) {
+					return;
+				}
+				this.stop();
+				if (element && this.view.contentDOM.contains(element)) {
+					this.element = element;
+					this.timer = setTimeout(() => show(this.view, this.view.posAtDOM(element), 'hover'), 400);
+				} else if (!target.closest('.lore-tooltip') && this.view.state.field(card)?.source === 'hover') {
+					this.timer = setTimeout(() => {
+						if (this.view.state.field(card)?.source === 'hover') {
+							close(this.view);
+						}
+					}, 400);
+				}
+			};
+			leave = () => {
+				this.stop();
+				if (this.view.state.field(card)?.source === 'hover') {
+					close(this.view);
+				}
+			};
+			loseFocus = (event: FocusEvent) => {
+				if (!this.view.dom.contains(event.relatedTarget as Node | null)) {
+					this.stop();
+					if (this.view.state.field(card)) {
+						close(this.view);
+					}
+				}
+			};
+			destroy() {
+				this.stop();
+				document.removeEventListener('pointerdown', this.outside);
+				this.view.dom.removeEventListener('mousemove', this.move);
+				this.view.dom.removeEventListener('mouseleave', this.leave);
+				this.view.dom.removeEventListener('focusout', this.loseFocus);
+			}
+		},
+		{
+			decorations: (plugin) => plugin.decorations,
+		},
+	);
+	return [
+		catalog,
+		card,
+		hover,
+		showTooltip.compute([card, catalog], (state): Tooltip | null => {
+			const current = state.field(card);
+			if (!current) {
+				return null;
+			}
+			const byId = new Map(state.field(catalog).entries.map((entry) => [entry.id, entry]));
+			return {
+				pos: current.from,
+				end: current.to,
+				above: true,
+				create: (view) => {
+					const dom = document.createElement('div');
+					dom.className = 'lore-tooltip';
+					const root = createRoot(dom);
+					root.render(
+						<>
+							{current.ids.map((id) => (
+								<LoreCard
+									key={id}
+									entry={byId.get(id)!}
+									open={() => {
+										close(view, true);
+										void open(id);
+									}}
+								/>
+							))}
+						</>,
+					);
+					dom.addEventListener('keydown', (event) => {
+						if (event.key === 'Escape' && !event.isComposing) {
+							event.preventDefault();
+							close(view, true);
+						}
+						if (event.metaKey && event.key === 'Enter') {
+							event.preventDefault();
+							openCard(view, event.altKey);
+						}
+					});
+					return { dom, destroy: () => root.unmount() };
+				},
+			};
+		}),
 		Prec.highest(
 			keymap.of([
-				{ key: 'Mod-i', run: show },
-				{ key: 'Mod-k Mod-i', run: show },
+				{ key: 'Mod-i', run: (view) => show(view, view.state.selection.main.head, 'keyboard') },
+				{ key: 'Mod-k Mod-i', run: (view) => show(view, view.state.selection.main.head, 'keyboard') },
 				{ key: 'F12', run: (view) => openAt(view, false) },
 				{ key: 'Alt-F12', run: (view) => openAt(view, true) },
-				{
-					key: 'Mod-Enter',
-					run: (view) => {
-						const id = cardIds[0];
-						if (!id) {
-							return false;
-						}
-						close(view);
-						open(id);
-						return true;
-					},
-				},
-				{
-					key: 'Alt-Mod-Enter',
-					run: (view) => {
-						const id = cardIds[0];
-						if (!id) {
-							return false;
-						}
-						close(view);
-						open(id, { beside: true });
-						return true;
-					},
-				},
+				{ key: 'Mod-Enter', run: (view) => openCard(view, false) },
+				{ key: 'Alt-Mod-Enter', run: (view) => openCard(view, true) },
 				{
 					key: 'Escape',
 					run: (view) => {
-						if (!cardIds.length) {
+						if (!view.state.field(card)) {
 							return false;
 						}
-						close(view);
+						close(view, true);
 						return true;
 					},
 				},
@@ -178,18 +241,12 @@ export function loreExtension(entries: readonly LoreEntry[], open: (path: string
 				if (!event.metaKey) {
 					return false;
 				}
-				const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
-				const match = position === null ? undefined : at(view, position);
-				if (!match) {
+				const element = (event.target as Element).closest('.lore-name');
+				if (!element) {
 					return false;
 				}
 				event.preventDefault();
-				void (async () => {
-					for (const id of match.ids) {
-						await open(id, { beside: event.altKey });
-					}
-				})();
-				return true;
+				return openAt(view, event.altKey, view.posAtDOM(element));
 			},
 		}),
 	];

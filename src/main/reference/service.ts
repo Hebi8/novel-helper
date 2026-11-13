@@ -91,19 +91,27 @@ export async function openCompanion(index: BookIndex, nodePath: string, kind: 'o
 	const node = find(index.book.tree)!;
 	const root = index.library.roots(kind)[0] ?? defaults[kind === 'outline' ? 'files.outlines' : 'files.summaries'].flatMap(globFolders)[0];
 	const path = bookPath(node[kind] ?? [root, ...node.dirs, `${node.name}.md`].join('/'));
-	await index.mutate(path, (raw) => raw ?? '');
+	await index.mutate(path, (raw) => (raw === undefined ? '' : undefined));
 	return path;
 }
 export async function quickItems(index: BookIndex): Promise<QuickItem[]> {
 	const data = await referenceData(index);
-	const chapters: QuickItem[] = index.library.chapterList().map((path) => ({ path, title: stem(path), aliases: [], kind: 'chapter' }));
-	const lore: QuickItem[] = data.entries.map((entry) => ({ path: entry.id, title: entry.name, aliases: entry.aliases, kind: 'lore' }));
+	const chapters: QuickItem[] = index.library
+		.chapterList()
+		.map((path) => ({ id: `chapter:${path}`, path, title: stem(path), aliases: [], kind: 'chapter' }));
+	const lore: QuickItem[] = data.entries.map((entry) => ({
+		id: `lore:${entry.id}`,
+		path: entry.id,
+		title: entry.name,
+		aliases: entry.aliases,
+		kind: 'lore',
+	}));
 	const outline: QuickItem[] = data.nodes
 		.filter((node) => node.file)
-		.map((node) => ({ path: node.file!, title: node.title, aliases: [], kind: 'outline', line: node.line }));
+		.map((node) => ({ id: `outline:${node.id}`, path: node.file!, title: node.title, aliases: [], kind: 'outline', line: node.line }));
 	const known = new Set([...chapters, ...lore, ...outline].map((item) => item.path));
 	const others: QuickItem[] = (await scanFiles(index.root, ''))
 		.filter((path) => !known.has(path))
-		.map((path) => ({ path, title: stem(path), aliases: [], kind: 'file' }));
+		.map((path) => ({ id: `file:${path}`, path, title: stem(path), aliases: [], kind: 'file' }));
 	return [...chapters, ...lore, ...outline, ...others];
 }

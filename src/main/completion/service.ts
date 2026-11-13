@@ -17,6 +17,14 @@ export class CompletionService {
 	private runs = new Map<string, RunRecord>();
 	onPositionChanged: (root: string) => void = () => {};
 	onReportChanged: () => void = () => {};
+	private running = new Map<string, AbortController>();
+	private lastShown = new Map<string, { key: string; text: string }>();
+	private active = 0;
+	private closed = new Map<string, Promise<void>>();
+	private writes = new Set<Promise<void>>();
+	private problem?: string;
+	private missingKey = false;
+	onChanged: (status: UsageStatus) => void = () => {};
 	buoys(index: BookIndex): Buoys {
 		let service = this.positions.get(index.root);
 		if (!service) {
@@ -30,8 +38,8 @@ export class CompletionService {
 		}
 		return service;
 	}
-	async closeBook(root: string): Promise<void> {
-		await this.positions.get(root)?.dispose();
+	closeBook(root: string): void {
+		this.positions.get(root)?.dispose();
 		this.positions.delete(root);
 	}
 	async report(owner: string, kind: ReportKind): Promise<string> {
@@ -51,14 +59,6 @@ export class CompletionService {
 			translateReport,
 		);
 	}
-	private running = new Map<string, AbortController>();
-	private lastShown = new Map<string, { key: string; text: string }>();
-	private active = 0;
-	private closed = new Map<string, Promise<void>>();
-	private writes = new Set<Promise<void>>();
-	private problem?: string;
-	private missingKey = false;
-	onChanged: (status: UsageStatus) => void = () => {};
 	constructor(
 		readonly settings: SettingsStore,
 		readonly usage: UsageStore,
@@ -180,14 +180,15 @@ export class CompletionService {
 						.map(async (level) => ({
 							name: level.name,
 							book: level.path === '',
-							outline: level.outline ? { path: level.outline, content: await read(level.outline) } : undefined,
+							outline: level.outline ? await index.outlineSource(level.outline) : undefined,
 						})),
 				),
-				outlinePath ? read(outlinePath).then((content) => ({ path: outlinePath, content })) : undefined,
+				outlinePath ? index.outlineSource(outlinePath) : undefined,
 				Promise.all(
 					library.previousChapters(input.path, limits.previousChapters).map(async (path) => {
 						const summary = library.companionOf('summary', path);
-						return summary ? { path, summary: await read(summary) } : { path, text: await read(path) };
+						const content = summary ? await read(summary) : '';
+						return content.trim() ? { path, summary: content } : { path, text: await read(path) };
 					}),
 				),
 			]);

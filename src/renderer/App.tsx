@@ -9,7 +9,6 @@ import { Tabs } from './tabs/Tabs';
 import { StatusBar } from './statusbar/StatusBar';
 import { Editor } from './editor/Editor';
 import { useDocuments } from './editor/useDocuments';
-import { ConflictBar } from './editor/ConflictBar';
 import { TopBar } from './shell/TopBar';
 import { Welcome } from './shell/Welcome';
 import { commands } from './shell/commands';
@@ -108,6 +107,7 @@ export function App() {
 				buoy: buoy?.chapter === chapter.current ? buoy : undefined,
 				chapter: chapter.current,
 				split: docs.toggleSplit,
+				focusEditor: docs.focus,
 				find: actions.find,
 				quickOpen: () => setQuick(true),
 				report: docs.openReport,
@@ -172,14 +172,7 @@ export function App() {
 									void docs.close(path);
 								}}
 							/>
-							<ConflictBar
-								document={active}
-								reload={() => {
-									if (active) {
-										handles.current.get(active.path)?.reload();
-									}
-								}}
-							/>
+
 							<div className={`editor-panes ${docs.panes ? 'split' : ''}`}>
 								{session.tabs.map((tab) => (
 									<Editor

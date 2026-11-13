@@ -6,30 +6,43 @@ export function OutlinePanel() {
 	const paths = [...workspace.reference.outlines].sort(comparePaths);
 	const branch = (prefix: string, depth: number) => {
 		const segments = [...new Set(paths.filter((path) => path.startsWith(prefix)).map((path) => path.slice(prefix.length).split('/')[0]))];
-		return segments.map((name) => {
-			const path = prefix + name;
-			const file = paths.includes(path);
-			return (
-				<div key={path} role="treeitem">
-					{file ? (
-						<button
-							className="tree-row"
-							style={{ paddingLeft: 12 + depth * 14 }}
-							onClick={() => {
-								void workspace.open(path);
-							}}
-						>
-							{name.replace(/\.(md|txt)$/, '')}
-						</button>
-					) : (
-						<details open>
-							<summary style={{ paddingLeft: 12 + depth * 14 }}>{name}</summary>
-							<div role="group">{branch(path + '/', depth + 1)}</div>
-						</details>
-					)}
-				</div>
-			);
-		});
+		const folders = segments.filter((name) => !paths.includes(prefix + name));
+		const merged = new Set(
+			folders.flatMap((folder) => segments.filter((name) => name.replace(/\.(md|txt)$/, '') === folder && name !== folder).slice(0, 1)),
+		);
+		return segments
+			.filter((name) => !merged.has(name))
+			.map((name) => {
+				const path = prefix + name;
+				const folder = folders.includes(name);
+				const file = folder ? [...merged].find((file) => file.replace(/\.(md|txt)$/, '') === name) : name;
+				const label = file ? (
+					<button
+						onClick={(event) => {
+							event.preventDefault();
+							void workspace.open(prefix + file);
+						}}
+					>
+						{name.replace(/\.(md|txt)$/, '')}
+					</button>
+				) : (
+					name
+				);
+				return (
+					<div key={path} role="treeitem">
+						{folder ? (
+							<details open>
+								<summary style={{ paddingLeft: 12 + depth * 14 }}>{label}</summary>
+								<div role="group">{branch(path + '/', depth + 1)}</div>
+							</details>
+						) : (
+							<div className="tree-row" style={{ paddingLeft: 12 + depth * 14 }}>
+								{label}
+							</div>
+						)}
+					</div>
+				);
+			});
 	};
 	return (
 		<div className="tree" role="tree" aria-label={zh.outline}>

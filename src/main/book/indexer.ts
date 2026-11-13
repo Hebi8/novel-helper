@@ -80,6 +80,9 @@ export async function findStories(root: string): Promise<string[]> {
 }
 export class BookIndex {
 	readonly library = new Library(defaults['files.bookNames']);
+	private referenceVersion = 0;
+	private buoyVersion = 0;
+	private referenceContents = new Map<string, string | undefined>();
 	private graph?: { key: string; value: OutlineGraph };
 	private files = new Set<string>();
 	private contents = new Map<string, string>();
@@ -122,7 +125,13 @@ export class BookIndex {
 		await Promise.all(paths.map((path) => this.updateFile(path, false)));
 	}
 	get book(): Book {
-		return { root: this.root, name: basename(this.root), tree: this.library.tree() };
+		return {
+			root: this.root,
+			name: basename(this.root),
+			tree: this.library.tree(),
+			referenceVersion: this.referenceVersion,
+			buoyVersion: this.buoyVersion,
+		};
 	}
 	async usable(): Promise<boolean> {
 		return isUsable(storyState({ valid: true, exists: true, marked: this.marked, hasFiles: !this.library.empty }));
@@ -134,6 +143,7 @@ export class BookIndex {
 			}
 			const path = filename.toString();
 			if (path.startsWith('.novel-helper/buoys/')) {
+				this.buoyVersion++;
 				this.notify();
 				return;
 			}
@@ -199,6 +209,10 @@ export class BookIndex {
 				if (!matchesGlob(path, pattern)) {
 					continue;
 				}
+				if ((kind === 'lore' || kind === 'outline') && (!this.referenceContents.has(path) || this.referenceContents.get(path) !== text)) {
+					this.referenceContents.set(path, text);
+					this.referenceVersion++;
+				}
 				if (kind === 'lore') {
 					if (text !== undefined) {
 						this.library.setLore(path, text);
@@ -210,6 +224,9 @@ export class BookIndex {
 		}
 	}
 	private remove(path: string): void {
+		if (this.referenceContents.delete(path)) {
+			this.referenceVersion++;
+		}
 		this.files.delete(path);
 		this.library.deleteLore(path);
 		for (const kind of ['chapter', 'outline', 'summary'] as const) {
@@ -287,14 +304,34 @@ export class BookIndex {
 			this.changedListeners.forEach((listener) => listener(this.book));
 		}
 	}
+	async outlineSource(path: string): Promise<{ path: string; content: string } | undefined> {
+		try {
+			const content = await readDocument(join(this.root, path));
+			return content && { path, content: content.text };
+		} catch (error) {
+			if (error instanceof FileFormatError || ignored(error)) {
+				return undefined;
+			}
+			throw error;
+		}
+	}
 	async outline(): Promise<OutlineGraph> {
 		const { files, book } = this.library.outlines();
 		const sources = await Promise.all(
-			files.map(async (file) => ({ ...file, content: (await readDocument(join(this.root, file.path)))?.text ?? '' })),
+			files.map(async (file) => {
+				const source = await this.outlineSource(file.path);
+				return source && { ...file, content: source.content };
+			}),
 		);
 		const key = JSON.stringify([sources, book]);
 		if (this.graph?.key !== key) {
-			this.graph = { key, value: buildOutline(sources, { file: book.outline, name: book.name }) };
+			this.graph = {
+				key,
+				value: buildOutline(
+					sources.filter((file) => file !== undefined),
+					{ file: book.outline, name: book.name },
+				),
+			};
 		}
 		return this.graph!.value;
 	}
@@ -302,11 +339,14 @@ export class BookIndex {
 		await this.enqueue(() => this.updateFile(path, true));
 		this.notify();
 	}
-	mutate(path: string, change: (raw: string | undefined) => string): Promise<void> {
+	mutate(path: string, change: (raw: string | undefined) => string | undefined): Promise<void> {
 		return this.enqueue(async () => {
 			const full = join(this.root, path);
 			const before = await readOptional(full);
 			const after = change(before);
+			if (after === undefined) {
+				return;
+			}
 			await mkdir(dirname(full), { recursive: true });
 			await atomicWrite(full, after);
 			await this.updateFile(path, true);

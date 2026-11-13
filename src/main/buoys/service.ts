@@ -32,7 +32,7 @@ import {
 } from '../../core/buoy';
 import { frontmatterLength, stem } from '../../core/text';
 import { costOf, ratesFor, usageKey } from '../../core/usage';
-import { ask } from '../../llm/client';
+import { askPosition } from './request';
 import type { ProviderId } from '../../llm/providers';
 import type { OutlineGraph } from '../../core/outline';
 import type { BuoyAction, BuoyStatus } from '../../shared/api';
@@ -55,6 +55,7 @@ export class Buoys {
 	private running = new Map<string, Promise<unknown>>();
 	private manual = new Set<Promise<unknown>>();
 	private generation = 0;
+	private controllers = new Set<AbortController>();
 	private searchAgainAt = new Map<string, number>();
 	private disposed = false;
 	onChanged: () => void = () => {};
@@ -64,7 +65,7 @@ export class Buoys {
 		private settings: SettingsStore,
 		private usage: UsageStore,
 		private getKey: (provider: ProviderId) => string | undefined,
-		private request: typeof ask = ask,
+		private request: typeof askPosition = askPosition,
 	) {}
 	private serial<T>(work: () => Promise<T>): Promise<T> {
 		const done = this.last.then(work);
@@ -147,22 +148,32 @@ export class Buoys {
 		this.running.set(at.chapter, job);
 		void job.catch(this.onError).finally(() => this.running.delete(at.chapter));
 	}
-	private async ask(prompt: PromptText): Promise<string | undefined> {
+	private async ask(prompt: PromptText, manual = false): Promise<string | undefined> {
 		await this.usage.load();
 		const settings = this.settings.get();
 		const model = this.settings.model();
 		const apiKey = this.getKey(model.provider);
-		if (this.disposed || !settings.enabled || (model.keyRequired && !apiKey) || this.usage.overLimit(settings['usage.dailyLimitUsd'])) {
+		if (
+			this.disposed ||
+			(model.keyRequired && !apiKey) ||
+			(!manual && (!settings.enabled || this.usage.overLimit(settings['usage.dailyLimitUsd'])))
+		) {
 			return;
 		}
 		const generation = this.generation;
-		const answer = await this.request({
-			...model,
-			apiKey,
-			system: prompt.system,
-			user: [{ text: prompt.user, cache: false }],
-			maxTokens: ANSWER_TOKENS,
-		});
+		const controller = new AbortController();
+		this.controllers.add(controller);
+		const answer = await this.request(
+			{
+				...model,
+				apiKey,
+				system: prompt.system,
+				user: [{ text: prompt.user, cache: false }],
+				maxTokens: ANSWER_TOKENS,
+			},
+			controller.signal,
+		);
+		this.controllers.delete(controller);
 		if (answer.usage) {
 			const rates = ratesFor(model.model, new Date(), model.pricing, this.settings.prices());
 			await this.usage.add(
@@ -170,6 +181,9 @@ export class Buoys {
 				answer.usage,
 				rates ? costOf(answer.usage, rates) : undefined,
 			);
+		}
+		if (controller.signal.aborted) {
+			return;
 		}
 		if (answer.error !== undefined) {
 			this.onError(answer.error);
@@ -208,10 +222,10 @@ export class Buoys {
 			await this.commitAnswer(at, choose(position, readJudgement(answer, lists)), 'auto', text);
 		}
 	}
-	private async search(at: ChapterPosition, text: string): Promise<boolean | undefined> {
+	private async search(at: ChapterPosition, text: string, manual = false): Promise<boolean | undefined> {
 		const start = frontmatterLength(text);
 		const from = Math.max(start, text.length - RELOCATE_TEXT_CHARS);
-		const answer = await this.ask(relocatePrompt(at.graph, stem(at.chapter), text.slice(from), from > start));
+		const answer = await this.ask(relocatePrompt(at.graph, stem(at.chapter), text.slice(from), from > start), manual);
 		if (answer === undefined) {
 			return;
 		}
@@ -232,7 +246,7 @@ export class Buoys {
 			if (!text.slice(frontmatterLength(text)).trim()) {
 				throw new Error(zh.buoyNoText);
 			}
-			const job = this.search(at, text);
+			const job = this.search(at, text, true);
 			this.manual.add(job);
 			let found: boolean | undefined;
 			try {
@@ -271,14 +285,14 @@ export class Buoys {
 	}
 	cancel(): void {
 		this.generation++;
+		this.controllers.forEach((controller) => controller.abort());
 	}
 	async drain(): Promise<void> {
 		await Promise.all([...this.running.values(), ...this.manual]);
 		await this.last;
 	}
-	async dispose(): Promise<void> {
+	dispose(): void {
 		this.disposed = true;
 		this.cancel();
-		await this.drain();
 	}
 }

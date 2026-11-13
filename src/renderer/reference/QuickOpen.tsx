@@ -11,7 +11,7 @@ export function QuickOpen({ close }: { close(): void }) {
 	const [selected, setSelected] = useState(0);
 	const [error, setError] = useState('');
 	const input = useRef<HTMLInputElement>(null);
-	const results = useMemo(() => rankQuick(items, query), [items, query]);
+	const results = useMemo(() => rankQuick(items, query).slice(0, 50), [items, query]);
 	useEffect(() => {
 		let alive = true;
 		const previous = document.activeElement as HTMLElement;
@@ -51,7 +51,7 @@ export function QuickOpen({ close }: { close(): void }) {
 				aria-label={zh.quickOpen}
 				className="quick-open"
 				onKeyDown={(event) => {
-					if (event.key === 'Escape') {
+					if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
 						event.stopPropagation();
 						close();
 					}
@@ -82,7 +82,7 @@ export function QuickOpen({ close }: { close(): void }) {
 				<div role="listbox">
 					{results.map((item, i) => (
 						<button
-							key={`${item.path}:${item.line ?? ''}`}
+							key={item.id}
 							role="option"
 							aria-selected={selected === i}
 							onMouseEnter={() => setSelected(i)}

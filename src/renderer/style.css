@@ -762,7 +762,7 @@ select:focus-visible {
 	min-height: 0;
 	min-width: 0;
 }
-.editor-panes > .editor {
+.editor-panes > .editor-pane {
 	flex: 1;
 	min-width: 0;
 }
@@ -966,4 +966,15 @@ select:focus-visible {
 .context-menu button {
 	text-align: left;
 	padding: 6px 14px;
+}
+.cm-editor .cm-tooltip.lore-tooltip {
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.editor-pane {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
 }

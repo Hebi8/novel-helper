@@ -71,7 +71,7 @@ if (!app.requestSingleInstanceLock()) {
 					return;
 				}
 				if (index) {
-					await completion.buoys(index).dispose();
+					completion.buoys(index).dispose();
 				}
 				await completion.drain(String(senderId));
 				closeGate.acknowledge();

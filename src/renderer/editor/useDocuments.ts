@@ -83,8 +83,8 @@ export function useDocuments() {
 		if (current.active) {
 			await documents.current.get(current.active)?.save();
 		}
-		if (options.beside) {
-			setSplit({ left: current.active === path ? undefined : current.active, right: path });
+		if (options.beside && current.active && current.active !== path) {
+			setSplit({ left: current.active, right: path });
 		} else if (panesRef.current && panesRef.current.left !== path && panesRef.current.right !== path) {
 			setSplit(current.active === panesRef.current.right ? { ...panesRef.current, right: path } : { ...panesRef.current, left: path });
 		}
@@ -188,7 +188,7 @@ export function useDocuments() {
 	const toggleSplit = () => {
 		if (panesRef.current) {
 			setSplit(undefined);
-		} else if (sessionRef.current.active) {
+		} else if (sessionRef.current.active && sessionRef.current.tabs.length > 1) {
 			setSplit({
 				left: sessionRef.current.tabs.find((tab) => tab.path !== sessionRef.current.active)?.path,
 				right: sessionRef.current.active,
@@ -212,6 +212,12 @@ export function useDocuments() {
 		}
 	};
 	return {
+		focus: () => {
+			const path = sessionRef.current.active;
+			if (path) {
+				handles.current.get(path)?.view.focus();
+			}
+		},
 		panes,
 		toggleSplit,
 		openReport,
