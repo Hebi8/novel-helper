@@ -1,7 +1,7 @@
 export const zh = {
 	app: 'Novel Helper',
 	nonUtf8: '这个文件不是 UTF-8 编码',
-	mixedLines: '这个文件混用了换行符，不能无损编辑',
+	mixedLines: '这个文件混用了两种换行符',
 	outsideBook: '文件路径不能超出书的文件夹',
 	missingBook: '这个文件夹已不存在，已从最近打开中移除',
 	chapters: '章节',
@@ -38,6 +38,7 @@ export const zh = {
 	clear: '清除',
 	confirm: '确定',
 	cancel: '取消',
+	dismiss: '关闭提示',
 	conflict: '磁盘上的文件已更改',
 	keepMine: '留我的',
 	useDisk: '用磁盘的',

@@ -60,6 +60,7 @@ export type MenuCommand =
 	| 'right:2'
 	| 'flush';
 export interface Bootstrap {
+	openResult?: OpenResult;
 	book?: Book;
 	recent: string[];
 	session: SessionState;

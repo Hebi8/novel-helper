@@ -1,3 +1,6 @@
+import { EditorState, type Transaction, type TransactionSpec } from '@codemirror/state';
+import { EditorView, keymap } from '@codemirror/view';
+import { prose } from '../renderer/editor/prose';
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { initialGhost, transition, type GhostState, type GhostEvent, type Position } from '../renderer/ghost/machine';
@@ -152,4 +155,38 @@ test('returning to a location consults main again; only cancelling composition r
 	m.send({ type: 'move', position: position() });
 	assert.ok(m.send({ type: 'timeout' }).some((action) => action.type === 'request'));
 	assert.equal(m.state.ghost, '');
+});
+test('quote jumps mark user selections and trigger line-end continuation', () => {
+	for (const key of ['Tab', 'Enter', 'right quote']) {
+		let state = EditorState.create({ doc: '「正文」', selection: { anchor: 3 }, extensions: [prose] });
+		let moved: Transaction | undefined;
+		const view = {
+			get state() {
+				return state;
+			},
+			compositionStarted: false,
+			dispatch(spec: TransactionSpec) {
+				moved = state.update(spec);
+				state = moved.state;
+			},
+		} as unknown as EditorView;
+		if (key === 'right quote') {
+			assert.equal(
+				state.facet(EditorView.inputHandler)[0](view, 3, 3, '」', () => state.update({})),
+				true,
+			);
+		} else {
+			const binding = state
+				.facet(keymap)
+				.flat()
+				.find((binding) => binding.key === key)!;
+			assert.equal(binding.run!(view), true);
+		}
+		assert.ok(moved?.isUserEvent('select'));
+		assert.equal(state.doc.toString(), '「正文」');
+		assert.equal(state.selection.main.head, 4);
+		const m = machine(position('「正文」', 3));
+		assert.ok(m.send({ type: 'move', position: position('「正文」', 4) }).some((action) => action.type === 'timer'));
+		assert.ok(m.send({ type: 'timeout' }).some((action) => action.type === 'request'));
+	}
 });

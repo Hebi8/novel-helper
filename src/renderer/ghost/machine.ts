@@ -131,7 +131,6 @@ export function transition(current: GhostState, event: GhostEvent): { state: Gho
 				break;
 			}
 			state.ghost = event.text;
-			state.cached = { key: keyOf(state.position), text: event.text };
 			// Keep the request cancellable while the provider finishes reporting usage.
 			if (event.text) {
 				actions.push({ type: 'show', text: event.text });
@@ -161,7 +160,6 @@ export function transition(current: GhostState, event: GhostEvent): { state: Gho
 				offset: position.offset + text.length,
 			};
 			state.ghost = rest;
-			state.cached = rest ? { key: keyOf(state.position), text: rest } : undefined;
 			if (rest) {
 				actions.push({ type: 'show', text: rest });
 			} else {

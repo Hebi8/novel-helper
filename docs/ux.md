@@ -169,7 +169,7 @@ examples            示例书；测试只用它的临时副本
 - 写文件一律先写临时文件再改名。
 - 启动应用的测试用不需要 key 的本地假服务，不碰钥匙串。
 
-- 主进程各功能分别注册 IPC，注册列表在 `src/main/register.ts`；窗口关闭清理通过 `MainContext.onBookClosed` 登记。
+- 主进程各功能分别注册 IPC，注册列表在 `src/main/register.ts`；窗口关闭清理通过 `MainContext.onBookClosed` 登记；书索引的 `onChanged`、`onFileChanged` 支持多监听，并返回取消监听函数。
 - 左右栏各面板独立，切换或收起只隐藏；面板通过 `useWorkspace().current()` 读取当前文档和选区，通过 `open()`、`saveAll()` 打开和保存。
 - 文档管理、欢迎页、顶栏、冲突条分别独立；界面命令在 `shell/commands.ts` 的表中登记。
 

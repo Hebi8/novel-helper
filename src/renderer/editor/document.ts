@@ -1,3 +1,4 @@
+import { errorMessage } from '../errors';
 import type { AppAPI, DiskFile } from '../../shared/api';
 /** One open document owns its save queue, including writes completed after switching tabs. */
 export class DocumentModel {
@@ -26,7 +27,7 @@ export class DocumentModel {
 	compositionStart(): void {
 		this.composing = true;
 		clearTimeout(this.timer);
-		this.compositionDone = new Promise((resolve) => {
+		this.compositionDone ??= new Promise((resolve) => {
 			this.endComposition = resolve;
 		});
 	}
@@ -48,6 +49,9 @@ export class DocumentModel {
 	get dirty(): boolean {
 		return this.text !== this.base;
 	}
+	get blocksClose(): boolean {
+		return this.dirty || this.conflict !== undefined;
+	}
 	edit(text: string): void {
 		this.text = text;
 		clearTimeout(this.timer);
@@ -62,7 +66,7 @@ export class DocumentModel {
 		clearTimeout(this.timer);
 		this.diskRevision++;
 		if (file.error) {
-			this.error = file.error;
+			this.error = errorMessage(file.error);
 			this.publish();
 			return 'conflict';
 		}
@@ -102,7 +106,7 @@ export class DocumentModel {
 					this.conflict = result.disk;
 				}
 			} catch (error) {
-				this.error = String(error);
+				this.error = errorMessage(error);
 			}
 			this.publish();
 		});

@@ -9,6 +9,7 @@ export function registerWindow(ctx: MainContext): void {
 		const index = ctx.bookFor(event);
 		return {
 			book: index?.book,
+			openResult: ctx.initialResult(event),
 			recent: ctx.windows.value.recent,
 			session: index ? ctx.windows.session(index.root) : { tabs: [] },
 			settings: ctx.settings.get(),

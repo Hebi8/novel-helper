@@ -1,3 +1,4 @@
+import { errorMessage } from './errors';
 import { useEffect, useRef, useState } from 'react';
 import type { Bootstrap, Book, OpenResult } from '../shared/api';
 import { LeftSidebar } from './left/LeftSidebar';
@@ -47,9 +48,12 @@ export function App() {
 				if (alive) {
 					setInitial(data);
 					setBook(data.book);
+					if (data.openResult) {
+						setOpenResult(data.openResult);
+					}
 				}
 			})
-			.catch((error) => setError(String(error)));
+			.catch((error) => setError(errorMessage(error)));
 		const unsubscribes = [
 			window.novel.book.onOpenResult(setOpenResult),
 			window.novel.book.onChanged(setBook),
@@ -70,7 +74,7 @@ export function App() {
 		void window.novel.book
 			.open(root)
 			.then(setOpenResult)
-			.catch((error) => setError(String(error)));
+			.catch((error) => setError(errorMessage(error)));
 	};
 	const active = session.active ? documents.current.get(session.active) : undefined;
 
@@ -88,12 +92,21 @@ export function App() {
 				<TopBar name={book?.name} left={actions['left:toggle']} right={actions['right:toggle']} />
 				{openResult?.kind === 'error' && book ? (
 					<div role="alert" className="notice">
-						{openResult.message}
+						{errorMessage(openResult.message)}
+						<button onClick={() => setOpenResult(undefined)}>{zh.dismiss}</button>
 					</div>
 				) : null}
 				{error || docs.error ? (
 					<div className="notice" role="alert">
 						{error || docs.error}
+						<button
+							onClick={() => {
+								setError('');
+								docs.clearError();
+							}}
+						>
+							{zh.dismiss}
+						</button>
 					</div>
 				) : null}
 				{book && openResult?.kind === 'choices' ? (
@@ -160,7 +173,7 @@ export function App() {
 						<RightSidebar hidden={!rightOpen} section={right} select={setRight} />
 					</div>
 				) : (
-					<Welcome recent={initial?.recent ?? []} result={openResult} open={openBook} />
+					<Welcome recent={initial?.recent ?? []} result={openResult} open={openBook} dismiss={() => setOpenResult(undefined)} />
 				)}
 				{initial ? (
 					<StatusBar

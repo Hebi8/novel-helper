@@ -26,15 +26,21 @@ async function children(directory: string) {
 		throw error;
 	}
 }
+function visiblePath(path: string): boolean {
+	return path.split('/').every((segment) => !segment.startsWith('.'));
+}
+function proseFile(path: string): boolean {
+	return visiblePath(path) && /\.(md|txt)$/.test(path);
+}
 export async function scanFiles(root: string, relative: string): Promise<string[]> {
 	const entries = await children(join(root, relative));
 	return (
 		await Promise.all(
 			entries
-				.filter((entry) => !entry.name.startsWith('.'))
+				.filter((entry) => visiblePath(`${relative}/${entry.name}`))
 				.map(async (entry) => {
 					const path = `${relative}/${entry.name}`;
-					return entry.isDirectory() ? scanFiles(root, path) : entry.isFile() && /\.(md|txt)$/.test(entry.name) ? [path] : [];
+					return entry.isDirectory() ? scanFiles(root, path) : entry.isFile() && proseFile(path) ? [path] : [];
 				}),
 		)
 	).flat();
@@ -72,6 +78,7 @@ export async function findStories(root: string): Promise<string[]> {
 }
 export class BookIndex {
 	readonly library = new Library(defaults['files.bookNames']);
+	private files = new Set<string>();
 	private contents = new Map<string, string>();
 	private lineEndings = new Map<string, LineEnding>();
 	private opened = new Set<string>();
@@ -81,8 +88,23 @@ export class BookIndex {
 	private timer?: ReturnType<typeof setTimeout>;
 	private disposed = false;
 	private marked = false;
-	onChanged: (book: Book) => void = () => {};
-	onFileChanged: (file: DiskFile) => void = () => {};
+	private readonly changedListeners = new Set<(book: Book) => void>();
+	private readonly fileListeners = new Set<(file: DiskFile) => void>();
+	onChanged(listener: (book: Book) => void): () => void {
+		this.changedListeners.add(listener);
+		return () => {
+			this.changedListeners.delete(listener);
+		};
+	}
+	onFileChanged(listener: (file: DiskFile) => void): () => void {
+		this.fileListeners.add(listener);
+		return () => {
+			this.fileListeners.delete(listener);
+		};
+	}
+	private fileChanged(file: DiskFile): void {
+		this.fileListeners.forEach((listener) => listener(file));
+	}
 	constructor(readonly root: string) {}
 	async load(): Promise<void> {
 		try {
@@ -111,7 +133,7 @@ export class BookIndex {
 			if (!roots.some((root) => path === root || path.startsWith(root + '/')) && !this.opened.has(path)) {
 				return;
 			}
-			if (path.endsWith('.tmp')) {
+			if (!visiblePath(path)) {
 				return;
 			}
 			this.pending.add(path);
@@ -124,7 +146,8 @@ export class BookIndex {
 						await this.refreshPath(path);
 					}
 					if (!this.disposed) {
-						this.onChanged(this.book);
+						const book = this.book;
+						this.changedListeners.forEach((listener) => listener(book));
 					}
 				});
 			}, 60);
@@ -143,6 +166,7 @@ export class BookIndex {
 		this.opened.add(path);
 		if (content) {
 			this.lineEndings.set(path, content.lineEnding);
+			this.contents.set(path, content.text);
 		}
 		return { path, text: content?.text ?? '' };
 	}
@@ -160,14 +184,17 @@ export class BookIndex {
 			return { saved: true };
 		});
 	}
-	private add(path: string, text: string): void {
+	private add(path: string, text?: string): void {
+		this.files.add(path);
 		for (const [kind, patterns] of groups) {
 			for (const pattern of patterns) {
 				if (!matchesGlob(path, pattern)) {
 					continue;
 				}
 				if (kind === 'lore') {
-					this.library.setLore(path, text);
+					if (text !== undefined) {
+						this.library.setLore(path, text);
+					}
 				} else {
 					this.library.addFile(kind as FileKind, path, globRootDepth(pattern));
 				}
@@ -175,6 +202,7 @@ export class BookIndex {
 		}
 	}
 	private remove(path: string): void {
+		this.files.delete(path);
 		this.library.deleteLore(path);
 		for (const kind of ['chapter', 'outline', 'summary'] as const) {
 			this.library.deleteFile(kind, path);
@@ -187,9 +215,11 @@ export class BookIndex {
 			content = await readDocument(join(this.root, path));
 		} catch (error) {
 			if (error instanceof FileFormatError || ignored(error)) {
-				this.remove(path);
+				this.library.deleteLore(path);
+				this.contents.delete(path);
+				this.add(path);
 				if (notify && this.opened.has(path)) {
-					this.onFileChanged({ path, text: '', error: String(error) });
+					this.fileChanged({ path, text: '', error: String(error) });
 				}
 				return;
 			}
@@ -199,11 +229,11 @@ export class BookIndex {
 			return;
 		}
 		const previous = this.contents.get(path);
-		const tracked = this.contents.has(path) || this.opened.has(path);
+		const tracked = this.files.has(path) || this.contents.has(path) || this.opened.has(path);
 		if (!content) {
 			this.remove(path);
 			if (notify && tracked) {
-				this.onFileChanged({ path, text: '' });
+				this.fileChanged({ path, text: '' });
 			}
 			return;
 		}
@@ -211,7 +241,7 @@ export class BookIndex {
 		this.contents.set(path, content.text);
 		this.add(path, content.text);
 		if (notify && tracked && previous !== content.text) {
-			this.onFileChanged({ path, text: content.text });
+			this.fileChanged({ path, text: content.text });
 		}
 	}
 	private async refreshPath(path: string): Promise<void> {
@@ -224,7 +254,7 @@ export class BookIndex {
 		if (info?.isDirectory()) {
 			const paths = await scanFiles(this.root, path);
 			const existing = new Set(paths);
-			for (const prior of this.contents.keys()) {
+			for (const prior of this.files) {
 				if (prior.startsWith(path + '/') && !existing.has(prior)) {
 					await this.updateFile(prior, true);
 				}
@@ -232,10 +262,10 @@ export class BookIndex {
 			for (const file of paths) {
 				await this.updateFile(file, true);
 			}
-		} else if (info?.isFile() || /\.(md|txt)$/.test(path)) {
+		} else if (proseFile(path) && (info?.isFile() || !info)) {
 			await this.updateFile(path, true);
 		} else {
-			const known = new Set([...this.contents.keys(), ...this.opened]);
+			const known = new Set([...this.files, ...this.opened]);
 			for (const file of known) {
 				if (file.startsWith(path + '/')) {
 					await this.updateFile(file, true);
@@ -247,6 +277,8 @@ export class BookIndex {
 		this.disposed = true;
 		clearTimeout(this.timer);
 		this.watcher?.close();
+		this.changedListeners.clear();
+		this.fileListeners.clear();
 	}
 }
 export async function inspectBook(root: string): Promise<{ index?: BookIndex; roots: string[] }> {

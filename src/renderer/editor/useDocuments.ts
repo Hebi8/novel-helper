@@ -1,3 +1,4 @@
+import { errorMessage } from '../errors';
 import { useRef, useState } from 'react';
 import type { DiskFile, SessionState } from '../../shared/api';
 import type { EditorHandle } from './Editor';
@@ -58,9 +59,10 @@ export function useDocuments() {
 		try {
 			await load(path);
 		} catch (error) {
-			setError(String(error));
+			setError(errorMessage(error));
 			return;
 		}
+		setError('');
 		const current = sessionRef.current;
 		if (current.active) {
 			await documents.current.get(current.active)?.save();
@@ -73,7 +75,7 @@ export function useDocuments() {
 	const close = async (path: string) => {
 		const model = documents.current.get(path)!;
 		await model.save();
-		if (model.dirty || model.conflict !== undefined || model.error) {
+		if (model.blocksClose) {
 			select(path);
 			return;
 		}
@@ -87,7 +89,7 @@ export function useDocuments() {
 	const saveAll = async () => {
 		flushSession();
 		await Promise.all([...documents.current.values()].map((model) => model.save()));
-		const blocked = [...documents.current.values()].find((model) => model.dirty || model.conflict !== undefined || model.error);
+		const blocked = [...documents.current.values()].find((model) => model.blocksClose);
 		if (blocked) {
 			select(blocked.path);
 		}
@@ -100,7 +102,7 @@ export function useDocuments() {
 					await load(tab.path);
 					return tab;
 				} catch (error) {
-					setError(String(error));
+					setError(errorMessage(error));
 					return undefined;
 				}
 			}),
@@ -162,6 +164,7 @@ export function useDocuments() {
 		blur,
 		current,
 		error,
+		clearError: () => setError(''),
 		dispose,
 	};
 }

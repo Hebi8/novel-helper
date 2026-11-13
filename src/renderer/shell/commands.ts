@@ -34,6 +34,7 @@ export function commands(target: CommandTarget): Record<MenuCommand, () => void>
 		'right:1': () => target.right(1),
 		'right:2': () => target.right(2),
 		flush: () => {
+			editor()?.view.contentDOM.blur();
 			void docs.saveAll().then((saved) => {
 				if (saved) {
 					window.novel.window.flushed();

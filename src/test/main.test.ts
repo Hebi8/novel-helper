@@ -1,3 +1,5 @@
+import nativeFs = require('node:fs');
+import type { TestContext } from 'node:test';
 import fs = require('node:fs/promises');
 import { bookPath } from '../main/book/paths';
 import { WindowStore } from '../main/window/state';
@@ -71,19 +73,18 @@ test('writes replace a real temporary file and leave no temporary sibling', asyn
 test('external edits notify, own writes do not, stale saves report a conflict', async (t) => {
 	const { book, index } = await fixture(t);
 	const changes: string[] = [];
-	index.onFileChanged = (file) => {
+	index.onFileChanged((file) => {
 		changes.push(file.text);
-	};
+	});
 	index.start();
 	const original = (await index.read(chapter)).text;
 	assert.deepEqual(await index.save(chapter, original + '自己写的。', original), { saved: true });
 	await sleep(180);
 	assert.equal(changes.length, 0);
 	const notified = new Promise<void>((resolve) => {
-		index.onFileChanged = (file) => {
-			changes.push(file.text);
+		index.onFileChanged(() => {
 			resolve();
-		};
+		});
 	});
 	await writeFile(join(book, chapter), '外部写的。');
 	await notified;
@@ -174,22 +175,28 @@ test('IPC book paths reject traversal before any file is read or written', async
 	assert.equal((await index.read(bookPath(chapter))).path, chapter);
 	assert.equal(await readFile(outside, 'utf8'), '外面的文件');
 });
-test('non UTF-8 and mixed-newline files are rejected without changing bytes and skipped by indexing', async (t) => {
+test('unreadable chapter paths remain indexed while opening and saving reject their bytes', async (t) => {
 	const { book, index } = await fixture(t);
 	const bad = '正文/bad.txt';
 	const mixed = '正文/mixed.txt';
 	const bytes = Buffer.from([0xc4, 0xe3, 0xba, 0xc3]);
 	await writeFile(join(book, bad), bytes);
+	await writeFile(join(book, '设定/bad.txt'), bytes);
+	await writeFile(join(book, '大纲/bad.txt'), bytes);
+	await writeFile(join(book, '摘要/bad.txt'), bytes);
 	await writeFile(join(book, mixed), '一\r\n二\n');
 	await assert.rejects(index.read(bad), /不是 UTF-8/);
 	await assert.rejects(index.save(bad, '不能写', '', true), /不是 UTF-8/);
-	await assert.rejects(index.read(mixed), /混用了换行符/);
-	await assert.rejects(index.save(mixed, '不能写', '', true), /混用了换行符/);
+	await assert.rejects(index.read(mixed), /混用了两种换行符/);
+	await assert.rejects(index.save(mixed, '不能写', '', true), /混用了两种换行符/);
 	const scanned = new BookIndex(book);
 	await scanned.load();
-	assert.equal(scanned.library.isChapter(bad), false);
-	assert.equal(scanned.library.isChapter(mixed), false);
+	assert.equal(scanned.library.isChapter(bad), true);
+	assert.equal(scanned.library.isChapter(mixed), true);
 	assert.equal(scanned.library.isChapter(chapter), true);
+	assert.equal(scanned.library.entry('设定/bad.txt'), undefined);
+	assert.equal(scanned.library.companionOf('outline', bad), '大纲/bad.txt');
+	assert.equal(scanned.library.companionOf('summary', bad), '摘要/bad.txt');
 	assert.deepEqual(await readFile(join(book, bad)), bytes);
 	assert.equal(await readFile(join(book, mixed), 'utf8'), '一\r\n二\n');
 	scanned.dispose();
@@ -209,21 +216,21 @@ test('deleting and restoring an opened file emits both changes and restores the 
 	const original = (await index.read(chapter)).text;
 	index.start();
 	const removed = new Promise<void>((resolve) => {
-		index.onFileChanged = (file) => {
+		index.onFileChanged((file) => {
 			if (file.path === chapter && file.text === '') {
 				resolve();
 			}
-		};
+		});
 	});
 	await rm(join(book, chapter));
 	await removed;
 	assert.equal(index.library.isChapter(chapter), false);
 	const restored = new Promise<void>((resolve) => {
-		index.onFileChanged = (file) => {
+		index.onFileChanged((file) => {
 			if (file.path === chapter && file.text === original) {
 				resolve();
 			}
-		};
+		});
 	});
 	await writeFile(join(book, chapter), original);
 	await restored;
@@ -305,4 +312,93 @@ test('a dead renderer never blocks window close waiting for a save acknowledgeme
 	const saved = new CloseGate();
 	saved.acknowledge();
 	assert.equal(saved.needsFlush(), false);
+});
+/** Exercise the watcher callback without asking the OS for a filesystem watcher. */
+function simulatedWatcher(t: TestContext, index: BookIndex) {
+	t.mock.timers.enable({ apis: ['setTimeout'] });
+	let callback!: (event: string, path: string) => void;
+	t.mock.method(nativeFs, 'watch', (...args: Parameters<typeof nativeFs.watch>) => {
+		callback = args[args.length - 1] as typeof callback;
+		return { close() {} } as nativeFs.FSWatcher;
+	});
+	index.start();
+	return async (paths: string[]) => {
+		const changed = new Promise<void>((resolve) => {
+			const off = index.onChanged(() => {
+				off();
+				resolve();
+			});
+		});
+		for (const path of paths) {
+			callback('change', path);
+		}
+		t.mock.timers.tick(60);
+		await changed;
+	};
+}
+test('unchanged writes to opened auxiliary files do not notify', async (t) => {
+	const { book, index } = await fixture(t);
+	const path = 'notes.md';
+	await writeFile(join(book, path), '笔记');
+	assert.equal((await index.read(path)).text, '笔记');
+	const emit = simulatedWatcher(t, index);
+	const changed: string[] = [];
+	index.onFileChanged((file) => changed.push(file.text));
+	await atomicWrite(join(book, path), '笔记');
+	await emit([path]);
+	assert.equal(changed.length, 0);
+	await atomicWrite(join(book, path), '新笔记');
+	await emit([path]);
+	assert.deepEqual(changed, ['新笔记']);
+});
+test('watcher events and startup scans ignore hidden and non-prose files', async (t) => {
+	const { book, index } = await fixture(t);
+	const ignored = ['正文/.DS_Store', '正文/copy.bak', '正文/.hidden.md', '正文/.hidden/chapter.md'];
+	await mkdir(join(book, '正文/.hidden'), { recursive: true });
+	for (const path of ignored) {
+		await writeFile(join(book, path), Buffer.from([255]));
+	}
+	const read = fs.readFile;
+	const paths: string[] = [];
+	t.mock.method(fs, 'readFile', async (...args: Parameters<typeof fs.readFile>) => {
+		paths.push(String(args[0]));
+		return read(...args);
+	});
+	const scanned = new BookIndex(book);
+	await scanned.load();
+	scanned.dispose();
+	const emit = simulatedWatcher(t, index);
+	await emit([...ignored, chapter]);
+	assert.equal(
+		paths.some((path) => ignored.some((file) => path.endsWith(file))),
+		false,
+	);
+	assert.equal(index.library.isChapter('正文/.hidden.md'), false);
+});
+test('book and file notifications support independent listeners and unsubscribe', async (t) => {
+	const { book, index } = await fixture(t);
+	const emit = simulatedWatcher(t, index);
+	let bookA = 0,
+		bookB = 0,
+		fileA = 0,
+		fileB = 0;
+	const offBook = index.onChanged(() => {
+		bookA++;
+	});
+	index.onChanged(() => {
+		bookB++;
+	});
+	const offFile = index.onFileChanged(() => {
+		fileA++;
+	});
+	index.onFileChanged(() => {
+		fileB++;
+	});
+	await writeFile(join(book, chapter), '第一版');
+	await emit([chapter]);
+	offBook();
+	offFile();
+	await writeFile(join(book, chapter), '第二版');
+	await emit([chapter]);
+	assert.deepEqual([bookA, bookB, fileA, fileB], [1, 2, 1, 2]);
 });

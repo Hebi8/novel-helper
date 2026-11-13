@@ -22,7 +22,7 @@ const jump = (view: EditorView) => {
 	if (view.compositionStarted || !range.empty || !closers.includes(view.state.sliceDoc(range.head, range.head + 1))) {
 		return false;
 	}
-	view.dispatch({ selection: { anchor: range.head + 1 } });
+	view.dispatch({ selection: { anchor: range.head + 1 }, userEvent: 'select' });
 	return true;
 };
 function lines(state: EditorState): DecorationSet {
@@ -57,7 +57,7 @@ export const prose: Extension = [
 			return false;
 		}
 		if (from === to && closers.includes(text) && view.state.sliceDoc(from, from + 1) === text) {
-			view.dispatch({ selection: { anchor: from + 1 } });
+			view.dispatch({ selection: { anchor: from + 1 }, userEvent: 'select' });
 			return true;
 		}
 		const right = pairs[text];

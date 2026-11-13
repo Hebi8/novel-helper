@@ -8,14 +8,21 @@ export function installMenu(ctx: MainContext): void {
 		accelerator,
 		click: () => BrowserWindow.getFocusedWindow()?.webContents.send(channels.command, command),
 	});
+	const openRoot = async (root: string) => {
+		const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+		const result = await ctx.open(root, window);
+		if (result.kind !== 'opened') {
+			if (window) {
+				window.webContents.send(channels.openResult, result);
+			} else {
+				ctx.openWelcome(result);
+			}
+		}
+	};
 	const open = async () => {
 		const { filePaths } = await dialog.showOpenDialog({ properties: ['openDirectory'] });
 		if (filePaths[0]) {
-			const window = BrowserWindow.getFocusedWindow();
-			const result = await ctx.open(filePaths[0], window ?? undefined);
-			if (result.kind !== 'opened' && window) {
-				window.webContents.send(channels.openResult, result);
-			}
+			await openRoot(filePaths[0]);
 		}
 	};
 	Menu.setApplicationMenu(
@@ -39,16 +46,7 @@ export function installMenu(ctx: MainContext): void {
 						submenu: ctx.windows.value.recent.map((root) => ({
 							label: root,
 							click: () => {
-								void ctx.open(root).then((result) => {
-									if (result.kind === 'error') {
-										const window = BrowserWindow.getFocusedWindow();
-										if (window) {
-											window.webContents.send(channels.openResult, result);
-										} else {
-											void dialog.showMessageBox({ message: result.message });
-										}
-									}
-								});
+								void openRoot(root);
 							},
 						})),
 					},

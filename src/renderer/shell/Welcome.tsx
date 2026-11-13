@@ -1,10 +1,26 @@
+import { errorMessage } from '../errors';
 import type { OpenResult } from '../../shared/api';
 import { zh } from '../strings';
-export function Welcome({ recent, result, open }: { recent: string[]; result?: OpenResult; open(root?: string): void }) {
+export function Welcome({
+	recent,
+	result,
+	open,
+	dismiss,
+}: {
+	recent: string[];
+	result?: OpenResult;
+	open(root?: string): void;
+	dismiss(): void;
+}) {
 	return (
 		<main className="welcome">
 			<h1>{zh.app}</h1>
-			{result?.kind === 'error' ? <p role="alert">{result.message}</p> : null}
+			{result?.kind === 'error' ? (
+				<p role="alert">
+					{errorMessage(result.message)}
+					<button onClick={dismiss}>{zh.dismiss}</button>
+				</p>
+			) : null}
 			<button className="open-folder" onClick={() => open()}>
 				{zh.openFolder}
 			</button>

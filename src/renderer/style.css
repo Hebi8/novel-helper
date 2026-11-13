@@ -423,13 +423,12 @@ select:focus-visible {
 .cm-line.blank-paragraph {
 	line-height: 0.975;
 }
-.tree-row {
-	white-space: normal;
-}
 .tree-name {
 	min-width: 0;
+	white-space: nowrap;
 }
 .tree-row small {
+	flex-shrink: 0;
 	white-space: nowrap;
 }
 

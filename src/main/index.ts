@@ -10,7 +10,7 @@ import { WindowStore } from './window/state';
 import { type BookIndex } from './book/indexer';
 import { registerFeatures } from './register';
 import { installMenu } from './window/menu';
-import { channels } from '../shared/api';
+import { channels, type OpenResult } from '../shared/api';
 import type { MainContext } from './context';
 const testing = process.argv.includes('--test-mode');
 const userData = process.argv.find((arg) => arg.startsWith('--user-data-dir='))?.slice('--user-data-dir='.length);
@@ -41,6 +41,7 @@ if (!app.requestSingleInstanceLock()) {
 		const windows = new WindowStore(directory);
 		const bookClosed = new Set<(root: string) => void | Promise<void>>();
 		const books = new Map<number, BookIndex>();
+		const initialResults = new Map<number, OpenResult>();
 		let settingsWindow: BrowserWindow | undefined;
 		let quitting = false;
 		const createWindow = (index?: BookIndex, settingsOnly = false) => {
@@ -57,8 +58,8 @@ if (!app.requestSingleInstanceLock()) {
 			});
 			if (index) {
 				books.set(window.webContents.id, index);
-				index.onChanged = (book) => window.webContents.send(channels.bookChanged, book);
-				index.onFileChanged = (file) => window.webContents.send(channels.fileChanged, file);
+				index.onChanged((book) => window.webContents.send(channels.bookChanged, book));
+				index.onFileChanged((file) => window.webContents.send(channels.fileChanged, file));
 				index.start();
 				windows.opened(index.root);
 			}
@@ -84,6 +85,7 @@ if (!app.requestSingleInstanceLock()) {
 				ipcMain.removeListener(channels.flushed, onFlushed);
 				completion.cancel(String(senderId));
 				books.delete(senderId);
+				initialResults.delete(senderId);
 				index?.dispose();
 				if (index) {
 					bookClosed.forEach((cleanup) => {
@@ -148,6 +150,11 @@ if (!app.requestSingleInstanceLock()) {
 				}
 				installMenu(context);
 				return { kind: 'opened' };
+			},
+			initialResult: (event) => initialResults.get(event.sender.id),
+			openWelcome: (result) => {
+				const window = createWindow();
+				initialResults.set(window.webContents.id, result);
 			},
 			openSettings: () => {
 				if (!settingsWindow) {

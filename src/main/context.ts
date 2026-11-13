@@ -16,4 +16,6 @@ export interface MainContext {
 	broadcast(channel: string, data: unknown): void;
 	open(root: string, source?: BrowserWindow): Promise<OpenResult>;
 	openSettings(): void;
+	openWelcome(result: OpenResult): void;
+	initialResult(event: IpcMainInvokeEvent): OpenResult | undefined;
 }

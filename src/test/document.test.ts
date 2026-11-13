@@ -1,3 +1,4 @@
+import { errorMessage } from '../renderer/errors';
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import type { AppAPI, SaveResult } from '../shared/api';
@@ -165,4 +166,45 @@ test('composition ending restarts the one second autosave pause', async (t) => {
 	await model.save();
 	assert.equal(calls, 1);
 	model.dispose();
+});
+test('consecutive compositions keep waiting saves alive and the save queue continues', async () => {
+	const written: string[] = [];
+	const model = document(async (_path, text) => {
+		written.push(text);
+		return { saved: true };
+	});
+	model.compositionStart();
+	model.edit('ni');
+	const waiting = model.save();
+	model.compositionStart();
+	model.edit('hao');
+	model.compositionEnd('你好');
+	await waiting;
+	model.edit('你好。');
+	await model.save();
+	assert.deepEqual(written, ['你好', '你好。']);
+	model.dispose();
+});
+test('stale errors do not block closing clean documents, but edits and conflicts do', async () => {
+	const model = document(async () => ({ saved: true }));
+	model.error = '读取失败';
+	assert.equal(model.blocksClose, false);
+	model.edit('未保存');
+	assert.equal(model.blocksClose, true);
+	await model.save();
+	model.error = '之前的错误';
+	assert.equal(model.blocksClose, false);
+	model.conflict = '磁盘的版本';
+	assert.equal(model.blocksClose, true);
+	model.useDisk();
+	assert.equal(model.blocksClose, false);
+	model.dispose();
+});
+
+test('file error messages omit transport prefixes', () => {
+	assert.equal(
+		errorMessage(new Error("Error invoking remote method 'book:read': Error: 这个文件不是 UTF-8 编码")),
+		'这个文件不是 UTF-8 编码',
+	);
+	assert.equal(errorMessage('Error: 这个文件混用了两种换行符'), '这个文件混用了两种换行符');
 });

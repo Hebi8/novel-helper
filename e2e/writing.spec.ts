@@ -143,3 +143,39 @@ test('selection and search focus do not request, and a crashed renderer can clos
 		expect(closed).toBe(true);
 	});
 });
+test('closing during composition blurs the editor and never saves preedit letters', async () => {
+	await withBook(async ({ app, page, book, original }) => {
+		await page.evaluate(() => window.novel.settings.set('trigger', 'manual'));
+		await app.evaluate(({ BrowserWindow }) => {
+			new BrowserWindow({ show: false });
+		});
+		await endOfChapter(page);
+		const cdp = await page.context().newCDPSession(page);
+		await cdp.send('Input.imeSetComposition', { text: 'ni', selectionStart: 2, selectionEnd: 2 });
+		await expect(page.locator('.cm-content')).toContainText('ni');
+		expect(await readFile(join(book, chapter), 'utf8')).toBe(original);
+		const closed = page.waitForEvent('close');
+		await page.evaluate(() => window.novel.window.close());
+		await closed;
+		expect(await readFile(join(book, chapter), 'utf8')).not.toContain('ni');
+	});
+});
+test('unreadable chapters stay visible and opening errors can be dismissed or cleared by success', async () => {
+	await withBook(async ({ page, book }) => {
+		await writeFile(join(book, '正文/bad.txt'), Buffer.from([255]));
+		const bad = page.getByRole('tree').getByRole('button', { name: /bad/ });
+		await expect(bad).toBeVisible();
+		await bad.click();
+		await expect(page.getByRole('alert')).toContainText('这个文件不是 UTF-8 编码');
+		await expect(page.getByRole('alert')).not.toContainText('Error');
+		await page.getByRole('button', { name: '关闭提示', exact: true }).click();
+		await expect(page.getByRole('alert')).toHaveCount(0);
+		await bad.click();
+		await expect(page.getByRole('alert')).toBeVisible();
+		await page
+			.getByRole('tree')
+			.getByRole('button', { name: /第2章 灯塔/ })
+			.click();
+		await expect(page.getByRole('alert')).toHaveCount(0);
+	});
+});
