@@ -770,3 +770,29 @@ test('disposing aborted position requests waits for accounting and releases the 
 	assert.equal((await readdir(join(f.root, 'usage'))).includes('usage.lock'), false);
 	assert.deepEqual(await readFile(join(f.book, buoyPath(chapter))), before);
 });
+
+test('a position request aborted before response headers records one unpriced request', async (t) => {
+	const f = await fixture(t);
+	let started!: () => void;
+	const begun = new Promise<void>((resolve) => {
+		started = resolve;
+	});
+	t.mock.method(
+		globalThis,
+		'fetch',
+		(_url: unknown, init: RequestInit) =>
+			new Promise<Response>((_resolve, reject) => {
+				init.signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+				started();
+			}),
+	);
+	const buoy = new Buoys(f.index, f.settings, f.usage, () => undefined);
+	buoy.update(await buoy.read(chapter), '文'.repeat(2000));
+	await begun;
+	await buoy.dispose();
+	const ledger = new UsageStore(join(f.root, 'usage'));
+	await ledger.load();
+	assert.equal(ledger.today().requests, 1);
+	assert.equal(ledger.today().unknown, 1);
+	assert.ok(JSON.stringify(ledger.current()).includes('position'));
+});

@@ -86,7 +86,7 @@ export interface AppAPI {
 	assistant: AssistantAPI;
 	book: {
 		reveal(path: string): Promise<void>;
-		open(root?: string): Promise<OpenResult>;
+		open(root?: string, selected?: boolean): Promise<OpenResult>;
 		read(path: string): Promise<DiskFile>;
 		save(path: string, text: string, base: string, force?: boolean): Promise<SaveResult>;
 		onOpenResult(listener: (result: OpenResult) => void): () => void;

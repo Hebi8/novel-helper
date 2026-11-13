@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path';
 import { readdir, mkdir, link, unlink, rename } from 'node:fs/promises';
 import type { Rename } from '../../core/library';
 import { nameProblem } from '../../core/book';
-import { BUOY_FOLDER, hasOpenMarks, markAt, parseBuoyFile, renameState, serializeBuoyFile } from '../../core/buoy';
+import { BUOY_FOLDER, hasOpenMarks, markAt, parseBuoyFile, renameState, serializeBuoyFile, type BuoyFile } from '../../core/buoy';
 import { frontmatterLength } from '../../core/text';
 import type { BookIndex } from '../book/indexer';
 import { atomicWrite, readOptional } from '../book/files';
@@ -65,8 +65,8 @@ export async function renamePlan(index: BookIndex, path: string, name: string): 
 	// A volume's companion files go first, so an unsupported hard-link operation stops before its directories move.
 	return [...files, ...directories];
 }
-async function buoyWrites(index: BookIndex, renames: Rename[]) {
-	const writes: { path: string; text: string }[] = [];
+async function readBuoys(index: BookIndex) {
+	const records: { path: string; file: BuoyFile }[] = [];
 	for (const path of await jsonFiles(index.root, BUOY_FOLDER)) {
 		const raw = (await readOptional(join(index.root, path)))!;
 		const chapter = path.slice(BUOY_FOLDER.length + 1, -'.json'.length);
@@ -75,29 +75,31 @@ async function buoyWrites(index: BookIndex, renames: Rename[]) {
 		if (!file) {
 			throw new Error(`${zh.renameBuoy}: ${path}`);
 		}
+		records.push({ path, file });
+	}
+	return records;
+}
+function buoyWrites(records: { path: string; file: BuoyFile }[], renames: Rename[]) {
+	return records.flatMap(({ path, file }) => {
 		const target = movedPath(path, renames);
 		const after = {
 			...file,
-			chapter: target.slice(BUOY_FOLDER.length + 1, -'.json'.length),
+			chapter: movedPath(file.chapter, renames),
 			marks: file.marks.map((mark) => ({ ...mark, state: renameState(mark.state, renames) })),
 		};
-		if (serializeBuoyFile(after) !== serializeBuoyFile(file)) {
-			writes.push({ path: target, text: serializeBuoyFile(after) });
-		}
-	}
-	return writes;
+		return serializeBuoyFile(after) === serializeBuoyFile(file) ? [] : [{ path: target, text: serializeBuoyFile(after) }];
+	});
 }
 const diskOperations = { link, unlink, rename, write: atomicWrite };
-/** Preflight first; on an unexpected failure report the actual completed moves without rolling them back. */
-export async function renameBook(index: BookIndex, path: string, name: string, disk = diskOperations): Promise<RenameResult> {
-	const plan = await renamePlan(index, path, name);
-	if (!plan.length) {
-		return { renames: [] };
-	}
-	const writes = await buoyWrites(index, plan);
+/** The caller has checked the plan before stopping services and entering the index save queue. */
+export async function renameBook(index: BookIndex, plan: Rename[], disk = diskOperations): Promise<RenameResult> {
+	const records = plan.length ? await readBuoys(index) : [];
 	const completed: Rename[] = [],
-		written: string[] = [];
+		written: string[] = [],
+		failures: string[] = [];
 	let linked: Rename | undefined;
+	const reason = (error: unknown) =>
+		['ENOTSUP', 'EOPNOTSUPP', 'EXDEV'].includes((error as NodeJS.ErrnoException).code ?? '') ? zh.renameUnsupported : String(error);
 	try {
 		for (const move of plan) {
 			const from = join(index.root, move.from),
@@ -113,24 +115,32 @@ export async function renameBook(index: BookIndex, path: string, name: string, d
 			}
 			completed.push(move);
 		}
+	} catch (error) {
+		failures.push(reason(error));
+	}
+	index.followRenames(completed);
+	const writes = completed.length ? buoyWrites(records, completed) : [];
+	try {
 		for (const write of writes) {
 			await disk.write(join(index.root, write.path), write.text);
 			written.push(write.path);
 		}
 	} catch (error) {
-		const code = (error as NodeJS.ErrnoException).code;
-		const reason = ['ENOTSUP', 'EOPNOTSUPP', 'EXDEV'].includes(code ?? '') ? zh.renameUnsupported : String(error);
-		return {
-			renames: completed,
-			error: zh.renamePartial(
-				completed,
-				plan.slice(completed.length),
-				written,
-				writes.slice(written.length).map((write) => write.path),
-				linked,
-				reason,
-			),
-		};
+		failures.push(reason(error));
 	}
-	return { renames: completed };
+	return {
+		renames: completed,
+		...(failures.length
+			? {
+					error: zh.renamePartial(
+						completed,
+						plan.slice(completed.length),
+						written,
+						writes.slice(written.length).map((write) => write.path),
+						linked,
+						failures.join('\n'),
+					),
+				}
+			: {}),
+	};
 }

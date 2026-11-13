@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { cp, mkdtemp, mkdir, readFile, writeFile, rm, realpath, symlink, link, unlink, rename } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, writeFile, rm, realpath, symlink, link, unlink, rename as renameFile } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EditorState } from '@codemirror/state';
@@ -8,7 +8,7 @@ import { openCompanion } from '../main/reference/service';
 import { initialization, initialize, prepareOpen } from '../main/scaffold/initialize';
 import { createFile, info } from '../main/scaffold/disk';
 import { createStructure, structureSuggestion } from '../main/scaffold/structure';
-import { renameBook } from '../main/scaffold/rename';
+import { renamePlan, renameBook } from '../main/scaffold/rename';
 import { atomicWrite } from '../main/book/files';
 import { searchBook, searchTexts } from '../main/search/search';
 import { BookIndex } from '../main/book/indexer';
@@ -17,12 +17,16 @@ import { parseBuoyFile, renameState, serializeBuoyFile } from '../core/buoy';
 import { defaults } from '../shared/defaults';
 import { saveSettingText, settingGroups } from '../shared/settings';
 import { searchExcerpt } from '../shared/search';
-import { shouldCenter } from '../renderer/editor/preferences';
+import { CenterLine } from '../renderer/editor/preferences';
+import type { EditorView, ViewUpdate } from '@codemirror/view';
 import { SettingsStore } from '../main/settings/store';
 import { movedPath } from '../shared/paths';
 import { filesIn } from './files';
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
-const operations = { link, unlink, rename, write: atomicWrite };
+const operations = { link, unlink, rename: renameFile, write: atomicWrite };
+async function rename(index: BookIndex, path: string, name: string, disk = operations) {
+	return renameBook(index, await renamePlan(index, path, name), disk);
+}
 async function fixture(t: { after(fn: () => Promise<void>): void }) {
 	const root = await realpath(await mkdtemp(join(tmpdir(), 'novel-scaffold-'))),
 		book = join(root, 'book');
@@ -64,12 +68,26 @@ test('a directory containing only a PDF or empty default folders is not marked a
 	assert.equal((await prepareOpen(folder, defaults)).initialize, true);
 	assert.equal(await info(join(folder, MARKER_FILE)), undefined);
 });
-test('an unmarked book is marked before discovering nested books and its index is loaded once', async (t) => {
+test('an unmarked parent with story files and marked children offers choices without writing', async (t) => {
 	const { book } = await fixture(t);
 	await rm(join(book, MARKER_FILE));
 	await mkdir(join(book, 'child/.novel-helper'), { recursive: true });
 	await writeFile(join(book, 'child', MARKER_FILE), '{"version":1}');
 	const before = await contents(book);
+	const result = await prepareOpen(book, defaults);
+	assert.deepEqual(result.roots, [book, join(book, 'child')]);
+	assert.deepEqual(await contents(book), before);
+	const child = await prepareOpen(join(book, 'child'), defaults, true);
+	child.index!.dispose();
+	assert.deepEqual(await contents(book), before);
+	const chosen = await prepareOpen(book, defaults, true);
+	assert.equal(chosen.index?.root, book);
+	assert.ok(await info(join(book, MARKER_FILE)));
+	chosen.index!.dispose();
+});
+test('an unmarked book without marked children is marked and indexed once', async (t) => {
+	const { book } = await fixture(t);
+	await rm(join(book, MARKER_FILE));
 	const load = BookIndex.prototype.load;
 	let loads = 0;
 	t.mock.method(BookIndex.prototype, 'load', async function (this: BookIndex) {
@@ -80,12 +98,8 @@ test('an unmarked book is marked before discovering nested books and its index i
 	assert.equal(loads, 1);
 	assert.equal(result.index?.root, book);
 	assert.equal(result.roots, undefined);
-	const after = await contents(book);
-	for (const [path, content] of Object.entries(before)) {
-		assert.equal(after[path], content);
-	}
 	assert.ok(await info(join(book, MARKER_FILE)));
-	result.index?.dispose();
+	result.index!.dispose();
 });
 test('story discovery finds marked children through four levels only', async (t) => {
 	const { root, book } = await fixture(t);
@@ -127,7 +141,7 @@ test('chapter rename carries outlines, summaries and buoy records using the core
 	await index.refresh(summary);
 	const oldBuoy = parseBuoyFile(await readFile(join(book, `.novel-helper/buoys/${chapter}.json`), 'utf8'))!;
 	const before = await contents(book);
-	const result = await index.exclusive(() => renameBook(index, chapter, 'Chapter 2 Light'));
+	const result = await index.exclusive(() => rename(index, chapter, 'Chapter 2 Light'));
 	assert.equal(result.error, undefined);
 	const next = movedPath(chapter, result.renames);
 	for (const path of [chapter, chapter.replace('正文/', '大纲/'), summary]) {
@@ -146,7 +160,7 @@ test('level rename moves descendants while retaining the book directory identity
 	const { index, book } = await fixture(t),
 		level = index.book.tree.children[0];
 	const inode = (await info(book))!.ino;
-	const result = await index.exclusive(() => renameBook(index, level.path, 'Volume 1'));
+	const result = await index.exclusive(() => rename(index, level.path, 'Volume 1'));
 	assert.equal(result.error, undefined);
 	assert.equal((await info(book))!.ino, inode);
 	assert.ok(await info(join(book, movedPath(chapter, result.renames))));
@@ -157,12 +171,12 @@ test('preflight conflicts in companions and buoy destinations leave every file u
 		target = `${dirname(chapter.replace('正文/', '大纲/'))}/Taken.md`;
 	await writeFile(join(book, target), 'Existing');
 	let before = await contents(book);
-	await assert.rejects(index.exclusive(() => renameBook(index, chapter, 'Taken')));
+	await assert.rejects(index.exclusive(() => rename(index, chapter, 'Taken')));
 	assert.deepEqual(await contents(book), before);
 	await rm(join(book, target));
 	await writeFile(join(book, `.novel-helper/buoys/${dirname(chapter)}/Taken.md.json`), '{}');
 	before = await contents(book);
-	await assert.rejects(index.exclusive(() => renameBook(index, chapter, 'Taken')));
+	await assert.rejects(index.exclusive(() => rename(index, chapter, 'Taken')));
 	assert.deepEqual(await contents(book), before);
 });
 test('case-only rename is rejected and identical names are a no-op', async (t) => {
@@ -170,17 +184,17 @@ test('case-only rename is rejected and identical names are a no-op', async (t) =
 	const path = await createStructure(index, { action: 'chapter', path: chapter, name: 'Chapter 3' });
 	const before = await contents(book);
 	await assert.rejects(
-		index.exclusive(() => renameBook(index, path, 'chapter 3')),
+		index.exclusive(() => rename(index, path, 'chapter 3')),
 		/大小写/,
 	);
 	assert.deepEqual(await contents(book), before);
-	assert.deepEqual(await index.exclusive(() => renameBook(index, path, 'Chapter 3')), { renames: [] });
+	assert.deepEqual(await index.exclusive(() => rename(index, path, 'Chapter 3')), { renames: [] });
 });
 test('an unsupported link fails before any rename, including when renaming a volume', async (t) => {
 	const { index, book } = await fixture(t),
 		before = await contents(book);
 	const result = await index.exclusive(() =>
-		renameBook(index, index.book.tree.children[0].path, 'Next', {
+		rename(index, index.book.tree.children[0].path, 'Next', {
 			...operations,
 			link: async () => {
 				throw Object.assign(new Error('unsupported'), { code: 'ENOTSUP' });
@@ -195,7 +209,7 @@ test('a mid-rename failure returns completed paths and the index is rebuilt', as
 	const { index, book } = await fixture(t);
 	let count = 0;
 	const result = await index.exclusive(() =>
-		renameBook(index, chapter, 'Next', {
+		rename(index, chapter, 'Next', {
 			...operations,
 			link: async (from, to) => {
 				if (++count === 2) {
@@ -220,7 +234,7 @@ test('exclusive rebuilds the index even when the operation throws', async (t) =>
 		next = `${dirname(chapter)}/Changed.md`;
 	await assert.rejects(
 		index.exclusive(async () => {
-			await rename(join(book, chapter), join(book, next));
+			await renameFile(join(book, chapter), join(book, next));
 			throw new Error('failed');
 		}),
 	);
@@ -232,14 +246,14 @@ test('symlinks and unparseable buoy records stop before any rename', async (t) =
 		target = `${dirname(chapter)}/Taken.md`;
 	await symlink(join(root, 'missing'), join(book, target));
 	await assert.rejects(
-		index.exclusive(() => renameBook(index, chapter, 'Taken')),
+		index.exclusive(() => rename(index, chapter, 'Taken')),
 		/符号链接/,
 	);
 	await rm(join(book, target));
 	await writeFile(join(book, `.novel-helper/buoys/${chapter}.json`), '{broken');
 	const before = await contents(book);
 	await assert.rejects(
-		index.exclusive(() => renameBook(index, chapter, 'Next')),
+		index.exclusive(() => rename(index, chapter, 'Next')),
 		/浮标/,
 	);
 	assert.deepEqual(await contents(book), before);
@@ -298,20 +312,117 @@ test('search excerpts keep long paragraph hits visible and preserve source offse
 	assert.equal(excerpt.before, '…' + '前'.repeat(35));
 	assert.equal(excerpt.after, '后'.repeat(65) + '…');
 });
-test('pointer selection never centers while keyboard movement and typing do', () => {
-	const state = EditorState.create({ doc: 'one\ntwo' });
-	const change = (userEvent: string) => {
-		const tr = state.update({ selection: { anchor: 4 }, userEvent });
-		return { docChanged: tr.docChanged, selectionSet: true, transactions: [tr] };
+test('long keyboard jumps survive viewport updates; pointer selections cancel centering', (t) => {
+	const frames = new Map<number, FrameRequestCallback>();
+	let serial = 0;
+	const oldRequest = globalThis.requestAnimationFrame,
+		oldCancel = globalThis.cancelAnimationFrame;
+	globalThis.requestAnimationFrame = (callback) => {
+		frames.set(++serial, callback);
+		return serial;
 	};
-	assert.equal(shouldCenter(change('select.pointer')), false);
-	assert.equal(shouldCenter(change('select')), true);
-	const typed = state.update({ changes: { from: 0, insert: 'x' }, userEvent: 'input.type' });
-	assert.equal(shouldCenter({ docChanged: true, selectionSet: false, transactions: [typed] }), true);
+	globalThis.cancelAnimationFrame = (id) => {
+		frames.delete(id);
+	};
+	t.after(() => {
+		globalThis.requestAnimationFrame = oldRequest;
+		globalThis.cancelAnimationFrame = oldCancel;
+	});
+	const state = EditorState.create({ doc: 'line\n'.repeat(80) });
+	const keyboard = state.update({ selection: { anchor: state.doc.length }, userEvent: 'select' });
+	let centered = 0;
+	const view = {
+		state: keyboard.state,
+		hasFocus: true,
+		compositionStarted: false,
+		dispatch: () => {
+			centered++;
+		},
+	} as unknown as EditorView;
+	const plugin = new CenterLine(view, () => true);
+	const update = (transactions: ViewUpdate['transactions'], selectionSet: boolean) =>
+		({ docChanged: false, selectionSet, transactions }) as ViewUpdate;
+	plugin.update(update([keyboard], true));
+	plugin.update(update([], false));
+	assert.equal(frames.size, 1);
+	const [id, frame] = [...frames][0];
+	frames.delete(id);
+	frame(0);
+	assert.equal(centered, 1);
+	plugin.update(update([keyboard], true));
+	const pointer = state.update({ selection: { anchor: 1 }, userEvent: 'select.pointer' });
+	plugin.update(update([pointer], true));
+	assert.equal(frames.size, 0);
+	assert.equal(centered, 1);
+	plugin.destroy();
 });
 test('simultaneous creation never replaces the winner', async (t) => {
 	const { book } = await fixture(t);
 	const results = await Promise.allSettled([createFile(book, 'chapters/new.md', 'first'), createFile(book, 'chapters/new.md', 'second')]);
 	assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
 	assert.equal(await readFile(join(book, 'chapters/new.md'), 'utf8'), results[0].status === 'fulfilled' ? 'first' : 'second');
+});
+
+test('partial volume renames update buoy references using only completed moves', async (t) => {
+	const { book, index } = await fixture(t);
+	const outline = '大纲/第一卷 雾港.md',
+		buoyPath = `.novel-helper/buoys/${chapter}.json`;
+	await writeFile(join(book, outline), '# 卷纲\n\n## 开场\n内容');
+	const record = parseBuoyFile(await readFile(join(book, buoyPath), 'utf8'))!;
+	record.marks[0].state = { kind: 'in', nodes: [{ id: `${outline}#开场`, title: '开场' }] };
+	await writeFile(join(book, buoyPath), serializeBuoyFile(record));
+	const result = await index.exclusive(() =>
+		rename(index, index.book.tree.children[0].path, 'Volume 1', {
+			...operations,
+			rename: async () => {
+				throw new Error('directory rename failed');
+			},
+		}),
+	);
+	assert.deepEqual(result.renames, [{ from: outline, to: '大纲/Volume 1.md' }]);
+	const after = parseBuoyFile(await readFile(join(book, buoyPath), 'utf8'))!;
+	assert.equal(after.chapter, chapter);
+	assert.equal(after.marks[0].state.nodes[0].id, '大纲/Volume 1.md#开场');
+	assert.match(result.error!, /未更新浮标：无/);
+});
+
+test('partial rename errors list buoy write failures at their actual paths', async (t) => {
+	const { book, index } = await fixture(t);
+	const buoyPath = `.novel-helper/buoys/${chapter}.json`;
+	const record = parseBuoyFile(await readFile(join(book, buoyPath), 'utf8'))!;
+	record.marks[0].state = { kind: 'in', nodes: [{ id: '大纲/第一卷 雾港.md#开场', title: '开场' }] };
+	await writeFile(join(book, buoyPath), serializeBuoyFile(record));
+	const result = await index.exclusive(() =>
+		rename(index, index.book.tree.children[0].path, 'Volume 1', {
+			...operations,
+			rename: async () => {
+				throw new Error('directory rename failed');
+			},
+			write: async () => {
+				throw new Error('buoy write failed');
+			},
+		}),
+	);
+	assert.ok(result.error!.includes(`未更新浮标：${buoyPath}`));
+	assert.ok(await info(join(book, buoyPath)));
+});
+
+test('invalid names fail preflight without rebuilding the index', async (t) => {
+	const { index } = await fixture(t);
+	const load = t.mock.method(index, 'load');
+	await assert.rejects(renamePlan(index, chapter, '../invalid'));
+	assert.equal(load.mock.callCount(), 0);
+});
+
+test('buoy records are read after planning so the last completed update is preserved', async (t) => {
+	const { book, index } = await fixture(t);
+	const plan = await renamePlan(index, chapter, 'Next');
+	const path = `.novel-helper/buoys/${chapter}.json`;
+	const record = parseBuoyFile(await readFile(join(book, path), 'utf8'))!;
+	record.marks.push({ ...record.marks.at(-1)!, at: 42, before: 'last update' });
+	await writeFile(join(book, path), serializeBuoyFile(record));
+	await index.exclusive(() => renameBook(index, plan));
+	const after = parseBuoyFile(await readFile(join(book, movedPath(path, plan)), 'utf8'))!;
+	assert.equal(after.marks.length, record.marks.length);
+	assert.equal(after.marks.at(-1)!.before, 'last update');
 });

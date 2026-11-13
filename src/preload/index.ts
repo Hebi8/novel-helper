@@ -46,7 +46,7 @@ const api: AppAPI = {
 	book: {
 		reveal: (path) => ipcRenderer.invoke(c.bookReveal, path),
 		onOpenResult: (listener) => listen(c.openResult, listener),
-		open: (root) => ipcRenderer.invoke(c.bookOpen, root),
+		open: (root, selected) => ipcRenderer.invoke(c.bookOpen, root, selected),
 		read: (path) => ipcRenderer.invoke(c.bookRead, path),
 		save: (path, text, base, force) => ipcRenderer.invoke(c.bookSave, path, text, base, force),
 		onChanged: (listener) => listen(c.bookChanged, listener),

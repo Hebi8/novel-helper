@@ -236,6 +236,7 @@ export async function ask(req: ModelRequest, signal?: AbortSignal): Promise<Answ
 			}
 		}
 	} catch (failure) {
+		answered ||= controller.signal.aborted;
 		error = redact(timedOut ? `no complete answer within ${req.timeoutMs} ms` : describe(failure), req.apiKey);
 	} finally {
 		clearTimeout(timer);

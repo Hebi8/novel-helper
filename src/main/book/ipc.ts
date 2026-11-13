@@ -8,10 +8,10 @@ export function registerBook(ctx: MainContext): void {
 		const book = ctx.bookFor(event)!;
 		shell.showItemInFolder(path ? await safePath(book.root, path) : book.root);
 	});
-	ipcMain.handle(channels.bookOpen, async (event, root?: string) => {
+	ipcMain.handle(channels.bookOpen, async (event, root?: string, chosen = false) => {
 		const window = ctx.windowFor(event);
 		const selected = root ?? (await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })).filePaths[0];
-		return selected ? ctx.open(selected, window) : { kind: 'cancelled' };
+		return selected ? ctx.open(selected, window, chosen) : { kind: 'cancelled' };
 	});
 	ipcMain.handle(channels.bookRead, (event, path: string) => ctx.bookFor(event)!.read(bookPath(path)));
 	ipcMain.handle(channels.bookSave, (event, path: string, text: string, base: string, force?: boolean) =>

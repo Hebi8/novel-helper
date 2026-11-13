@@ -6,7 +6,7 @@ import type { MainContext } from '../context';
 import { channels as c } from '../../shared/api';
 import type { EditorContext } from '../../core/assistantBrief';
 import { AssistantService } from './service';
-import { storyNames } from './names';
+import { bookNames } from '../book/names';
 import { prepareAgentEnvironment } from './environment';
 import { assistantReverted, assistantTurnEnded } from './events';
 import { AssistantRegistry } from './registry';
@@ -29,7 +29,7 @@ export function registerAssistant(ctx: MainContext): void {
 				root: book.root,
 				userData,
 				settings: () => ctx.settings.get(),
-				names: () => storyNames(book),
+				names: async () => bookNames(book),
 			});
 			await assistant.load();
 			assistant.onChanged((state) => {

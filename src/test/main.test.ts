@@ -1,3 +1,7 @@
+import { BookOpenings } from '../main/window/opening';
+import { renamePlan, renameBook } from '../main/scaffold/rename';
+import { movedPath } from '../shared/paths';
+import type { OpenResult, DiskFile } from '../shared/api';
 import nativeFs = require('node:fs');
 import type { TestContext } from 'node:test';
 import fs = require('node:fs/promises');
@@ -10,7 +14,7 @@ import * as assert from 'node:assert/strict';
 import { cp, mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { BookIndex, inspectBook, findStories } from '../main/book/indexer';
+import { BookIndex, findStories } from '../main/book/indexer';
 import { atomicWrite } from '../main/book/files';
 import { SettingsStore } from '../main/settings/store';
 import { CompletionService } from '../main/completion/service';
@@ -31,7 +35,6 @@ async function fixture(t: { after(fn: () => Promise<void> | void): void }) {
 }
 test('examples book uses the extension hierarchy, companions, and lore', async (t) => {
 	const { index } = await fixture(t);
-	assert.equal(await index.usable(), true);
 	const tree = index.library.tree();
 	assert.equal(tree.name, '全书');
 	assert.equal(tree.outline, '大纲/全书.md');
@@ -45,18 +48,6 @@ test('examples book uses the extension hierarchy, companions, and lore', async (
 	assert.equal(arc.children[1].outline, '大纲/第一卷 雾港/第一幕 来信/第2章 灯塔.md');
 	assert.equal(arc.children[0].summary, '摘要/第1章 雾里来信.md');
 	assert.equal(index.library.entries().length, 8);
-});
-test('unusable folders discover marked stories, excluding hidden/dependencies and levels deeper than four', async (t) => {
-	const { root, book } = await fixture(t);
-	await mkdir(join(book, '.novel-helper'), { recursive: true });
-	await writeFile(join(book, '.novel-helper/project.json'), '{"version":1}');
-	for (const path of ['nested/one/two/book', 'a/b/c/d/deep', 'node_modules/book', '.hidden/book']) {
-		await mkdir(join(root, path, '.novel-helper'), { recursive: true });
-		await writeFile(join(root, path, '.novel-helper/project.json'), '{"version":1}');
-	}
-	const result = await inspectBook(root);
-	assert.equal(result.index, undefined);
-	assert.deepEqual(await findStories(root), [book, join(root, 'nested/one/two/book')]);
 });
 test('writes replace a real temporary file and leave no temporary sibling', async (t) => {
 	const { book } = await fixture(t);
@@ -301,8 +292,7 @@ test('story discovery does not read unrelated documents and skips inaccessible d
 		return read(...args);
 	});
 	try {
-		const result = await inspectBook(root);
-		assert.equal(result.index, undefined);
+		assert.deepEqual(await findStories(root), [book]);
 		assert.equal(
 			paths.some((path) => path.endsWith('bad.txt')),
 			false,
@@ -413,4 +403,53 @@ test('book and file notifications support independent listeners and unsubscribe'
 	await writeFile(join(book, chapter), '第二版');
 	await emit([chapter]);
 	assert.deepEqual([bookA, bookB, fileA, fileB], [1, 2, 1, 2]);
+});
+
+test('concurrent opens of one canonical root share preparation and create one window', async (t) => {
+	const { book } = await fixture(t);
+	const openings = new BookOpenings();
+	let release!: () => void;
+	const prepared = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let windows = 0,
+		loads = 0,
+		focused = 0;
+	const open = async (): Promise<OpenResult> => {
+		if (windows) {
+			focused++;
+			return { kind: 'opened' };
+		}
+		loads++;
+		await prepared;
+		windows++;
+		return { kind: 'opened' };
+	};
+	const first = openings.run(book, open),
+		second = openings.run(book, open);
+	assert.equal(first, second);
+	assert.equal(loads, 1);
+	release();
+	assert.deepEqual(await Promise.all([first, second]), [{ kind: 'opened' }, { kind: 'opened' }]);
+	assert.equal(windows, 1);
+	await openings.run(book, open);
+	assert.equal(windows, 1);
+	assert.equal(loads, 1);
+	assert.equal(focused, 1);
+});
+
+test('a restarted watcher ignores the renamed open path and reports changes at the new path', async (t) => {
+	const { index, book } = await fixture(t);
+	const emit = simulatedWatcher(t, index);
+	await index.read(chapter);
+	const events: DiskFile[] = [];
+	index.onFileChanged((file) => events.push(file));
+	const prepared = await renamePlan(index, chapter, 'Chapter 2 New');
+	const result = await index.exclusive(() => renameBook(index, prepared));
+	const next = movedPath(chapter, result.renames);
+	await emit([chapter]);
+	assert.deepEqual(events, []);
+	await writeFile(join(book, next), 'Changed at new path');
+	await emit([next]);
+	assert.deepEqual(events, [{ path: next, text: 'Changed at new path' }]);
 });

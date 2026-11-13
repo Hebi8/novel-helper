@@ -9,7 +9,7 @@ export function Welcome({
 }: {
 	recent: string[];
 	result?: OpenResult;
-	open(root?: string): void;
+	open(root?: string, selected?: boolean): void;
 	dismiss(): void;
 }) {
 	return (
@@ -41,7 +41,7 @@ export function Welcome({
 				<section>
 					<h2>{zh.chooseStory}</h2>
 					{result.roots.map((root) => (
-						<button key={root} onClick={() => open(root)}>
+						<button key={root} onClick={() => open(root, true)}>
 							{root}
 						</button>
 					))}

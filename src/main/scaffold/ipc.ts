@@ -5,7 +5,7 @@ import type { NamesLanguage } from '../../core/story';
 import type { StructureAction, StructureInput } from '../../shared/structure';
 import { initialization, initialize } from './initialize';
 import { structureSuggestion, createStructure } from './structure';
-import { renameBook } from './rename';
+import { renamePlan, renameBook } from './rename';
 export function registerScaffold(ctx: MainContext): void {
 	ipcMain.handle(
 		channels.structurePlan,
@@ -23,12 +23,16 @@ export function registerScaffold(ctx: MainContext): void {
 		if (input.action !== 'rename') {
 			return { path: await createStructure(book, input) };
 		}
+		const plan = await renamePlan(book, input.path!, input.name);
+		if (!plan.length) {
+			return { renames: [] };
+		}
 		await ctx.prepareBookRename(book.root);
 		ctx.completion.cancel(String(event.sender.id));
 		const buoys = ctx.completion.buoys(book);
 		await buoys.dispose();
 		ctx.completion.closeBook(book.root);
 		await ctx.completion.drain(String(event.sender.id));
-		return book.exclusive(() => renameBook(book, input.path!, input.name));
+		return book.exclusive(() => renameBook(book, plan));
 	});
 }

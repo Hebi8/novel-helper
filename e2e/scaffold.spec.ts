@@ -53,6 +53,23 @@ async function withBook(
 	}
 }
 
+async function bookWindow(app: ElectronApplication, name: string): Promise<Page> {
+	let found: Page | undefined;
+	await expect
+		.poll(async () => {
+			for (const page of app.windows()) {
+				const title = await page.evaluate(() => document.querySelector('.topbar strong')?.textContent).catch(() => undefined);
+				if (title === name) {
+					found = page;
+					return true;
+				}
+			}
+			return false;
+		})
+		.toBe(true);
+	return found!;
+}
+
 test('welcome initializes selected items, opens the book, and discovers nested marked books', async () => {
 	await withBook(async ({ page, app, root }) => {
 		await expect(page.getByRole('button', { name: '新建一本书', exact: true })).toBeVisible();
@@ -80,9 +97,7 @@ test('welcome initializes selected items, opens the book, and discovers nested m
 				),
 			)
 			.toBe('zh');
-		await expect.poll(() => app.windows().length).toBe(1);
-		const newPage = app.windows()[0];
-		await expect(newPage.locator('.topbar strong')).toHaveText('new-book');
+		const newPage = await bookWindow(app, 'new-book');
 		const result = await newPage.evaluate((root) => window.novel.book.open(root), root);
 		expect(result.kind).toBe('choices');
 		if (result.kind === 'choices') {
@@ -282,4 +297,13 @@ test('a renamed open chapter can still save edits and close its window normally'
 		await page.evaluate(() => window.novel.window.close());
 		await expect.poll(() => child.exitCode).toBe(0);
 	});
+});
+
+test('double-clicking a recent book opens only one book window', async () => {
+	await withBook(async ({ page, app }) => {
+		await page.getByRole('button', { name: 'book', exact: true }).dblclick();
+		const opened = await bookWindow(app, 'book');
+		await expect(opened.locator('.editor:visible .cm-content')).toBeVisible();
+		await expect.poll(() => app.windows().length).toBe(1);
+	}, true);
 });

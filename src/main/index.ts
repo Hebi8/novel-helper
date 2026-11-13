@@ -1,3 +1,4 @@
+import { BookOpenings } from './window/opening';
 import { prepareBookRename } from './assistant/ipc';
 import { prepareOpen } from './scaffold/initialize';
 import { resolveBookRoot, restoreBooks } from './window/reopen';
@@ -44,6 +45,7 @@ if (!app.requestSingleInstanceLock()) {
 		const windows = new WindowStore(directory);
 		const bookClosed = new Set<(root: string) => void | Promise<void>>();
 		const books = new Map<number, BookIndex>();
+		const openings = new BookOpenings();
 		const initialResults = new Map<number, OpenResult>();
 		let settingsWindow: BrowserWindow | undefined;
 		let quitting = false;
@@ -134,32 +136,34 @@ if (!app.requestSingleInstanceLock()) {
 			bookFor: (event) => books.get(event.sender.id),
 			windowFor: (event) => BrowserWindow.fromWebContents(event.sender)!,
 			broadcast: (channel, data) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channel, data)),
-			open: async (root, source) => {
+			open: async (root, source, selected) => {
 				try {
 					root = await resolveBookRoot(root);
-					const existing = [...books].find(([, book]) => book.root === root);
-					if (existing) {
-						const window = BrowserWindow.fromWebContents(webContents.fromId(existing[0])!)!;
-						if (!testing) {
-							window.restore();
-							window.show();
-							window.focus();
+					return await openings.run(root, async () => {
+						const existing = [...books].find(([, book]) => book.root === root);
+						if (existing) {
+							const window = BrowserWindow.fromWebContents(webContents.fromId(existing[0])!)!;
+							if (!testing) {
+								window.restore();
+								window.show();
+								window.focus();
+							}
+						} else {
+							const prepared = await prepareOpen(root, settings.get(), selected);
+							if (prepared.roots) {
+								return { kind: 'choices', roots: prepared.roots };
+							}
+							if (prepared.initialize) {
+								return { kind: 'empty', root };
+							}
+							createWindow(prepared.index!);
 						}
-					} else {
-						const prepared = await prepareOpen(root, settings.get());
-						if (prepared.roots) {
-							return { kind: 'choices', roots: prepared.roots };
+						if (source && !books.has(source.webContents.id) && source !== settingsWindow) {
+							source.close();
 						}
-						if (prepared.initialize) {
-							return { kind: 'empty', root };
-						}
-						createWindow(prepared.index!);
-					}
-					if (source && !books.has(source.webContents.id) && source !== settingsWindow) {
-						source.close();
-					}
-					installMenu(context);
-					return { kind: 'opened' };
+						installMenu(context);
+						return { kind: 'opened' };
+					});
 				} catch (error) {
 					return { kind: 'error', message: String(error) };
 				}

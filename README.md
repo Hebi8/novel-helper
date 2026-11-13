@@ -28,7 +28,7 @@ npm run pack
 
 ## Open or create a book
 
-Use **⌘O** or **打开文件夹** to choose a folder. If the folder is not itself a book, marked books within four directory levels are listed for selection. An unmarked folder containing indexed book files is marked in place before searching for nested books. Otherwise, initialization lets you choose Chinese or English directory names and select the folders and starter files to create. Existing items are omitted and never overwritten.
+Use **⌘O** or **打开文件夹** to choose a folder. If the folder is not itself a book, marked books within four directory levels are listed for selection. When an unmarked folder contains both book files and marked books below it, the folder itself is listed first alongside those books; it is marked only if selected. An unmarked folder with book files and no marked books below it is marked in place. Otherwise, initialization lets you choose Chinese or English directory names and select the folders and starter files to create. Existing items are omitted and never overwritten.
 
 **新建一本书** on the welcome page uses the same flow. The system folder chooser can create a new folder. Each book has its own window; reopening a book focuses its existing window. The app restores tabs and cursors on launch.
 
@@ -123,7 +123,9 @@ The two travelers persuade the boatman to help.
 
 Each chapter has one or two buoys: inside one node, bridging from one to another, or following two in parallel. The right outline panel can place, advance, retreat or relocate them. The last active chapter remains the target while an outline file is being edited.
 
-Buoys are stored in `.novel-helper/buoys/<chapter-path>.json`, with a history of marks; nothing is inserted into the manuscript. Short new chapters inherit the previous chapter's position or begin at their companion outline. By default, after 1,000 net new characters, the next continuation also checks whether the position should move one connected step. Set `position.updateChars` to `0` to disable automatic movement. Lost or uninitialized positions can be relocated. Renaming from the chapter tree moves companion files and rewrites buoy paths and node references together. Shared companions, destination conflicts, case-only name changes and unreadable records stop the rename before anything moves. If an unexpected error interrupts the moves, the app reports completed and remaining operations and updates tabs to the paths that actually changed; it does not roll back.
+Buoys are stored in `.novel-helper/buoys/<chapter-path>.json`, with a history of marks; nothing is inserted into the manuscript. Short new chapters inherit the previous chapter's position or begin at their companion outline. By default, after 1,000 net new characters, the next continuation also checks whether the position should move one connected step. Set `position.updateChars` to `0` to disable automatic movement. Lost or uninitialized positions can be relocated. Renaming from the chapter tree moves companion files and rewrites buoy paths and node references together. File renaming uses hard links to avoid overwriting existing files. exFAT and some network volumes do not support them; on these volumes chapter renaming stops without changing files and the app explains why.
+
+Shared companions, destination conflicts, case-only name changes and unreadable records stop the rename before anything moves. If an unexpected error interrupts the moves, the app reports completed and remaining operations and updates tabs to the paths that actually changed; it does not roll back.
 
 Requests include always-on lore, the book and ancestor outlines, previous chapters (summaries when available), current buoy nodes and the next node, matching lore, and text around the cursor. Without buoys, the same-named chapter outline is used. The **续写** menu opens read-only request and usage reports.
 

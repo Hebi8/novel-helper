@@ -38,7 +38,6 @@ export const zh = {
 	searchSkipped: '以下文件未能读取，已跳过',
 	renameBuoy: '浮标记录无法无损改写，未改名',
 	renameBusy: '助手正在处理这本书，请等它结束后再重命名',
-	bookBusy: '正在更新书的结构，请稍后再试',
 	invalidJson: 'JSON 无法解析，设置未保存',
 	invalidJsonType: 'JSON 类型不符：需要对象或字符串数组，设置未保存',
 	invalidNumber: '请输入有效的非负数字；字号须大于零',

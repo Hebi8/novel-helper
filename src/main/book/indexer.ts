@@ -1,19 +1,11 @@
+import { movedPath } from '../../shared/paths';
 import { dirname } from 'node:path';
 import { buildOutline, type OutlineGraph } from '../../core/outline';
-import { readdir, realpath, stat, mkdir } from 'node:fs/promises';
+import { readdir, stat, mkdir } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { join, basename, matchesGlob } from 'node:path';
-import { Library, globRootDepth, globFolders, type FileKind } from '../../core/library';
-import {
-	MARKER_FILE,
-	SCAN_DEPTH,
-	SCAN_EXCLUDE,
-	parseMarker,
-	type Marker,
-	storyState,
-	storiesFromMarkers,
-	isUsable,
-} from '../../core/story';
+import { Library, globRootDepth, globFolders, type FileKind, type Rename } from '../../core/library';
+import { MARKER_FILE, SCAN_DEPTH, SCAN_EXCLUDE, parseMarker, type Marker, storiesFromMarkers } from '../../core/story';
 import { defaults, type Settings } from '../../shared/defaults';
 import type { Book, DiskFile, SaveResult } from '../../shared/api';
 import { atomicWrite, readOptional, readDocument, FileFormatError, type LineEnding } from './files';
@@ -164,8 +156,8 @@ export class BookIndex {
 			buoyVersion: this.buoyVersion,
 		};
 	}
-	async usable(): Promise<boolean> {
-		return isUsable(storyState({ valid: true, exists: true, marked: this.marker !== undefined, hasFiles: !this.library.empty }));
+	followRenames(renames: Rename[]): void {
+		this.opened = new Set([...this.opened].map((path) => movedPath(path, renames)));
 	}
 	start(): void {
 		this.watcher = watch(this.root, { recursive: true }, (_event, filename) => {
@@ -436,14 +428,4 @@ export class BookIndex {
 		this.changedListeners.clear();
 		this.fileListeners.clear();
 	}
-}
-export async function inspectBook(root: string): Promise<{ index?: BookIndex; roots: string[] }> {
-	const canonical = await realpath(root);
-	const index = new BookIndex(canonical);
-	await index.load();
-	if (await index.usable()) {
-		return { index, roots: [] };
-	}
-	index.dispose();
-	return { roots: await findStories(canonical) };
 }

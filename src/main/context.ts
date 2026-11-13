@@ -16,7 +16,7 @@ export interface MainContext {
 	onBookClosed(cleanup: (root: string) => void | Promise<void>): void;
 	windowFor(event: Pick<IpcMainInvokeEvent, 'sender'>): BrowserWindow;
 	broadcast(channel: string, data: unknown): void;
-	open(root: string, source?: BrowserWindow): Promise<OpenResult>;
+	open(root: string, source?: BrowserWindow, selected?: boolean): Promise<OpenResult>;
 	openSettings(): void;
 	openWelcome(result: OpenResult): void;
 	initialResult(event: IpcMainInvokeEvent): OpenResult | undefined;

@@ -50,6 +50,7 @@ export async function markExisting(index: BookIndex): Promise<boolean> {
 export async function prepareOpen(
 	root: string,
 	settings: Settings,
+	selected = false,
 ): Promise<{ root: string; index?: BookIndex; roots?: string[]; initialize?: boolean }> {
 	const index = new BookIndex(root, settings);
 	await index.load();
@@ -59,10 +60,15 @@ export async function prepareOpen(
 	if (await info(join(root, MARKER_FILE))) {
 		throw new Error(zh.invalidMarker);
 	}
+	const roots = await findStories(root);
+	if (roots.length && !selected) {
+		const choices = index.library.empty ? roots : [root, ...roots];
+		index.dispose();
+		return { root, roots: choices };
+	}
 	if (await markExisting(index)) {
 		return { root, index };
 	}
 	index.dispose();
-	const roots = await findStories(root);
 	return roots.length ? { root, roots } : { root, initialize: true };
 }

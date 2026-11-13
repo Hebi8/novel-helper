@@ -9,7 +9,7 @@ import { AgentClient, CLAUDE_ADAPTER } from '../acp/client';
 import { AssistantService } from '../main/assistant/service';
 import { AssistantRegistry } from '../main/assistant/registry';
 import { cachedLoginPath } from '../main/assistant/environment';
-import { storyNames } from '../main/assistant/names';
+import { bookNames } from '../main/book/names';
 import { BookIndex } from '../main/book/indexer';
 import { SettingsStore } from '../main/settings/store';
 import { changeKind, MAX_FILE_BYTES, type Change } from '../core/snapshot';
@@ -57,7 +57,7 @@ async function fixture(t: TestContext, flags: string[] = []) {
 	const index = new BookIndex(book);
 	await index.load();
 	const services: AssistantService[] = [];
-	const open = async (root = book, names: () => Promise<StoryNames> = () => storyNames(index)) => {
+	const open = async (root = book, names: () => Promise<StoryNames> = async () => bookNames(index)) => {
 		const service = new AssistantService({ root, userData, settings: () => settings.get(), names, environment: async () => {} });
 		services.push(service);
 		await service.load();
@@ -302,9 +302,9 @@ test('current file, cursor line and selected text accompany every message; the a
 	const renamed = new BookIndex(book);
 	await renamed.load();
 	t.after(() => renamed.dispose());
-	assert.equal((await storyNames(renamed)).chapters, 'chapters');
-	assert.equal((await storyNames(index)).outlines, '大纲');
-	const service = await open(book, () => storyNames(renamed));
+	assert.equal(bookNames(renamed).chapters, 'chapters');
+	assert.equal(bookNames(index).outlines, '大纲');
+	const service = await open(book, async () => bookNames(renamed));
 	const current = chapter.replace('正文/', 'chapters/');
 	await service.send('echo', {
 		path: current,

@@ -121,9 +121,9 @@ export function App() {
 			docs.dispose();
 		};
 	}, []);
-	const openBook = (root?: string) => {
+	const openBook = (root?: string, selected = false) => {
 		void window.novel.book
-			.open(root)
+			.open(root, selected)
 			.then(setOpenResult)
 			.catch((error) => setError(errorMessage(error)));
 	};
@@ -204,7 +204,7 @@ export function App() {
 				{book && openResult?.kind === 'choices' ? (
 					<div className="notice">
 						{openResult.roots.map((root) => (
-							<button key={root} onClick={() => openBook(root)}>
+							<button key={root} onClick={() => openBook(root, true)}>
 								{root}
 							</button>
 						))}
