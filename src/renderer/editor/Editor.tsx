@@ -32,7 +32,10 @@ export function Editor({ document: model, tab, active, chapter, settings, limite
 	const callbacks = useRef({ ready, cursor });
 	callbacks.current = { ready, cursor };
 	useEffect(() => {
-		const ghost = new GhostController(model.path, chapter, window.novel, settings.debounceMs, nextRequestId);
+		const ghost = new GhostController(model.path, chapter, window.novel, settings.debounceMs, nextRequestId, {
+			start: () => model.compositionStart(),
+			end: (text) => model.compositionEnd(text),
+		});
 		const extensions = [
 			history(),
 			ghost.extension(),
@@ -95,6 +98,9 @@ export function Editor({ document: model, tab, active, chapter, settings, limite
 		if (active) {
 			handle.current?.view.requestMeasure();
 			handle.current?.view.focus();
+			if (handle.current) {
+				handle.current.view.dispatch({ effects: EditorView.scrollIntoView(handle.current.view.state.selection.main.head) });
+			}
 		} else {
 			handle.current?.ghost.send({ type: 'blur' });
 			void model.save();

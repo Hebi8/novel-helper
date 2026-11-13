@@ -12,7 +12,7 @@ export interface MainContext {
 	windows: WindowStore;
 	bookFor(event: IpcMainInvokeEvent): BookIndex | undefined;
 	onBookClosed(cleanup: (root: string) => void | Promise<void>): void;
-	windowFor(event: IpcMainInvokeEvent): BrowserWindow;
+	windowFor(event: Pick<IpcMainInvokeEvent, 'sender'>): BrowserWindow;
 	broadcast(channel: string, data: unknown): void;
 	open(root: string, source?: BrowserWindow): Promise<OpenResult>;
 	openSettings(): void;

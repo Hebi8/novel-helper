@@ -59,12 +59,10 @@ export function App() {
 			window.novel.window.onCommand((command) => actionRef.current[command]()),
 		];
 		window.addEventListener('blur', docs.blur);
-		window.addEventListener('focus', docs.focus);
 		return () => {
 			alive = false;
 			unsubscribes.forEach((unsubscribe) => unsubscribe());
 			window.removeEventListener('blur', docs.blur);
-			window.removeEventListener('focus', docs.focus);
 			docs.dispose();
 		};
 	}, []);
@@ -75,23 +73,27 @@ export function App() {
 			.catch((error) => setError(String(error)));
 	};
 	const active = session.active ? documents.current.get(session.active) : undefined;
-	const selection = session.tabs.find((tab) => tab.path === session.active);
-	const count = active ? Array.from(active.text.replace(/\s/gu, '')).length : 0;
+
 	return (
 		<WorkspaceContext
 			value={{
 				book,
 				session,
-				current: active && selection ? { path: active.path, text: active.text, anchor: selection.anchor, head: selection.head } : undefined,
+				current: docs.current,
 				open: docs.open,
 				saveAll: docs.saveAll,
 			}}
 		>
 			<div className="app">
 				<TopBar name={book?.name} left={actions['left:toggle']} right={actions['right:toggle']} />
-				{error ? (
+				{openResult?.kind === 'error' && book ? (
+					<div role="alert" className="notice">
+						{openResult.message}
+					</div>
+				) : null}
+				{error || docs.error ? (
 					<div className="notice" role="alert">
-						{error}
+						{error || docs.error}
 					</div>
 				) : null}
 				{book && openResult?.kind === 'choices' ? (
@@ -163,7 +165,7 @@ export function App() {
 				{initial ? (
 					<StatusBar
 						status={initial.usage}
-						words={count}
+						document={active}
 						toggle={() => {
 							if (initial.usage.missingKey) {
 								void window.novel.settings.open();

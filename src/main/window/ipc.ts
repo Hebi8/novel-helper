@@ -2,6 +2,9 @@ import { ipcMain } from 'electron';
 import { channels, type SessionState } from '../../shared/api';
 import type { MainContext } from '../context';
 export function registerWindow(ctx: MainContext): void {
+	ipcMain.on(channels.close, (event) => {
+		ctx.windowFor(event).close();
+	});
 	ipcMain.handle(channels.bootstrap, (event) => {
 		const index = ctx.bookFor(event);
 		return {

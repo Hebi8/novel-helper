@@ -18,6 +18,7 @@ export interface SessionState {
 	active?: string;
 }
 export interface DiskFile {
+	error?: string;
 	path: string;
 	text: string;
 }
@@ -33,10 +34,16 @@ export type CompletionResult = { status: 'ok'; text: string } | { status: 'skipp
 export interface UsageStatus {
 	state: 'off' | 'on' | 'requesting' | 'problem' | 'limit';
 	missingKey: boolean;
+	priced: boolean;
 	problem?: string;
 	today: Totals;
 }
-export type OpenResult = { kind: 'opened' } | { kind: 'choices'; roots: string[] } | { kind: 'empty' } | { kind: 'cancelled' };
+export type OpenResult =
+	| { kind: 'error'; message: string }
+	| { kind: 'opened' }
+	| { kind: 'choices'; roots: string[] }
+	| { kind: 'empty' }
+	| { kind: 'cancelled' };
 export type MenuCommand =
 	| 'closeTab'
 	| 'previousTab'
@@ -88,6 +95,7 @@ export interface AppAPI {
 		bootstrap(): Promise<Bootstrap>;
 		saveSession(session: SessionState): Promise<void>;
 		flushed(): void;
+		close(): void;
 		onCommand(listener: (command: MenuCommand) => void): () => void;
 	};
 }
@@ -112,4 +120,5 @@ export const channels = {
 	session: 'window:session',
 	command: 'window:command',
 	flushed: 'window:flushed',
+	close: 'window:close',
 } as const;

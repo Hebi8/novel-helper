@@ -17,6 +17,12 @@ export class WindowStore {
 		writeFileSync(this.file + '.tmp', JSON.stringify(this.value));
 		renameSync(this.file + '.tmp', this.file);
 	}
+	forget(root: string): void {
+		this.value.recent = this.value.recent.filter((path) => path !== root);
+		this.value.open = this.value.open.filter((path) => path !== root);
+		delete this.value.books[root];
+		this.save();
+	}
 	opened(root: string): void {
 		this.value.recent = [root, ...this.value.recent.filter((p) => p !== root)].slice(0, 10);
 		this.value.open = [...new Set([...this.value.open, root])];

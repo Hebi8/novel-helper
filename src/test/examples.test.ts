@@ -1,4 +1,4 @@
-import { defaults as appDefaults } from '../shared/defaults';
+import { defaults } from '../shared/defaults';
 // The example workspace, indexed the way the extension indexes a folder with
 // the default settings, gives the context the README says it gives.
 
@@ -13,7 +13,7 @@ import { buildOutline, trail } from '../core/outline';
 
 const root = path.resolve(__dirname, '../..');
 const examples = path.join(root, 'examples');
-const defaults = Object.fromEntries(Object.entries(appDefaults).map(([key, value]) => [`novelHelper.${key}`, { default: value }])) as Record<string, { default: unknown }>;
+
 
 function files(dir: string): string[] {
 	return fs.readdirSync(path.join(examples, dir), { withFileTypes: true }).flatMap((d) => {
@@ -26,12 +26,12 @@ const read = (relative: string) => fs.readFileSync(path.join(examples, relative)
 
 /** The first folder of a default glob (`{正文,章节,…}/**`) as the folder names it accepts. */
 function folders(setting: string): { names: string[]; rootDepth: number } {
-	const [glob] = defaults[`novelHelper.files.${setting}`].default as string[];
+	const [glob] = defaults[`files.${setting}` as keyof typeof defaults] as string[];
 	return { names: glob.split('/')[0].replace(/[{}]/g, '').split(','), rootDepth: globRootDepth(glob) };
 }
 
 function index(): Library {
-	const library = new Library(defaults['novelHelper.files.bookNames'].default as string[]);
+	const library = new Library(defaults['files.bookNames'] as string[]);
 	const kinds: Array<[string, 'lore' | FileKind]> = [['lore', 'lore'], ['chapters', 'chapter'], ['outlines', 'outline'], ['summaries', 'summary']];
 	for (const [setting, kind] of kinds) {
 		const { names, rootDepth } = folders(setting);
@@ -48,8 +48,8 @@ function index(): Library {
 
 const limits = Object.fromEntries(
 	Object.entries(defaults)
-		.filter(([key]) => key.startsWith('novelHelper.context.') && key.endsWith('Chars'))
-		.map(([key, value]) => [key.slice('novelHelper.context.'.length), value.default]),
+		.filter(([key]) => key.startsWith('context.') && key.endsWith('Chars'))
+		.map(([key, value]) => [key.slice('context.'.length), value]),
 ) as unknown as ContextLimits;
 
 test('examples: the second chapter gets the outlines of the book, its volume and its arc, and the lore it names', () => {
@@ -68,7 +68,7 @@ test('examples: the second chapter gets the outlines of the book, its volume and
 		documentPath: chapter,
 		before: read(chapter),
 		after: '',
-		maxChars: defaults['novelHelper.maxSuggestionChars'].default as number,
+		maxChars: defaults.maxSuggestionChars as number,
 		entries: library.entries(),
 		matcher: library.matcher(),
 		levels: library.levelsOf(chapter).map((level) => ({

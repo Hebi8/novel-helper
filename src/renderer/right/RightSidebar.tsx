@@ -12,13 +12,13 @@ export function RightSidebar({ section, select, hidden }: { section: number; sel
 					</button>
 				))}
 			</nav>
-			<div hidden={section !== 0}>
+			<div className="sidebar-panel" hidden={section !== 0}>
 				<OutlinePanel />
 			</div>
-			<div hidden={section !== 1}>
+			<div className="sidebar-panel" hidden={section !== 1}>
 				<LorePanel />
 			</div>
-			<div hidden={section !== 2}>
+			<div className="sidebar-panel" hidden={section !== 2}>
 				<AssistantPanel />
 			</div>
 		</aside>

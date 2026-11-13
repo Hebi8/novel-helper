@@ -419,3 +419,26 @@ select:focus-visible {
 	border: 1px solid var(--line);
 	padding: 4px 9px;
 }
+
+.cm-line.blank-paragraph {
+	line-height: 0.975;
+}
+.tree-row {
+	white-space: normal;
+}
+.tree-name {
+	min-width: 0;
+}
+.tree-row small {
+	white-space: nowrap;
+}
+
+.sidebar-panel {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+}
+.sidebar-panel[hidden] {
+	display: none;
+}

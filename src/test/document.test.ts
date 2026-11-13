@@ -107,3 +107,62 @@ test('keep mine resolves an external conflict even after the old save acknowledg
 	assert.equal(model.conflict, undefined);
 	model.dispose();
 });
+test('a second external change preserves local text while the previous conflict is unresolved', async () => {
+	let finish!: (result: SaveResult) => void;
+	const model = document(
+		() =>
+			new Promise((resolve) => {
+				finish = resolve;
+			}),
+	);
+	model.edit('我的文字');
+	const saving = model.save();
+	await Promise.resolve();
+	model.external({ path: model.path, text: '磁盘一' });
+	finish({ saved: true });
+	await saving;
+	assert.equal(model.dirty, false);
+	assert.equal(model.external({ path: model.path, text: '磁盘二' }), 'conflict');
+	assert.equal(model.text, '我的文字');
+	assert.equal(model.conflict, '磁盘二');
+	model.dispose();
+});
+test('composition suspends the autosave timer and defers blur saves until committed text arrives', async (t) => {
+	t.mock.timers.enable({ apis: ['setTimeout'] });
+	const written: string[] = [];
+	const model = document(async (_path, text) => {
+		written.push(text);
+		return { saved: true };
+	});
+	model.edit('原文。');
+	model.compositionStart();
+	model.edit('原文。ni');
+	t.mock.timers.tick(1200);
+	await Promise.resolve();
+	assert.equal(written.length, 0);
+	const blur = model.save();
+	await Promise.resolve();
+	assert.equal(written.length, 0);
+	model.compositionEnd('原文。你');
+	await blur;
+	assert.deepEqual(written, ['原文。你']);
+	model.dispose();
+});
+test('composition ending restarts the one second autosave pause', async (t) => {
+	t.mock.timers.enable({ apis: ['setTimeout'] });
+	let calls = 0;
+	const model = document(async () => {
+		calls++;
+		return { saved: true };
+	});
+	model.compositionStart();
+	model.edit('ni');
+	model.compositionEnd('你');
+	t.mock.timers.tick(999);
+	await Promise.resolve();
+	assert.equal(calls, 0);
+	t.mock.timers.tick(1);
+	await model.save();
+	assert.equal(calls, 1);
+	model.dispose();
+});

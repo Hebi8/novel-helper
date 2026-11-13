@@ -19,7 +19,7 @@ const pairs: Record<string, string> = {
 const closers = Object.values(pairs);
 const jump = (view: EditorView) => {
 	const range = view.state.selection.main;
-	if (view.composing || !range.empty || !closers.includes(view.state.sliceDoc(range.head, range.head + 1))) {
+	if (view.compositionStarted || !range.empty || !closers.includes(view.state.sliceDoc(range.head, range.head + 1))) {
 		return false;
 	}
 	view.dispatch({ selection: { anchor: range.head + 1 } });
@@ -33,6 +33,7 @@ function lines(state: EditorState): DecorationSet {
 	for (let i = 1; i <= state.doc.lines; i++) {
 		const line = state.doc.line(i);
 		const classes = [
+			!spaced && !line.text.trim() ? 'blank-paragraph' : '',
 			line.from < frontmatter ? 'frontmatter' : '',
 			/^#{1,6}\s/.test(line.text) ? 'heading' : '',
 			spaced && line.text.trim() && line.from >= frontmatter ? 'paragraph' : '',
@@ -52,7 +53,7 @@ export const prose: Extension = [
 		provide: (field) => EditorView.decorations.from(field),
 	}),
 	EditorView.inputHandler.of((view, from, to, text) => {
-		if (view.composing || text.length !== 1) {
+		if (view.compositionStarted || text.length !== 1) {
 			return false;
 		}
 		if (from === to && closers.includes(text) && view.state.sliceDoc(from, from + 1) === text) {
@@ -76,7 +77,7 @@ export const prose: Extension = [
 			{
 				key: 'Tab',
 				run: (view) => {
-					if (view.composing) {
+					if (view.compositionStarted) {
 						return false;
 					}
 					if (jump(view)) {
@@ -89,7 +90,7 @@ export const prose: Extension = [
 			{
 				key: 'Enter',
 				run: (view) => {
-					if (view.composing) {
+					if (view.compositionStarted) {
 						return false;
 					}
 					if (jump(view)) {
@@ -105,7 +106,7 @@ export const prose: Extension = [
 				key: 'Backspace',
 				run: (view) => {
 					const range = view.state.selection.main;
-					if (view.composing || !range.empty || range.head === 0) {
+					if (view.compositionStarted || !range.empty || range.head === 0) {
 						return false;
 					}
 					const before = view.state.sliceDoc(range.head - 1, range.head),

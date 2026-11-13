@@ -7,6 +7,35 @@ export class DocumentModel {
 	error?: string;
 	private timer?: ReturnType<typeof setTimeout>;
 	private diskRevision = 0;
+	private composing = false;
+	private compositionDone?: Promise<void>;
+	private endComposition?: () => void;
+	private readonly listeners = new Set<() => void>();
+	version = 0;
+	subscribe = (listener: () => void) => {
+		this.listeners.add(listener);
+		return () => {
+			this.listeners.delete(listener);
+		};
+	};
+	private publish(): void {
+		this.version++;
+		this.onChanged();
+		this.listeners.forEach((listener) => listener());
+	}
+	compositionStart(): void {
+		this.composing = true;
+		clearTimeout(this.timer);
+		this.compositionDone = new Promise((resolve) => {
+			this.endComposition = resolve;
+		});
+	}
+	compositionEnd(text: string): void {
+		this.composing = false;
+		this.edit(text);
+		this.endComposition?.();
+		this.compositionDone = undefined;
+	}
 	private saving: Promise<void> = Promise.resolve();
 	onChanged: () => void = () => {};
 	constructor(
@@ -22,26 +51,40 @@ export class DocumentModel {
 	edit(text: string): void {
 		this.text = text;
 		clearTimeout(this.timer);
-		this.timer = setTimeout(() => {
-			void this.save();
-		}, 1000);
-		this.onChanged();
+		if (!this.composing) {
+			this.timer = setTimeout(() => {
+				void this.save();
+			}, 1000);
+		}
+		this.publish();
 	}
 	external(file: DiskFile): 'reload' | 'conflict' {
 		clearTimeout(this.timer);
 		this.diskRevision++;
-		if (this.dirty) {
+		if (file.error) {
+			this.error = file.error;
+			this.publish();
+			return 'conflict';
+		}
+		this.error = undefined;
+		if (this.dirty || this.conflict !== undefined) {
 			this.conflict = file.text;
-			this.onChanged();
+			this.publish();
 			return 'conflict';
 		}
 		this.text = this.base = file.text;
-		this.onChanged();
+		this.publish();
 		return 'reload';
 	}
 	save(force = false): Promise<void> {
+		if (this.composing) {
+			return this.compositionDone!.then(() => this.save(force));
+		}
 		clearTimeout(this.timer);
 		this.saving = this.saving.then(async () => {
+			if (this.composing) {
+				await this.compositionDone;
+			}
 			if ((!this.dirty && !(force && this.conflict !== undefined)) || (this.conflict !== undefined && !force)) {
 				return;
 			}
@@ -61,14 +104,14 @@ export class DocumentModel {
 			} catch (error) {
 				this.error = String(error);
 			}
-			this.onChanged();
+			this.publish();
 		});
 		return this.saving;
 	}
 	useDisk(): void {
 		this.text = this.base = this.conflict!;
 		this.conflict = undefined;
-		this.onChanged();
+		this.publish();
 	}
 	dispose(): void {
 		clearTimeout(this.timer);

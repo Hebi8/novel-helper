@@ -3,6 +3,7 @@ import { LINE_END_REST } from '../../shared/completion';
 export interface Position {
 	text: string;
 	offset: number;
+	empty: boolean;
 	chapter: boolean;
 	prose: boolean;
 }
@@ -19,7 +20,7 @@ export interface GhostState {
 	cached?: { key: string; text: string };
 }
 export type GhostEvent =
-	| { type: 'type' | 'move' | 'compositionEnd'; position: Position }
+	| { type: 'type' | 'move' | 'restore' | 'compositionEnd'; position: Position }
 	| { type: 'compositionStart' | 'timeout' | 'manual' | 'tab' | 'sentence' | 'escape' | 'blur' | 'focus' }
 	| { type: 'answer'; id: number; text: string }
 	| { type: 'failure'; id: number }
@@ -56,6 +57,7 @@ export function transition(current: GhostState, event: GhostEvent): { state: Gho
 		state.focused &&
 		state.auto &&
 		!state.limited &&
+		state.position.empty &&
 		state.position.chapter &&
 		state.position.prose &&
 		LINE_END_REST.test(state.position.text.slice(state.position.offset).split('\n', 1)[0]);
@@ -72,8 +74,6 @@ export function transition(current: GhostState, event: GhostEvent): { state: Gho
 		Object.assign(state, { enabled: event.enabled, auto: event.auto, limited: event.limited });
 		if (!state.enabled || !state.auto || state.limited) {
 			discard();
-		} else if (!state.composing) {
-			schedule();
 		}
 		return { state, actions };
 	}
@@ -82,6 +82,7 @@ export function transition(current: GhostState, event: GhostEvent): { state: Gho
 	}
 	switch (event.type) {
 		case 'compositionStart':
+			state.cached = state.ghost ? { key: keyOf(state.position), text: state.ghost } : undefined;
 			discard();
 			state.composing = true;
 			break;
@@ -102,9 +103,12 @@ export function transition(current: GhostState, event: GhostEvent): { state: Gho
 			state.position = event.position;
 			schedule();
 			break;
+		case 'restore':
+			discard();
+			state.position = event.position;
+			break;
 		case 'focus':
 			state.focused = true;
-			schedule();
 			break;
 		case 'blur':
 			discard();
@@ -114,17 +118,12 @@ export function transition(current: GhostState, event: GhostEvent): { state: Gho
 		case 'timeout':
 		case 'manual': {
 			const manual = event.type === 'manual';
-			if (!state.enabled || !state.focused || !state.position.prose || (!manual && !eligible())) {
+			if (!state.enabled || !state.focused || !state.position.prose || !state.position.empty || (!manual && !eligible())) {
 				break;
 			}
 			discard();
-			if (!manual && state.cached?.key === keyOf(state.position)) {
-				state.ghost = state.cached.text;
-				actions.push({ type: 'show', text: state.ghost });
-			} else {
-				state.pending = ++state.serial;
-				actions.push({ type: 'request', id: state.pending, position: state.position, manual });
-			}
+			state.pending = ++state.serial;
+			actions.push({ type: 'request', id: state.pending, position: state.position, manual });
 			break;
 		}
 		case 'answer':
@@ -165,6 +164,8 @@ export function transition(current: GhostState, event: GhostEvent): { state: Gho
 			state.cached = rest ? { key: keyOf(state.position), text: rest } : undefined;
 			if (rest) {
 				actions.push({ type: 'show', text: rest });
+			} else {
+				schedule();
 			}
 			break;
 		}

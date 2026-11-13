@@ -15,6 +15,8 @@ export function commands(target: CommandTarget): Record<MenuCommand, () => void>
 		closeTab: () => {
 			if (active()) {
 				void docs.close(active()!);
+			} else {
+				window.novel.window.close();
 			}
 		},
 		previousTab: () => docs.moveTab(-1),

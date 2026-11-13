@@ -39,7 +39,16 @@ export function installMenu(ctx: MainContext): void {
 						submenu: ctx.windows.value.recent.map((root) => ({
 							label: root,
 							click: () => {
-								void ctx.open(root);
+								void ctx.open(root).then((result) => {
+									if (result.kind === 'error') {
+										const window = BrowserWindow.getFocusedWindow();
+										if (window) {
+											window.webContents.send(channels.openResult, result);
+										} else {
+											void dialog.showMessageBox({ message: result.message });
+										}
+									}
+								});
 							},
 						})),
 					},

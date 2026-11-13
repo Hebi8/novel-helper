@@ -1,3 +1,5 @@
+import { inspectRememberedBook, restoreBooks } from './window/reopen';
+import { CloseGate } from './window/closeGate';
 import { app, BrowserWindow, ipcMain, webContents } from 'electron';
 import { join } from 'node:path';
 import { SettingsStore } from './settings/store';
@@ -5,7 +7,7 @@ import { SecretStore } from './secrets/store';
 import { UsageStore } from '../storage/usageStore';
 import { CompletionService } from './completion/service';
 import { WindowStore } from './window/state';
-import { inspectBook, type BookIndex } from './book/indexer';
+import { type BookIndex } from './book/indexer';
 import { registerFeatures } from './register';
 import { installMenu } from './window/menu';
 import { channels } from '../shared/api';
@@ -61,18 +63,19 @@ if (!app.requestSingleInstanceLock()) {
 				windows.opened(index.root);
 			}
 			const senderId = window.webContents.id;
-			let flushed = false;
+			const closeGate = new CloseGate();
+			window.webContents.on('render-process-gone', () => closeGate.rendererGone());
 			const onFlushed = async (event: Electron.IpcMainEvent) => {
 				if (event.sender !== window.webContents) {
 					return;
 				}
 				await completion.drain(String(senderId));
-				flushed = true;
+				closeGate.acknowledge();
 				window.close();
 			};
 			ipcMain.on(channels.flushed, onFlushed);
 			window.on('close', (event) => {
-				if (!settingsOnly && !flushed) {
+				if (!settingsOnly && closeGate.needsFlush()) {
 					event.preventDefault();
 					window.webContents.send(channels.command, 'flush');
 				}
@@ -119,7 +122,11 @@ if (!app.requestSingleInstanceLock()) {
 			windowFor: (event) => BrowserWindow.fromWebContents(event.sender)!,
 			broadcast: (channel, data) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channel, data)),
 			open: async (root, source) => {
-				const inspected = await inspectBook(root);
+				const inspected = await inspectRememberedBook(root, windows);
+				if ('error' in inspected) {
+					installMenu(context);
+					return { kind: 'error', message: inspected.error };
+				}
 				if (!inspected.index) {
 					return inspected.roots.length ? { kind: 'choices', roots: inspected.roots } : { kind: 'empty' };
 				}
@@ -169,11 +176,7 @@ if (!app.requestSingleInstanceLock()) {
 				createWindow();
 			}
 		});
-		if (windows.value.open.length) {
-			for (const root of [...windows.value.open]) {
-				await context.open(root);
-			}
-		} else {
+		if (!(await restoreBooks(windows, (root) => context.open(root)))) {
 			createWindow();
 		}
 	});

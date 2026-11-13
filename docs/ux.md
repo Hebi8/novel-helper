@@ -170,7 +170,7 @@ examples            示例书；测试只用它的临时副本
 - 启动应用的测试用不需要 key 的本地假服务，不碰钥匙串。
 
 - 主进程各功能分别注册 IPC，注册列表在 `src/main/register.ts`；窗口关闭清理通过 `MainContext.onBookClosed` 登记。
-- 左右栏各面板独立，切换或收起只隐藏；面板通过 `useWorkspace()` 取得当前文档、选区和打开、保存接口。
+- 左右栏各面板独立，切换或收起只隐藏；面板通过 `useWorkspace().current()` 读取当前文档和选区，通过 `open()`、`saveAll()` 打开和保存。
 - 文档管理、欢迎页、顶栏、冲突条分别独立；界面命令在 `shell/commands.ts` 的表中登记。
 
 ## 10. 分批

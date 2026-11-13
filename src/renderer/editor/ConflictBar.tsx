@@ -1,6 +1,8 @@
+import { useDocument } from './useDocument';
 import type { DocumentModel } from './document';
 import { zh } from '../strings';
 export function ConflictBar({ document, reload }: { document?: DocumentModel; reload(): void }) {
+	useDocument(document);
 	return (
 		<>
 			{document?.conflict !== undefined ? (

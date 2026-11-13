@@ -19,8 +19,9 @@ export function ChaptersPanel({ tree, selected, open }: Props) {
 			>
 				<span className="tree-symbol">{item.kind === 'chapter' ? '·' : '⌄'}</span>
 				<span className="tree-name">{item.name}</span>
-				<small title={`${zh.outline} ${item.outline ? '✓' : '✗'} · ${zh.summary} ${item.summary ? '✓' : '✗'}`}>
-					{item.outline ? zh.outlineMark : '—'} {item.summary ? zh.summaryMark : '—'}
+				<small>
+					{zh.outline} {item.outline ? '✓' : '✗'}
+					{item.kind !== 'level' ? ` · ${zh.summary} ${item.summary ? '✓' : '✗'}` : ''}
 				</small>
 			</button>
 			{item.children.length ? <div role="group">{item.children.map((child) => node(child, depth + 1))}</div> : null}

@@ -24,6 +24,7 @@ export class CompletionService {
 		usage.onDidChange(() => this.publish());
 	}
 	status(): UsageStatus {
+		const model = this.settings.model();
 		return {
 			state: !this.settings.get().enabled
 				? 'off'
@@ -36,6 +37,7 @@ export class CompletionService {
 							: 'on',
 			problem: this.problem,
 			missingKey: this.missingKey,
+			priced: ratesFor(model.model, new Date(), model.pricing, this.settings.prices()) !== undefined,
 			today: this.usage.today(),
 		};
 	}

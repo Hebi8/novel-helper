@@ -10,7 +10,7 @@ export interface EditorSnapshot {
 export interface Workspace {
 	book?: Book;
 	session: SessionState;
-	current?: EditorSnapshot;
+	current(): EditorSnapshot | undefined;
 	open(path: string): Promise<void>;
 	saveAll(): Promise<boolean>;
 }

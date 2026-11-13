@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { initialGhost, transition, type GhostState, type GhostEvent, type Position } from '../renderer/ghost/machine';
-const position = (text = '他说hello', offset = text.length): Position => ({ text, offset, chapter: true, prose: true });
+const position = (text = '他说hello', offset = text.length): Position => ({ text, offset, empty: true, chapter: true, prose: true });
 function machine(p = position()) {
 	let state: GhostState = { ...initialGhost(p), focused: true };
 	return {
@@ -113,4 +113,43 @@ test('provider or model changes invalidate cached ghost text and abort the old r
 	assert.ok(actions.some((a) => a.type === 'hide'));
 	assert.ok(actions.some((a) => a.type === 'abort'));
 	assert.ok(m.send({ type: 'timeout' }).some((a) => a.type === 'request'));
+});
+test('Tab acceptance starts a new pause; accepting one sentence keeps the rest without a request', () => {
+	const m = machine();
+	m.send({ type: 'timeout' });
+	m.send({ type: 'answer', id: m.state.pending!, text: '灯亮了。门开了。' });
+	assert.equal(
+		m.send({ type: 'sentence' }).some((action) => action.type === 'timer' || action.type === 'request'),
+		false,
+	);
+	assert.equal(m.state.ghost, '门开了。');
+	assert.ok(m.send({ type: 'tab' }).some((action) => action.type === 'timer'));
+	assert.ok(m.send({ type: 'timeout' }).some((action) => action.type === 'request'));
+});
+test('focus, restored cursors, and settings do not start an automatic pause; user movement does', () => {
+	const m = machine();
+	for (const event of [
+		{ type: 'focus' } as const,
+		{ type: 'restore', position: position() } as const,
+		{ type: 'settings', enabled: true, auto: true, limited: false } as const,
+	]) {
+		assert.equal(
+			m.send(event).some((action) => action.type === 'timer' || action.type === 'request'),
+			false,
+		);
+	}
+	assert.ok(m.send({ type: 'move', position: position() }).some((action) => action.type === 'timer'));
+});
+test('nonempty selections suppress both manual and automatic continuation', () => {
+	const m = machine({ ...position(), empty: false });
+	assert.deepEqual(m.send({ type: 'timeout' }), []);
+	assert.deepEqual(m.send({ type: 'manual' }), []);
+});
+test('returning to a location consults main again; only cancelling composition reuses renderer text', () => {
+	const m = machine();
+	m.send({ type: 'timeout' });
+	m.send({ type: 'answer', id: m.state.pending!, text: '灯亮了。' });
+	m.send({ type: 'move', position: position() });
+	assert.ok(m.send({ type: 'timeout' }).some((action) => action.type === 'request'));
+	assert.equal(m.state.ghost, '');
 });

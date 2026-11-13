@@ -48,6 +48,7 @@ export class GhostController {
 	private view?: EditorView;
 	private disposed = false;
 	private configuration?: string;
+	private compositionTimer?: ReturnType<typeof setTimeout>;
 	private readonly wireIds = new Map<number, number>();
 	constructor(
 		private readonly path: string,
@@ -55,8 +56,9 @@ export class GhostController {
 		private readonly api: AppAPI,
 		private debounceMs: number,
 		private readonly nextRequestId: () => number,
+		private readonly composition: { start(): void; end(text: string): void },
 	) {
-		this.state = initialGhost({ text: '', offset: 0, chapter, prose: /\.(md|txt)$/.test(path) });
+		this.state = initialGhost({ text: '', offset: 0, empty: true, chapter, prose: /\.(md|txt)$/.test(path) });
 	}
 	attach(view: EditorView): void {
 		this.view = view;
@@ -66,6 +68,7 @@ export class GhostController {
 		return {
 			text: this.view!.state.doc.toString(),
 			offset: this.view!.state.selection.main.head,
+			empty: this.view!.state.selection.main.empty,
 			chapter: this.chapter,
 			prose: /\.(md|txt)$/.test(this.path),
 		};
@@ -144,12 +147,15 @@ export class GhostController {
 			),
 			EditorView.domEventHandlers({
 				compositionstart: () => {
+					clearTimeout(this.compositionTimer);
+					this.composition.start();
 					this.send({ type: 'compositionStart' });
 					return false;
 				},
 				compositionend: () => {
-					queueMicrotask(() => {
+					this.compositionTimer = setTimeout(() => {
 						if (!this.disposed) {
+							this.composition.end(this.view!.state.doc.toString());
 							this.send({ type: 'compositionEnd', position: this.position() });
 						}
 					});
@@ -172,7 +178,10 @@ export class GhostController {
 					// Dispatch decorations after the editor finishes the originating update.
 					queueMicrotask(() => {
 						if (!this.disposed) {
-							this.send({ type: update.docChanged ? 'type' : 'move', position: this.position() });
+							this.send({
+								type: update.docChanged ? 'type' : update.transactions.some((tr) => tr.isUserEvent('select')) ? 'move' : 'restore',
+								position: this.position(),
+							});
 						}
 					});
 				}
@@ -182,6 +191,7 @@ export class GhostController {
 	dispose(): void {
 		this.send({ type: 'blur' });
 		this.disposed = true;
+		clearTimeout(this.compositionTimer);
 		clearTimeout(this.timer);
 	}
 }

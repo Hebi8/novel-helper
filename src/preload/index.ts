@@ -36,6 +36,7 @@ const api: AppAPI = {
 		bootstrap: () => ipcRenderer.invoke(c.bootstrap),
 		saveSession: (session) => ipcRenderer.invoke(c.session, session),
 		flushed: () => ipcRenderer.send(c.flushed),
+		close: () => ipcRenderer.send(c.close),
 		onCommand: (listener) => listen(c.command, listener),
 	},
 };

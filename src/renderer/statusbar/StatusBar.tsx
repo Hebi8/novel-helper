@@ -1,7 +1,11 @@
+import type { DocumentModel } from '../editor/document';
+import { useDocument } from '../editor/useDocument';
 import type { UsageStatus } from '../../shared/api';
 import { dollars } from '../../core/usage';
 import { zh } from '../strings';
-export function StatusBar({ status, words, toggle }: { status: UsageStatus; words: number; toggle(): void }) {
+export function StatusBar({ status, document, toggle }: { status: UsageStatus; document?: DocumentModel; toggle(): void }) {
+	useDocument(document);
+	const words = document ? Array.from(document.text.replace(/\s/gu, '')).length : 0;
 	return (
 		<footer className="statusbar">
 			<button onClick={toggle} title={status.missingKey ? zh.missingKey : status.problem}>
@@ -9,7 +13,7 @@ export function StatusBar({ status, words, toggle }: { status: UsageStatus; word
 				{zh.continuation} · {zh[status.state]}
 			</button>
 			<span>
-				{zh.today} {status.today.requests} {zh.requests} · ≈ {dollars(status.today.cost)}
+				{zh.today} {status.today.requests} {zh.requests} {status.priced ? ` · ${dollars(status.today.cost)}` : ''}
 			</span>
 			<span className="grow" />
 			<span>

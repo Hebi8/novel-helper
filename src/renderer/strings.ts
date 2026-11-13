@@ -1,5 +1,9 @@
 export const zh = {
 	app: 'Novel Helper',
+	nonUtf8: '这个文件不是 UTF-8 编码',
+	mixedLines: '这个文件混用了换行符，不能无损编辑',
+	outsideBook: '文件路径不能超出书的文件夹',
+	missingBook: '这个文件夹已不存在，已从最近打开中移除',
 	chapters: '章节',
 	outline: '大纲',
 	lore: '设定',

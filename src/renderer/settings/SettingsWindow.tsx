@@ -3,6 +3,15 @@ import { PROVIDERS, type ProviderId } from '../../llm/providers';
 import type { Settings } from '../../shared/api';
 import { zh } from '../strings';
 export function SettingsWindow() {
+	useEffect(
+		() =>
+			window.novel.window.onCommand((command) => {
+				if (command === 'closeTab') {
+					window.novel.window.close();
+				}
+			}),
+		[],
+	);
 	const [settings, update] = useState<Settings>();
 	const [hasKey, setHasKey] = useState(false);
 	const [editing, setEditing] = useState<'model' | 'key'>();

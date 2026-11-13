@@ -27,13 +27,13 @@ export function LeftSidebar({
 					</button>
 				))}
 			</nav>
-			<div hidden={section !== 0}>
+			<div className="sidebar-panel" hidden={section !== 0}>
 				<ChaptersPanel tree={book.tree} selected={selected} open={open} />
 			</div>
-			<div hidden={section !== 1}>
+			<div className="sidebar-panel" hidden={section !== 1}>
 				<OutlinePanel />
 			</div>
-			<div hidden={section !== 2}>
+			<div className="sidebar-panel" hidden={section !== 2}>
 				<LorePanel />
 			</div>
 		</aside>

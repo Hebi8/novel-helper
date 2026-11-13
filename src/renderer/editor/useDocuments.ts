@@ -5,8 +5,9 @@ import { DocumentModel } from './document';
 export function useDocuments() {
 	const [session, setSession] = useState<SessionState>({ tabs: [] });
 	const sessionRef = useRef(session);
-	sessionRef.current = session;
-	const [, redraw] = useState(0);
+
+	const [error, setError] = useState('');
+	const sessionTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const documents = useRef(new Map<string, DocumentModel>());
 	const handles = useRef(new Map<string, EditorHandle>());
 	const opening = useRef(new Map<string, Promise<DocumentModel>>());
@@ -19,21 +20,32 @@ export function useDocuments() {
 		}
 		let pending = opening.current.get(path);
 		if (!pending) {
-			pending = window.novel.book.read(path).then((file) => {
-				const model = new DocumentModel(path, file.text, window.novel);
-				model.onChanged = () => redraw((n) => n + 1);
-				documents.current.set(path, model);
-				opening.current.delete(path);
-				return model;
-			});
+			pending = window.novel.book
+				.read(path)
+				.then((file) => {
+					const model = new DocumentModel(path, file.text, window.novel);
+
+					documents.current.set(path, model);
+
+					return model;
+				})
+				.finally(() => opening.current.delete(path));
 			opening.current.set(path, pending);
 		}
 		return pending;
 	};
+	const flushSession = () => {
+		clearTimeout(sessionTimer.current);
+		void window.novel.window.saveSession(sessionRef.current);
+	};
+	const scheduleSession = () => {
+		clearTimeout(sessionTimer.current);
+		sessionTimer.current = setTimeout(flushSession, 500);
+	};
 	const persist = (value: SessionState) => {
 		sessionRef.current = value;
 		setSession(value);
-		void window.novel.window.saveSession(value);
+		scheduleSession();
 	};
 	const select = (path: string) => {
 		const old = sessionRef.current.active;
@@ -43,7 +55,12 @@ export function useDocuments() {
 		persist({ ...sessionRef.current, active: path });
 	};
 	const open = async (path: string) => {
-		await load(path);
+		try {
+			await load(path);
+		} catch (error) {
+			setError(String(error));
+			return;
+		}
 		const current = sessionRef.current;
 		if (current.active) {
 			await documents.current.get(current.active)?.save();
@@ -68,6 +85,7 @@ export function useDocuments() {
 		model.dispose();
 	};
 	const saveAll = async () => {
+		flushSession();
 		await Promise.all([...documents.current.values()].map((model) => model.save()));
 		const blocked = [...documents.current.values()].find((model) => model.dirty || model.conflict !== undefined || model.error);
 		if (blocked) {
@@ -76,9 +94,21 @@ export function useDocuments() {
 		return !blocked;
 	};
 	const restore = async (value: SessionState) => {
-		await Promise.all(value.tabs.map((tab) => load(tab.path)));
-		sessionRef.current = value;
-		setSession(value);
+		const loaded = await Promise.all(
+			value.tabs.map(async (tab) => {
+				try {
+					await load(tab.path);
+					return tab;
+				} catch (error) {
+					setError(String(error));
+					return undefined;
+				}
+			}),
+		);
+		const tabs = loaded.filter((tab): tab is SessionState['tabs'][number] => tab !== undefined);
+		const restored = { tabs, active: tabs.some((tab) => tab.path === value.active) ? value.active : tabs[0]?.path };
+		sessionRef.current = restored;
+		setSession(restored);
 	};
 	const external = (file: DiskFile) => {
 		const model = documents.current.get(file.path);
@@ -88,7 +118,8 @@ export function useDocuments() {
 	};
 	const cursor = (path: string, anchor: number, head: number) => {
 		const current = sessionRef.current;
-		persist({ ...current, tabs: current.tabs.map((tab) => (tab.path === path ? { ...tab, anchor, head } : tab)) });
+		sessionRef.current = { ...current, tabs: current.tabs.map((tab) => (tab.path === path ? { ...tab, anchor, head } : tab)) };
+		scheduleSession();
 	};
 	const moveTab = (step: number) => {
 		const current = sessionRef.current;
@@ -98,18 +129,22 @@ export function useDocuments() {
 		}
 	};
 	const blur = () => {
+		flushSession();
 		handles.current.forEach((handle) => handle.ghost.send({ type: 'blur' }));
 		documents.current.forEach((model) => {
 			void model.save();
 		});
 	};
-	const focus = () => {
-		const active = sessionRef.current.active;
-		if (active) {
-			handles.current.get(active)?.ghost.send({ type: 'focus' });
-		}
+
+	const dispose = () => {
+		clearTimeout(sessionTimer.current);
+		documents.current.forEach((model) => model.dispose());
 	};
-	const dispose = () => documents.current.forEach((model) => model.dispose());
+	const current = () => {
+		const tab = sessionRef.current.tabs.find((tab) => tab.path === sessionRef.current.active);
+		const model = tab ? documents.current.get(tab.path) : undefined;
+		return model && tab ? { path: model.path, text: model.text, anchor: tab.anchor, head: tab.head } : undefined;
+	};
 	return {
 		session,
 		sessionRef,
@@ -125,7 +160,8 @@ export function useDocuments() {
 		cursor,
 		moveTab,
 		blur,
-		focus,
+		current,
+		error,
 		dispose,
 	};
 }
