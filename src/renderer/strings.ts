@@ -1,0 +1,15 @@
+export const zh={
+  app: 'Novel Helper',chapters: '章节',outline: '大纲',lore: '设定',readOutline: '看大纲',readLore: '看设定',assistant: '助手',
+  settings: '设置',openFolder: '打开文件夹',recent: '最近打开',empty: '还没初始化',chooseStory: '选择故事空间',
+  left: '收起左栏',right: '收起右栏',closeTab: '关闭标签页',previousTab: '上一个标签页',nextTab: '下一个标签页',
+  continuation: '续写',auto: '自动',manual: '手动',provider: '服务商',model: '模型',apiKey: 'API key',
+  on: '开',off: '关',requesting: '请求中',problem: '有问题',limit: '到了日上限',
+  keySet: '已设置',keyUnset: '未设置',setKey: '设置',replaceKey: '替换',clear: '清除',confirm: '确定',cancel: '取消',
+  conflict: '磁盘上的文件已更改',keepMine: '留我的',useDisk: '用磁盘的',missingKey: '未设置 API key',
+  outlineMark: '纲',summaryMark: '摘',summary: '摘要',helpText: 'Tab 收下续写 · Esc 放弃 · ⌥\\ 手动续写\n⌘O 打开文件夹 · ⌘F 查找 · ⌘, 设置',
+  words: '字',today: '今天',requests: '次',about: '关于 Novel Helper',quit: '退出 Novel Helper',file: '文件',open: '打开…',edit: '编辑',
+  undo: '撤销',redo: '重做',cut: '剪切',copy: '复制',paste: '粘贴',selectAll: '全选',find: '查找',view: '显示',
+  toggle: '开关',ask: '手动要一条',window: '窗口',minimize: '最小化',zoom: '缩放',help: '帮助',helpTitle: 'Novel Helper 帮助',
+  providers: { anthropic: 'Anthropic',openai: 'OpenAI',deepseek: 'DeepSeek',gemini: 'Gemini',openaiCompatible: 'OpenAI 兼容' },
+  search: { 'Find': '查找','Replace': '替换','next': '下一个','previous': '上一个','all': '全部','match case': '区分大小写','by word': '完整词','regexp': '正则表达式','replace': '替换','replace all': '全部替换','close': '关闭' }
+};

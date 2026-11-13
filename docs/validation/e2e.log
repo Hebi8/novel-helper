@@ -1,0 +1,67 @@
+
+> novel-helper@0.4.0 e2e
+> npm run build && playwright test
+
+
+> novel-helper@0.4.0 build
+> electron-vite build
+
+(node:95642) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+vite v8.3.8 building ssr environment for production...
+transforming...
+✓ 34 modules transformed.
+rendering chunks...
+dist/main/index.js  95.55 kB
+
+✓ built in 12ms
+vite v8.3.8 building ssr environment for production...
+transforming...
+✓ 3 modules transformed.
+rendering chunks...
+dist/preload/index.js  2.58 kB
+
+✓ built in 4ms
+vite v8.3.8 building client environment for production...
+transforming...
+✓ 64 modules transformed.
+rendering chunks...
+dist/renderer/index.html                     0.54 kB
+dist/renderer/assets/index-VZz5nL4U.css      5.73 kB
+dist/renderer/assets/index-DVJz5Tli.js   1,577.45 kB
+
+✓ built in 54ms
+(node:95643) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 1 test using 1 worker
+
+(node:95644) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  pw:browser <launching> /Users/dreaife/.lody-oss/repos/github---hebi8---novel-helper/worktrees/8bde2c40-cde1-4910-b0ec-af39473fa890/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron -r /Users/dreaife/.lody-oss/repos/github---hebi8---novel-helper/worktrees/8bde2c40-cde1-4910-b0ec-af39473fa890/node_modules/playwright-core/lib/server/electron/loader.js --inspect=0 --remote-debugging-port=0 /Users/dreaife/.lody-oss/repos/github---hebi8---novel-helper/worktrees/8bde2c40-cde1-4910-b0ec-af39473fa890/dist/main/index.js --test-mode --user-data-dir=/var/folders/jz/vz2rtl75557cgjrf6rck4s6w0000gp/T/novel-e2e-8JKzv8/data +0ms
+  pw:browser <launched> pid=95645 +1ms
+  pw:browser [pid=95645] <kill> +64ms
+  pw:browser [pid=95645] <will force kill> +0ms
+  pw:browser [pid=95645] exception while trying to kill process: Error: kill EPERM +0ms
+  pw:browser [pid=95645] <process did exit: exitCode=null, signal=SIGABRT> +2ms
+  pw:browser [pid=95645] starting temporary directories cleanup +0ms
+  pw:browser [pid=95645] finished temporary directories cleanup +1ms
+  ✘  1 e2e/writing.spec.ts:8:1 › open a book, accept ghost text, autosave, and reload an external change (76ms)
+
+
+  1) e2e/writing.spec.ts:8:1 › open a book, accept ghost text, autosave, and reload an external change
+
+    Error: Process failed to launch!
+
+    Error Context: test-results/writing-open-a-book-accept-b29ad-d-reload-an-external-change/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/writing-open-a-book-accept-b29ad-d-reload-an-external-change/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/writing-open-a-book-accept-b29ad-d-reload-an-external-change/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    e2e/writing.spec.ts:8:1 › open a book, accept ghost text, autosave, and reload an external change

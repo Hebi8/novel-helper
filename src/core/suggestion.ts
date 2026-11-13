@@ -100,7 +100,7 @@ interface ParagraphStyle {
 }
 
 /** How the paragraphs in `lines` are written: a blank line between them or just a line break, and their indent. */
-function paragraphStyle(lines: string[]): ParagraphStyle {
+export function paragraphStyle(lines: string[]): ParagraphStyle {
 	const indents = new Map<string, number>();
 	let single = 0;
 	let blank = 0;

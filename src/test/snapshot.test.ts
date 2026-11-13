@@ -9,7 +9,7 @@ import * as path from 'node:path';
 import { after, describe, mock, test } from 'node:test';
 import { changeKind, diff, expired, looksBinary, MAX_FILE_BYTES, parseRecord, referenced, restorePlan, skipsFolder, SNAPSHOT_DIR, titleOf } from '../core/snapshot';
 import { SnapshotStore } from '../storage/snapshotStore';
-import { filesIn } from './vscodeStub';
+import { filesIn } from './files';
 
 const made: string[] = [];
 after(() => made.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));

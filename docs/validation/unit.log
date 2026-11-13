@@ -1,0 +1,14 @@
+ok 99 - UsageStore
+  ---
+  duration_ms: 831.931917
+  type: 'suite'
+  ...
+1..99
+# tests 358
+# suites 74
+# pass 358
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3766.482917

@@ -1,0 +1,11 @@
+import { readFile,writeFile,rename } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+export async function readOptional(file: string): Promise<string|undefined> {
+  try { return await readFile(file,'utf8'); }
+  catch(error) { if((error as NodeJS.ErrnoException).code==='ENOENT') { return undefined; } throw error; }
+}
+export async function atomicWrite(file: string,text: string,io={ writeFile,rename }): Promise<void> {
+  const temporary=`${file}.${randomUUID()}.tmp`;
+  await io.writeFile(temporary,text,'utf8');
+  await io.rename(temporary,file);
+}
