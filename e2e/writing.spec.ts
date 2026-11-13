@@ -143,7 +143,7 @@ test('selection and search focus do not request, and a crashed renderer can clos
 		expect(closed).toBe(true);
 	});
 });
-test('closing during composition blurs the editor and never saves preedit letters', async () => {
+test('closing during composition ends it and saves what the editor shows', async () => {
 	await withBook(async ({ app, page, book, original }) => {
 		await page.evaluate(() => window.novel.settings.set('trigger', 'manual'));
 		await app.evaluate(({ BrowserWindow }) => {
@@ -157,7 +157,8 @@ test('closing during composition blurs the editor and never saves preedit letter
 		const closed = page.waitForEvent('close');
 		await page.evaluate(() => window.novel.window.close());
 		await closed;
-		expect(await readFile(join(book, chapter), 'utf8')).not.toContain('ni');
+		// Losing focus makes the input method commit what it was composing; the file gets the text that was on screen.
+		expect(await readFile(join(book, chapter), 'utf8')).toBe(original + 'ni');
 	});
 });
 test('unreadable chapters stay visible and opening errors can be dismissed or cleared by success', async () => {
