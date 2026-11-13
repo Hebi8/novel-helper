@@ -66,9 +66,16 @@ test('welcome initializes selected items, opens the book, and discovers nested m
 		);
 		const dialog = page.getByRole('dialog', { name: '初始化这本书', exact: true });
 		await expect(dialog.getByRole('combobox', { name: '目录名称', exact: true })).toHaveValue('en');
-		await expect(dialog.getByText('chapters', { exact: true })).toBeVisible();
+		await expect(dialog.getByRole('checkbox', { name: /^chapters / })).toBeChecked();
 		await dialog.getByRole('button', { name: '确定', exact: true }).click();
-		await expect.poll(async () => JSON.parse(await readFile(join(target, '.novel-helper/project.json'), 'utf8')).language).toBe('en');
+		await expect
+			.poll(() =>
+				readFile(join(target, '.novel-helper/project.json'), 'utf8').then(
+					(text) => JSON.parse(text).language,
+					() => undefined,
+				),
+			)
+			.toBe('en');
 		await expect.poll(() => app.windows().length).toBe(1);
 		const newPage = app.windows()[0];
 		await expect(newPage.locator('.topbar strong')).toHaveText('new-book');
@@ -161,7 +168,8 @@ test('settings edit in place, JSON errors do not save, editor preferences update
 			.poll(() =>
 				page.evaluate(() => {
 					const editor = document.querySelector('.editor-pane:not([style*="display: none"]) .cm-editor')!;
-					const cursor = editor.querySelector('.cm-cursor')?.getBoundingClientRect();
+					// The editor uses the native caret; after jumping to the end it is on the last line.
+					const cursor = [...editor.querySelectorAll('.cm-line')].at(-1)!.getBoundingClientRect();
 					const scroll = editor.querySelector('.cm-scroller')!.getBoundingClientRect();
 					return cursor ? Math.abs(cursor.top + cursor.height / 2 - scroll.top - scroll.height / 2) : Infinity;
 				}),
