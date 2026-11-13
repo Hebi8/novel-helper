@@ -24,7 +24,7 @@ export function StatusBar({ status, document, toggle }: { status: UsageStatus; d
 			</button>
 			{workspace.chapter ? (
 				<button className="status-buoy" onClick={workspace.showOutline}>
-					{describeBuoy(workspace.buoy?.state, workspace.buoy?.lost)}
+					{describeBuoy(workspace.buoy?.state, workspace.buoy?.lost, workspace.buoy?.unreadable)}
 				</button>
 			) : null}
 			<span className="grow" />

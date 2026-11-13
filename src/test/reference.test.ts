@@ -1,3 +1,5 @@
+import fs = require('node:fs/promises');
+import { describeBuoy } from '../renderer/strings';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -645,4 +647,120 @@ test('request and usage reports translate the empty state and daily limit', asyn
 	const report = await service.report('new', 'usageReport');
 	assert.match(report, /日上限：\$3/);
 	assert.doesNotMatch(report, /Daily limit/);
+});
+
+for (const format of ['mixed lines', 'non-UTF8'] as const) {
+	test(`an unreadable buoy outline (${format}) preserves marks and recovers after repair`, async (t) => {
+		const f = await fixture(t);
+		const original = await readFile(join(f.book, mirror));
+		const buoyFile = join(f.book, buoyPath(chapter));
+		const before = await readFile(buoyFile);
+		await writeFile(join(f.book, mirror), format === 'mixed lines' ? Buffer.from('甲\r\n乙\n') : Buffer.from([255]));
+		await f.index.refresh(mirror);
+		const at = await f.buoys.prepare(chapter, '文'.repeat(2000));
+		assert.deepEqual(at.unreadable, [mirror]);
+		f.buoys.update(at, '文'.repeat(2000));
+		await f.buoys.drain();
+		assert.equal(f.requests.length, 0);
+		assert.deepEqual(await readFile(buoyFile), before);
+		const status = await f.buoys.status(chapter);
+		assert.match(describeBuoy(status.state, status.lost, status.unreadable), /读不了/);
+		assert.ok(describeBuoy(status.state, status.lost, status.unreadable).includes(mirror));
+		await assert.rejects(f.buoys.act(chapter, 'relocate'), /读不了/);
+		assert.equal(f.requests.length, 0);
+		await writeFile(join(f.book, mirror), original);
+		await f.index.refresh(mirror);
+		const restored = await f.buoys.read(chapter);
+		assert.deepEqual(restored.unreadable, []);
+		assert.equal(restored.position!.nodes[0].title, '周伯收信');
+		assert.deepEqual(await readFile(buoyFile), before);
+		await rm(join(f.book, mirror));
+		await f.index.refresh(mirror);
+		const deleted = await f.buoys.read(chapter);
+		assert.deepEqual(deleted.unreadable, []);
+		assert.equal(deleted.lost, true);
+		f.answer('1');
+		f.buoys.update(deleted, '文'.repeat(2000));
+		await f.buoys.drain();
+		assert.equal(f.requests.length, 1);
+		assert.equal((await f.marks()).marks.at(-1).by, 'relocate');
+	});
+}
+
+test('position relocation reads prefaced raw replies through the final numbered chunk', async (t) => {
+	const f = await fixture(t);
+	let prefix = '';
+	t.mock.method(
+		globalThis,
+		'fetch',
+		async () => new Response(openaiText(prefix) + openaiText('1') + openaiUsage({ prompt_tokens: 10, completion_tokens: 2 }) + OPENAI_END),
+	);
+	const buoys = new Buoys(f.index, f.settings, f.usage, () => undefined);
+	for (prefix of ['以下是', '根据你的', '输出：']) {
+		await buoys.act(chapter, 'relocate');
+		const current = await buoys.read(chapter);
+		assert.equal(current.position!.nodes[0].id, current.graph.leaves[0].id);
+		assert.equal(current.file!.marks.at(-1)!.by, 'relocate');
+	}
+	assert.equal(f.usage.today().requests, 3);
+	await buoys.dispose();
+});
+
+test('disposing aborted position requests waits for accounting and releases the usage lock', async (t) => {
+	const f = await fixture(t);
+	await f.usage.add('continuation', { input: 10, output: 2 }, 0);
+	let signal!: AbortSignal;
+	let started!: () => void;
+	const begun = new Promise<void>((resolve) => {
+		started = resolve;
+	});
+	t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+		signal = init.signal!;
+		return new Response(
+			new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(new TextEncoder().encode(openaiText('以下是')));
+					signal.addEventListener('abort', () => controller.error(new DOMException('Aborted', 'AbortError')), { once: true });
+					started();
+				},
+			}),
+		);
+	});
+	let writing!: () => void;
+	const writeStarted = new Promise<void>((resolve) => {
+		writing = resolve;
+	});
+	let release!: () => void;
+	const writeAllowed = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const write = fs.writeFile;
+	t.mock.method(fs, 'writeFile', async (...args: Parameters<typeof fs.writeFile>) => {
+		if (String(args[0]) === join(f.root, 'usage/usage.json')) {
+			writing();
+			await writeAllowed;
+		}
+		return write(...args);
+	});
+	const buoy = new Buoys(f.index, f.settings, f.usage, () => undefined);
+	const before = await readFile(join(f.book, buoyPath(chapter)));
+	buoy.update(await buoy.read(chapter), '文'.repeat(2000));
+	await begun;
+	let closed = false;
+	const closing = buoy.dispose().then(() => {
+		closed = true;
+	});
+	assert.equal(signal.aborted, true);
+	await writeStarted;
+	assert.equal(closed, false);
+	assert.ok((await readdir(join(f.root, 'usage'))).includes('usage.lock'));
+	release();
+	await closing;
+	const ledger = new UsageStore(join(f.root, 'usage'));
+	await ledger.load();
+	assert.equal(ledger.today().requests, 2);
+	assert.equal(ledger.today().unknown, 1);
+	assert.ok(JSON.stringify(ledger.current()).includes('position'));
+	assert.equal((await readdir(join(f.root, 'usage'))).includes('usage.lock'), false);
+	assert.deepEqual(await readFile(join(f.book, buoyPath(chapter))), before);
 });

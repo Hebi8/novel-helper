@@ -106,6 +106,7 @@ export function loreExtension(entries: readonly LoreEntry[], open: (path: string
 				view.dom.addEventListener('mousemove', this.move);
 				view.dom.addEventListener('mouseleave', this.leave);
 				view.dom.addEventListener('focusout', this.loseFocus);
+				view.scrollDOM.addEventListener('scroll', this.leave);
 			}
 			update(update: import('@codemirror/view').ViewUpdate) {
 				if (update.docChanged || update.viewportChanged || update.startState.field(catalog) !== update.state.field(catalog)) {
@@ -164,6 +165,7 @@ export function loreExtension(entries: readonly LoreEntry[], open: (path: string
 				this.view.dom.removeEventListener('mousemove', this.move);
 				this.view.dom.removeEventListener('mouseleave', this.leave);
 				this.view.dom.removeEventListener('focusout', this.loseFocus);
+				this.view.scrollDOM.removeEventListener('scroll', this.leave);
 			}
 		},
 		{

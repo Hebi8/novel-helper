@@ -3,7 +3,7 @@ import { ConflictBar } from './ConflictBar';
 import { loreExtension, updateLore } from '../reference/loreExtension';
 import { useWorkspace } from '../workspace';
 import { useEffect, useRef } from 'react';
-import { Compartment, EditorState } from '@codemirror/state';
+import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { search, searchKeymap, openSearchPanel } from '@codemirror/search';
@@ -48,7 +48,6 @@ export function Editor({
 	side,
 }: Props) {
 	const workspace = useWorkspace();
-	const lore = useRef(new Compartment());
 	const callbacksOpen = useRef(workspace.open);
 	const entriesRef = useRef(workspace.reference.entries);
 	entriesRef.current = workspace.reference.entries;
@@ -91,7 +90,7 @@ export function Editor({
 				doc: model.text,
 				selection: { anchor: Math.min(anchor, model.text.length), head: Math.min(head, model.text.length) },
 				extensions: [
-					lore.current.of(model.readOnly ? [] : loreExtension(entriesRef.current, (path, options) => callbacksOpen.current(path, options))),
+					model.readOnly ? [] : loreExtension(entriesRef.current, (path, options) => callbacksOpen.current(path, options)),
 					...extensions,
 				],
 			});

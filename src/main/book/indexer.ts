@@ -95,7 +95,8 @@ export class BookIndex {
 	private referenceVersion = 0;
 	private buoyVersion = 0;
 	private referenceContents = new Map<string, string | undefined>();
-	private graph?: { key: string; value: OutlineGraph };
+	private unreadableOutlines = new Set<string>();
+	private graph?: { key: string; value: OutlineGraph & { unreadable: string[] } };
 	private files = new Set<string>();
 	private contents = new Map<string, string>();
 	private lineEndings = new Map<string, LineEnding>();
@@ -330,15 +331,21 @@ export class BookIndex {
 	async outlineSource(path: string): Promise<{ path: string; content: string } | undefined> {
 		try {
 			const content = await readDocument(join(this.root, path));
+			this.unreadableOutlines.delete(path);
 			return content && { path, content: content.text };
 		} catch (error) {
 			if (error instanceof FileFormatError || ignored(error)) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+					this.unreadableOutlines.delete(path);
+				} else {
+					this.unreadableOutlines.add(path);
+				}
 				return undefined;
 			}
 			throw error;
 		}
 	}
-	async outline(): Promise<OutlineGraph> {
+	async outline(): Promise<OutlineGraph & { unreadable: string[] }> {
 		const { files, book } = this.library.outlines();
 		const sources = await Promise.all(
 			files.map(async (file) => {
@@ -346,14 +353,18 @@ export class BookIndex {
 				return source && { ...file, content: source.content };
 			}),
 		);
-		const key = JSON.stringify([sources, book]);
+		const unreadable = files.filter((file) => this.unreadableOutlines.has(file.path)).map((file) => file.path);
+		const key = JSON.stringify([sources, book, unreadable]);
 		if (this.graph?.key !== key) {
 			this.graph = {
 				key,
-				value: buildOutline(
-					sources.filter((file) => file !== undefined),
-					{ file: book.outline, name: book.name },
-				),
+				value: {
+					...buildOutline(
+						sources.filter((file) => file !== undefined),
+						{ file: book.outline, name: book.name },
+					),
+					unreadable,
+				},
 			};
 		}
 		return this.graph!.value;

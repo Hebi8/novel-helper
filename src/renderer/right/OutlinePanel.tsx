@@ -118,7 +118,7 @@ export function OutlinePanel() {
 					.pop()
 					?.replace(/\.(md|txt)$/, '')}
 				<br />
-				{describeBuoy(workspace.buoy?.state, workspace.buoy?.lost)}
+				{describeBuoy(workspace.buoy?.state, workspace.buoy?.lost, workspace.buoy?.unreadable)}
 			</div>
 			{error ? (
 				<p className="panel-error" role="alert">

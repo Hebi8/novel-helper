@@ -176,6 +176,7 @@ export interface ReferenceData {
 	nodes: OutlineItem[];
 }
 export interface BuoyStatus {
+	unreadable?: string[];
 	chapter: string;
 	state?: import('../core/buoy').BuoyState;
 	lost: boolean;

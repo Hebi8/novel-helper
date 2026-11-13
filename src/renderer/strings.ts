@@ -152,6 +152,7 @@ export const zh = {
 	buoyNoText: '本章还没有正文',
 	buoyUnset: '尚未放置浮标',
 	buoyMissing: '浮标的节点已不在大纲中',
+	buoyUnreadable: (paths: readonly string[]) => `浮标所在的大纲文件读不了：${paths.join('、')}`,
 	buoyNotLocated: '没有完成定位，浮标未更改。请查看 API key 或模型回答。',
 	buoyFirst: '已经是第一个节点',
 	buoyLast: '已经是最后一个节点',
@@ -430,7 +431,14 @@ const reportTranslations: Record<string, string> = {
 export function translateReport(message: string, ...args: Array<string | number>): string {
 	return (reportTranslations[message] ?? message).replace(/\{(\d+)\}/g, (_match, n: string) => String(args[Number(n)]));
 }
-export function describeBuoy(state: import('../core/buoy').BuoyState | undefined, lost = false): string {
+export function describeBuoy(
+	state: import('../core/buoy').BuoyState | undefined,
+	lost = false,
+	unreadable: readonly string[] = [],
+): string {
+	if (unreadable.length) {
+		return zh.buoyUnreadable(unreadable);
+	}
 	if (!state) {
 		return zh.buoyUnset;
 	}

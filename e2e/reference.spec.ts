@@ -259,3 +259,30 @@ test('lore type edits trim whitespace, reject empty types, and popovers preserve
 		await expect(page.locator('.editor:visible .cm-content')).toBeFocused();
 	});
 });
+
+test('scrolling closes hover cards and keeps the editor scrollable while keyboard cards remain', async () => {
+	await withReferenceBook(async ({ page, book }) => {
+		const file = join(book, chapter);
+		await writeFile(file, (await readFile(file, 'utf8')) + '\n\n' + '林小满沿着海边走，钟声从远处传来。\n\n'.repeat(120));
+		const scroller = page.locator('.editor:visible .cm-scroller');
+		await expect.poll(() => scroller.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeGreaterThan(600);
+		const name = page.locator('.editor:visible .lore-name').filter({ hasText: '林小满' }).first();
+		await name.hover();
+		await expect(page.locator('.lore-tooltip')).toBeVisible();
+		await page.mouse.wheel(0, 120);
+		await expect(page.locator('.lore-tooltip')).toHaveCount(0);
+		const before = await scroller.evaluate((element) => element.scrollTop);
+		await page.mouse.wheel(0, 120);
+		await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(before);
+		await scroller.evaluate((element) => {
+			element.scrollTop = 0;
+		});
+		await name.click();
+		await page.keyboard.press('Meta+i');
+		await expect(page.locator('.lore-tooltip')).toBeVisible();
+		await scroller.evaluate((element) => {
+			element.scrollTop += 20;
+		});
+		await expect(page.locator('.lore-tooltip')).toBeVisible();
+	});
+});

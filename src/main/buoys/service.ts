@@ -49,12 +49,12 @@ export interface ChapterPosition {
 	file?: BuoyFile;
 	position?: Position;
 	lost: boolean;
+	unreadable: string[];
 }
 export class Buoys {
 	private last: Promise<unknown> = Promise.resolve();
 	private running = new Map<string, Promise<unknown>>();
 	private manual = new Set<Promise<unknown>>();
-	private generation = 0;
 	private controllers = new Set<AbortController>();
 	private searchAgainAt = new Map<string, number>();
 	private disposed = false;
@@ -94,11 +94,14 @@ export class Buoys {
 		const [graph, file] = await Promise.all([this.index.outline(), this.serial(() => this.load(chapter, text))]);
 		const last = file?.marks.at(-1);
 		const position = last && resolve(graph, last.state);
-		return { chapter, graph, file, position, lost: last !== undefined && position === undefined };
+		const unreadable = graph.unreadable.filter((path) =>
+			last?.state.nodes.some((node) => node.id === path || node.id.startsWith(path + '#')),
+		);
+		return { chapter, graph, file, position, lost: last !== undefined && position === undefined, unreadable };
 	}
 	async status(chapter: string, text?: string): Promise<BuoyStatus> {
 		const at = await this.read(chapter, text);
-		return { chapter, state: at.position ? stateOf(at.position) : at.file?.marks.at(-1)?.state, lost: at.lost };
+		return { chapter, state: at.position ? stateOf(at.position) : at.file?.marks.at(-1)?.state, lost: at.lost, unreadable: at.unreadable };
 	}
 	async prepare(chapter: string, text: string): Promise<ChapterPosition> {
 		const at = await this.read(chapter, text);
@@ -132,7 +135,7 @@ export class Buoys {
 		}
 		let job: Promise<unknown>;
 		if (!at.position) {
-			if (chars < 200 || chars < (this.searchAgainAt.get(at.chapter) ?? 0)) {
+			if (at.unreadable.length || chars < 200 || chars < (this.searchAgainAt.get(at.chapter) ?? 0)) {
 				return;
 			}
 			job = this.search(at, text).then((found) => {
@@ -160,7 +163,6 @@ export class Buoys {
 		) {
 			return;
 		}
-		const generation = this.generation;
 		const controller = new AbortController();
 		this.controllers.add(controller);
 		const answer = await this.request(
@@ -173,7 +175,6 @@ export class Buoys {
 			},
 			controller.signal,
 		);
-		this.controllers.delete(controller);
 		if (answer.usage) {
 			const rates = ratesFor(model.model, new Date(), model.pricing, this.settings.prices());
 			await this.usage.add(
@@ -182,6 +183,7 @@ export class Buoys {
 				rates ? costOf(answer.usage, rates) : undefined,
 			);
 		}
+		this.controllers.delete(controller);
 		if (controller.signal.aborted) {
 			return;
 		}
@@ -189,7 +191,7 @@ export class Buoys {
 			this.onError(answer.error);
 			return;
 		}
-		return generation !== this.generation ? undefined : answer.text;
+		return answer.text;
 	}
 	private async commitAnswer(at: ChapterPosition, position: Position, by: MarkSource, text: string): Promise<boolean> {
 		// Check and append under the same queue: a manual mark must never be overtaken by a model reply.
@@ -243,6 +245,9 @@ export class Buoys {
 			throw new Error(zh.buoyEmpty);
 		}
 		if (action === 'relocate') {
+			if (at.unreadable.length) {
+				throw new Error(zh.buoyUnreadable(at.unreadable));
+			}
 			if (!text.slice(frontmatterLength(text)).trim()) {
 				throw new Error(zh.buoyNoText);
 			}
@@ -284,15 +289,16 @@ export class Buoys {
 		}
 	}
 	cancel(): void {
-		this.generation++;
 		this.controllers.forEach((controller) => controller.abort());
 	}
 	async drain(): Promise<void> {
 		await Promise.all([...this.running.values(), ...this.manual]);
 		await this.last;
 	}
-	dispose(): void {
+	async dispose(): Promise<void> {
 		this.disposed = true;
 		this.cancel();
+		await Promise.allSettled([...this.running.values(), ...this.manual]);
+		await this.last;
 	}
 }
