@@ -1,9 +1,10 @@
+import { memo } from 'react';
 import type { Item } from '../../core/transcript';
 import { zh } from '../strings';
 import { Markdown } from './Markdown';
 import { Changes } from './Changes';
 
-export function TranscriptItem({
+export const TranscriptItem = memo(function TranscriptItem({
 	item,
 	busy,
 	diff,
@@ -103,4 +104,4 @@ export function TranscriptItem({
 				</div>
 			);
 	}
-}
+});

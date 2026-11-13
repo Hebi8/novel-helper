@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { AgentClient, AgentFailure, agentCommand, type AgentCommand, type AgentHandlers } from '../../acp/client';
 import { whereIs } from '../../acp/places';
@@ -11,12 +11,12 @@ import { titleOf, type Change, type SnapshotRecord } from '../../core/snapshot';
 import { Transcript, type AskOption, type Item } from '../../core/transcript';
 import { SnapshotStore, type Blocked } from '../../storage/snapshotStore';
 import type { Settings } from '../../shared/defaults';
-import type { AssistantDiff, AssistantState } from '../../shared/assistant';
+import type { AssistantDiff, AssistantEvent, AssistantState } from '../../shared/assistant';
 import { assistantMessages as m } from '../../renderer/strings';
 import { atomicWrite, readOptional } from '../book/files';
 import { bookPath } from '../book/paths';
 import { prepareAgentEnvironment } from './environment';
-import { writeTarget } from './files';
+import { readForAgent, writeTarget } from './files';
 
 interface Saved {
 	session?: { agent: string; id?: string };
@@ -45,8 +45,9 @@ export class AssistantService {
 	private running?: Promise<unknown>;
 	private saving: Promise<void> = Promise.resolve();
 	private askCount = 0;
+	private seenFiles = new Map<string, string>();
 	private readonly asks = new Map<string, (allow?: boolean) => void>();
-	private readonly listeners = new Set<(state: AssistantState) => void>();
+	private readonly listeners = new Set<(event: AssistantEvent) => void>();
 	private readonly turnListeners = new Set<(changes: Change[]) => void>();
 	private readonly revertListeners = new Set<(changes: Change[]) => void>();
 	private readonly store: SnapshotStore;
@@ -80,7 +81,7 @@ export class AssistantService {
 	state(): AssistantState {
 		return { items: structuredClone(this.transcript.items), busy: this.busy, status: this.status };
 	}
-	onChanged(listener: (state: AssistantState) => void): () => void {
+	onChanged(listener: (event: AssistantEvent) => void): () => void {
 		this.listeners.add(listener);
 		return () => {
 			this.listeners.delete(listener);
@@ -99,8 +100,13 @@ export class AssistantService {
 		};
 	}
 	private changed(): void {
-		const state = this.state();
-		this.listeners.forEach((listener) => listener(state));
+		this.emit({ type: 'state', state: this.state() });
+	}
+	private emit(event: AssistantEvent): void {
+		this.listeners.forEach((listener) => listener(event));
+	}
+	private show(index: number): void {
+		this.emit({ type: 'item', index, item: structuredClone(this.transcript.items[index]) });
 	}
 	private save(): Promise<void> {
 		const saved: Saved = { session: this.session, items: this.transcript.kept(), notes: this.notes };
@@ -109,24 +115,22 @@ export class AssistantService {
 		return this.saving;
 	}
 	private notice(level: 'info' | 'error', text: string, detail?: string): void {
-		this.transcript.push({ kind: 'notice', level, text, detail });
-		this.changed();
+		this.show(this.transcript.push({ kind: 'notice', level, text, detail }));
 	}
 	private setStatus(status: string): void {
 		this.status = status;
-		this.changed();
+		this.emit({ type: 'status', busy: this.busy, status });
 	}
 	private async exclusive<T>(work: () => Promise<T>): Promise<T | undefined> {
 		if (this.busy || this.disposed || this.resetting) {
 			return;
 		}
 		this.busy = true;
-		this.changed();
+		this.setStatus(this.status);
 		const running = work().finally(async () => {
 			await this.save();
 			this.busy = false;
-			this.status = '';
-			this.changed();
+			this.setStatus('');
 		});
 		this.running = running;
 		return running;
@@ -137,7 +141,7 @@ export class AssistantService {
 		}
 		const id = String(++this.askCount);
 		const item: Extract<Item, { kind: 'ask' }> = { kind: 'ask', id, title, detail, options };
-		this.transcript.push(item);
+		const index = this.transcript.push(item);
 		return new Promise((resolve) => {
 			const abort = () => this.asks.get(id)?.();
 			this.asks.set(id, (allow) => {
@@ -149,11 +153,11 @@ export class AssistantService {
 				} else {
 					item.closed = true;
 				}
-				this.changed();
+				this.show(index);
 				resolve(chosen?.id);
 			});
 			signal?.addEventListener('abort', abort);
-			this.changed();
+			this.show(index);
 		});
 	}
 	answer(id: string, allow: boolean): void {
@@ -175,8 +179,10 @@ export class AssistantService {
 		};
 		return {
 			update: (update) => {
-				this.transcript.apply(update, name);
-				this.changed();
+				const index = this.transcript.apply(update, name);
+				if (index !== undefined) {
+					this.show(index);
+				}
 			},
 			permission: async (request, signal) => {
 				if (this.stopped || this.disposed || signal.aborted) {
@@ -201,22 +207,36 @@ export class AssistantService {
 				return this.ask(call.title ?? m.permission, [...said, ...files.map(name)].join('\n'), options, signal);
 			},
 			readFile: async (file) => {
-				const full = resolve(root, file);
-				if (this.stopped || this.disposed || ((await whereIs(root, file)) === 'outside' && !(await this.confirm(m.readOutside, full)))) {
+				const full = await writeTarget(resolve(root, file));
+				if (this.stopped || this.disposed || ((await whereIs(root, full)) === 'outside' && !(await this.confirm(m.readOutside, full)))) {
 					throw new Error(m.denied);
 				}
-				return readFile(full, 'utf8');
+				const text = await readForAgent(full);
+				if (text === undefined) {
+					throw new Error(m.fileMissing);
+				}
+				this.seenFiles.set(full, this.hash(text));
+				return text;
 			},
 			writeFile: async (file, content) => {
 				const full = await writeTarget(resolve(root, file));
 				if (this.stopped || this.disposed || ((await whereIs(root, full)) !== 'inside' && !(await this.confirm(m.writeUnkept, full)))) {
 					throw new Error(m.denied);
 				}
+				const current = await readForAgent(full);
+				if (current !== undefined && this.hash(current) !== this.seenFiles.get(full)) {
+					const { RequestError } = await import('@agentclientprotocol/sdk');
+					throw RequestError.internalError(undefined, m.fileChanged);
+				}
 				await mkdir(dirname(full), { recursive: true });
 				await atomicWrite(full, content);
+				this.seenFiles.set(full, this.hash(content));
 			},
 			log: (text) => appendFileSync(this.logFile, `${new Date().toISOString()} ${text}\n`),
 		};
+	}
+	private hash(text: string): string {
+		return createHash('sha256').update(text).digest('hex');
 	}
 	private async connect(command: AgentCommand, names: StoryNames, signal: AbortSignal): Promise<AgentClient> {
 		const agent = JSON.stringify(command);
@@ -330,12 +350,17 @@ export class AssistantService {
 			return false;
 		}
 		const record = await this.store.begin({ kind: 'turn', title: titleOf(text) });
+		const root = await realpath(this.options.root);
+		this.seenFiles = new Map(Object.entries(record.files).map(([path, hash]) => [resolve(root, path), hash]));
 		const block = editorContextBlock({ ...context, notes: this.notes.splice(0) }, names.language);
-		this.transcript.push({
-			kind: 'user',
-			text,
-			context: context.path === undefined ? undefined : m.context(context.path, context.line, [...(context.selection?.text ?? '')].length),
-		});
+		this.show(
+			this.transcript.push({
+				kind: 'user',
+				text,
+				context:
+					context.path === undefined ? undefined : m.context(context.path, context.line, [...(context.selection?.text ?? '')].length),
+			}),
+		);
 		await this.save();
 		this.setStatus(m.working);
 		let stop = 'failed';
@@ -348,14 +373,19 @@ export class AssistantService {
 				stop = await client.prompt(blocks);
 			}
 		} catch (error) {
-			this.explain(error, command, 'turn');
+			if (this.disposed) {
+				stop = 'cancelled';
+			} else {
+				this.explain(error, command, 'turn');
+			}
 		}
 		for (const settle of this.asks.values()) {
 			settle();
 		}
 		const changes = await this.store.finish(record.id);
-		this.transcript.endTurn({ kind: 'turn', ...(changes.length && { record: record.id }), stop, changes });
-		this.changed();
+		this.transcript
+			.endTurn({ kind: 'turn', ...(changes.length && { record: record.id }), stop, changes })
+			.forEach((index) => this.show(index));
 		this.turnListeners.forEach((listener) => listener(changes));
 		return true;
 	}

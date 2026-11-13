@@ -191,6 +191,8 @@ export const zh = {
 };
 
 export const assistantMessages = {
+	fileMissing: '文件已不存在，请重新确认路径。',
+	fileChanged: '文件已被改动，本次没有写入。请重新读取文件后再修改。',
 	allow: '允许这一次',
 	reject: '不允许',
 	permission: '助手请求许可',

@@ -8,6 +8,7 @@ const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 const command = (...parts: string[]) => JSON.stringify(parts);
 async function withBook(
 	run: (fixture: { app: ElectronApplication; page: Page; book: string; root: string; original: string; pidFile: string }) => Promise<void>,
+	flags: string[] = [],
 ) {
 	const root = await mkdtemp(join(tmpdir(), 'novel-assistant-e2e-'));
 	const book = join(root, 'book');
@@ -22,7 +23,14 @@ async function withBook(
 			enabled: false,
 			'assistant.agent': 'custom',
 			'assistant.command': process.execPath,
-			'assistant.args': ['--experimental-strip-types', resolve('src/test/fakeAgent.ts'), '--resume', '--close', `--pid=${pidFile}`],
+			'assistant.args': [
+				'--experimental-strip-types',
+				resolve('src/test/fakeAgent.ts'),
+				'--resume',
+				'--close',
+				`--pid=${pidFile}`,
+				...flags,
+			],
 		}),
 	);
 	const original = await readFile(join(book, chapter), 'utf8');
@@ -208,4 +216,28 @@ test('the context banner follows editor cursor and selection before typing a mes
 		expect(answer).toContain(`当前打开的文件：${chapter}`);
 		expect(answer).toContain('<selection>\n林小满\n</selection>');
 	});
+});
+
+test('stopping during agent startup restores the unsent draft without adding a user message', async () => {
+	await withBook(
+		async ({ page, pidFile }) => {
+			const text = 'say 启动期间停止后还要保留的消息';
+			await send(page, text);
+			await expect(page.getByRole('status').filter({ hasText: '正在启动助手' })).toBeVisible();
+			await expect.poll(() => existsSync(pidFile)).toBe(true);
+			const input = page.getByRole('textbox', { name: '给助手的消息' });
+			await expect(input).toHaveValue('');
+			await page.getByRole('button', { name: '停止', exact: true }).click();
+			await idle(page);
+			await expect(input).toHaveValue(text);
+			await expect(page.locator('.assistant-user')).toHaveCount(0);
+			await send(page, text);
+			await expect(page.getByRole('status').filter({ hasText: '正在启动助手' })).toBeVisible();
+			await input.fill('后来输入的草稿');
+			await page.getByRole('button', { name: '停止', exact: true }).click();
+			await idle(page);
+			await expect(input).toHaveValue('后来输入的草稿');
+		},
+		['--init-hangs'],
+	);
 });

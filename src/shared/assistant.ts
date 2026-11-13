@@ -8,6 +8,10 @@ export interface AssistantState {
 	busy: boolean;
 	status: string;
 }
+export type AssistantEvent =
+	| { type: 'state'; state: AssistantState }
+	| { type: 'status'; busy: boolean; status: string }
+	| { type: 'item'; index: number; item: Item };
 export interface AssistantDiff {
 	path: string;
 	before: string;
@@ -24,5 +28,5 @@ export interface AssistantAPI {
 	diff(record: number, path: string): Promise<AssistantDiff>;
 	revert(record: number): Promise<{ blocked: Blocked[] }>;
 	openLink(href: string): Promise<void>;
-	onChanged(listener: (state: AssistantState) => void): () => void;
+	onChanged(listener: (event: AssistantEvent) => void): () => void;
 }

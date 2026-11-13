@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SnapshotRecord } from '../../core/snapshot';
 import type { Blocked } from '../../storage/snapshotStore';
-import type { AssistantState } from '../../shared/assistant';
+import type { AssistantEvent, AssistantState } from '../../shared/assistant';
 import { useWorkspace } from '../workspace';
 import { zh } from '../strings';
 import { errorMessage } from '../errors';
@@ -12,6 +12,7 @@ import { DiffOverlay } from '../assistant/DiffOverlay';
 import { Overlay } from '../assistant/Overlay';
 import { Changes } from '../assistant/Changes';
 import { TranscriptItem } from '../assistant/TranscriptItem';
+import { applyAssistantEvent } from '../assistant/state';
 
 type Modal =
 	| { kind: 'history' }
@@ -32,19 +33,20 @@ export function AssistantPanel() {
 	const log = useRef<HTMLDivElement>(null);
 	const composing = useRef(false);
 	const sendGeneration = useRef(0);
+	const stoppedBeforeSend = useRef(false);
 	const atBottom = useRef(true);
 	const busy = state.busy || saving || resetting;
 	const { context, refresh: refreshContext } = useEditorContext(workspace);
-	const run = (operation: Promise<unknown>) => {
+	const run = useCallback((operation: Promise<unknown>) => {
 		void operation.catch((error) => setError(errorMessage(error)));
-	};
+	}, []);
 	const openHistory = async () => {
 		setHistory((await window.novel.assistant.history()).reverse());
 		setModal({ kind: 'history' });
 	};
 
 	const stop = () => {
-		sendGeneration.current++;
+		stoppedBeforeSend.current = true;
 		run(window.novel.assistant.stop());
 	};
 	const newSession = () => {
@@ -57,16 +59,21 @@ export function AssistantPanel() {
 
 	useEffect(() => {
 		let alive = true;
-		let received = false;
-		const unsubscribe = window.novel.assistant.onChanged((next) => {
-			received = true;
-			setState(next);
+		let ready = false;
+		const pending: AssistantEvent[] = [];
+		const unsubscribe = window.novel.assistant.onChanged((event) => {
+			if (ready) {
+				setState((state) => applyAssistantEvent(state, event));
+			} else {
+				pending.push(event);
+			}
 		});
 		void window.novel.assistant
 			.state()
 			.then((next) => {
-				if (alive && !received) {
-					setState(next);
+				if (alive) {
+					setState(pending.reduce(applyAssistantEvent, next));
+					ready = true;
 				}
 			})
 			.catch((error) => {
@@ -107,6 +114,7 @@ export function AssistantPanel() {
 			return;
 		}
 		const generation = ++sendGeneration.current;
+		stoppedBeforeSend.current = false;
 		const text = draft;
 		setSaving(true);
 		setError('');
@@ -115,7 +123,7 @@ export function AssistantPanel() {
 				setError(zh.assistantSaveFailed);
 				return;
 			}
-			if (generation !== sendGeneration.current) {
+			if (generation !== sendGeneration.current || stoppedBeforeSend.current) {
 				return;
 			}
 			setDraft((current) => (current === text ? '' : current));
@@ -132,10 +140,6 @@ export function AssistantPanel() {
 		} finally {
 			setSaving(false);
 		}
-	};
-	const diff = async (record: number, path: string) => {
-		const value = await window.novel.assistant.diff(record, path);
-		setModal({ kind: 'diff', diff: value, history: modal?.kind === 'history' });
 	};
 	const revert = async (record: number) => {
 		setSaving(true);
@@ -155,8 +159,20 @@ export function AssistantPanel() {
 			setSaving(false);
 		}
 	};
-	const askRevert = (record: number, undo: boolean) => setModal({ kind: 'confirm', record, undo, history: modal?.kind === 'history' });
-	const showDiff = (record: number, path: string) => run(diff(record, path));
+	const askRevert = useCallback((record: number, undo: boolean) => {
+		setModal((modal) => ({ kind: 'confirm', record, undo, history: modal?.kind === 'history' }));
+	}, []);
+	const showDiff = useCallback(
+		(record: number, path: string) => {
+			run(
+				window.novel.assistant.diff(record, path).then((value) => {
+					setModal((modal) => ({ kind: 'diff', diff: value, history: modal?.kind === 'history' }));
+				}),
+			);
+		},
+		[run],
+	);
+	const answer = useCallback((id: string, allow: boolean) => run(window.novel.assistant.answer(id, allow)), [run]);
 	return (
 		<>
 			<section className="assistant-panel" aria-label={zh.assistant}>
@@ -177,14 +193,7 @@ export function AssistantPanel() {
 					}}
 				>
 					{state.items.map((item, i) => (
-						<TranscriptItem
-							key={i}
-							item={item}
-							busy={busy}
-							diff={showDiff}
-							revert={askRevert}
-							answer={(id, allow) => run(window.novel.assistant.answer(id, allow))}
-						/>
+						<TranscriptItem key={i} item={item} busy={busy} diff={showDiff} revert={askRevert} answer={answer} />
 					))}
 				</div>
 				{error ? (

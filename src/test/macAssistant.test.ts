@@ -16,6 +16,8 @@ import { changeKind, MAX_FILE_BYTES, type Change } from '../core/snapshot';
 import type { Item } from '../core/transcript';
 import type { StoryNames } from '../core/scaffold';
 import { filesIn } from './files';
+import type { AssistantEvent } from '../shared/assistant';
+import { applyAssistantEvent } from '../renderer/assistant/state';
 
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 const removed = '摘要/第1章 雾里来信.md';
@@ -247,9 +249,11 @@ test('client filesystem operations read and atomically write inside, while outsi
 		await running;
 	}
 	assert.equal(await readFile(join(root, 'outside.txt'), 'utf8'), '外面');
-	const running = service.send('fswrite ../outside.txt 允许这一次');
-	const ask = await until(() => itemsOf(service, 'ask').find((item) => !item.answer && !item.closed), 'allowed filesystem permission');
-	service.answer(ask.id, true);
+	const running = service.send('fsread ../outside.txt\nfswrite ../outside.txt 允许这一次');
+	for (let request = 0; request < 2; request++) {
+		const ask = await until(() => itemsOf(service, 'ask').find((item) => !item.answer && !item.closed), 'allowed filesystem permission');
+		service.answer(ask.id, true);
+	}
 	await running;
 	assert.equal(await readFile(join(root, 'outside.txt'), 'utf8'), '允许这一次');
 });
@@ -537,7 +541,11 @@ test('existing and dangling external symlinks require permission; denied writes 
 			assert.equal(await readFile(target, 'utf8'), '外面的原文');
 		}
 		assert.equal((await lstat(join(book, alias))).isSymbolicLink(), true);
-		running = service.send(command('fswrite', alias, '明确允许的内容'));
+		running = service.send([...(exists ? [command('fsread', alias)] : []), command('fswrite', alias, '明确允许的内容')].join('\n'));
+		if (exists) {
+			ask = await until(() => itemsOf(service, 'ask').find((item) => !item.answer && !item.closed), 'read current external content');
+			service.answer(ask.id, true);
+		}
 		ask = await until(() => itemsOf(service, 'ask').find((item) => !item.answer && !item.closed), 'approved linked write');
 		service.answer(ask.id, true);
 		await running;
@@ -646,4 +654,112 @@ test('an older registry close cannot erase a newer close that a third window mus
 		releaseSecond();
 		await registry.closeAll();
 	}
+});
+
+test('client writes reject mid-turn user saves against the snapshot, last read, or last write and the turn continues', async (t) => {
+	for (const basis of ['snapshot', 'read', 'write']) {
+		const { service, book, index } = await fixture(t);
+		const prefix =
+			basis === 'read' ? [command('fsread', chapter)] : basis === 'write' ? [command('fswrite', chapter, '助手先写的。\r\n')] : [];
+		const running = service.send(
+			[...prefix, 'run checkpoint', command('fswrite', chapter, '覆盖整篇的旧稿'), 'say 这一轮继续完成'].join('\n'),
+		);
+		const ask = await until(() => itemsOf(service, 'ask').find((item) => !item.answer && !item.closed), 'paused before writing');
+		const before = await index.read(chapter);
+		const mine = before.text + '用户在这一轮中途加的一句。\n';
+		assert.deepEqual(await index.save(chapter, mine, before.text), { saved: true });
+		const saved = await readFile(join(book, chapter));
+		service.answer(ask.id, false);
+		assert.equal(await running, true);
+		assert.deepEqual(await readFile(join(book, chapter)), saved, basis);
+		assert.match(said(service), /文件已被改动.*重新读取/s);
+		assert.match(said(service), /这一轮继续完成/);
+		assert.equal(itemsOf(service, 'turn').at(-1)?.stop, 'end_turn');
+		assert.equal(itemsOf(service, 'ask').length, 1);
+	}
+});
+
+test('a fresh client read permits editing the current file and each successful write becomes the next baseline', async (t) => {
+	const { service, book } = await fixture(t);
+	const running = service.send(
+		[
+			command('fsread', chapter),
+			'run checkpoint',
+			command('fsread', chapter),
+			command('fswrite', chapter, '基于新读到的正文修改。\r\n'),
+			command('fswrite', chapter, '接着修改上一稿。\r\n'),
+		].join('\n'),
+	);
+	const ask = await until(() => itemsOf(service, 'ask').find((item) => !item.answer && !item.closed), 'paused before re-reading');
+	await writeFile(join(book, chapter), '\ufeff用户已改。\r\n');
+	service.answer(ask.id, false);
+	await running;
+	assert.match(said(service), /用户已改/);
+	assert.doesNotMatch(said(service), /could not write/);
+	assert.deepEqual(await readFile(join(book, chapter)), Buffer.from('接着修改上一稿。\r\n'));
+	await service.send(command('fswrite', chapter, '下一轮以新快照为准。'));
+	assert.equal(await readFile(join(book, chapter), 'utf8'), '下一轮以新快照为准。');
+});
+
+test('client reads reject non-UTF-8 manuscripts without returning replacement characters or changing bytes', async (t) => {
+	const { service, book } = await fixture(t);
+	const gbk = Buffer.from([0xc4, 0xe3, 0xba, 0xc3, 0x0d, 0x0a]);
+	await writeFile(join(book, chapter), gbk);
+	await service.send([command('fsread', chapter), command('fswrite', chapter, '不能用乱码覆盖旧稿'), 'say 继续处理别的内容'].join('\n'));
+	assert.match(said(service), /could not read.*不是 UTF-8/s);
+	assert.doesNotMatch(said(service), /\ufffd/);
+	assert.match(said(service), /继续处理别的内容/);
+	assert.deepEqual(await readFile(join(book, chapter)), gbk);
+	assert.equal(itemsOf(service, 'turn').at(-1)?.stop, 'end_turn');
+});
+
+test('streamed events carry only the changed item and preserve every unchanged renderer item reference', async (t) => {
+	const { service } = await fixture(t);
+	await service.send('say 之前的对话');
+	let rendered = service.state();
+	const events: AssistantEvent[] = [];
+	const off = service.onChanged((event) => {
+		events.push(event);
+		const previous = rendered;
+		rendered = applyAssistantEvent(rendered, event);
+		if (event.type === 'item') {
+			assert.deepEqual(Object.keys(event).sort(), ['index', 'item', 'type']);
+			previous.items.forEach((item, index) => {
+				if (index !== event.index) {
+					assert.equal(rendered.items[index], item);
+				}
+			});
+		}
+	});
+	const state = t.mock.method(service, 'state');
+	await service.send('say 第一段\nthink 想法\nsay 第二段');
+	assert.equal(state.mock.callCount(), 0);
+	state.mock.restore();
+	assert.equal(
+		events.some((event) => event.type === 'state'),
+		false,
+	);
+	const replies = events.filter((event) => event.type === 'item' && event.item.kind === 'agent');
+	assert.equal(replies.length, 4);
+	assert.deepEqual(rendered, service.state());
+	await service.newSession();
+	assert.deepEqual(rendered.items, []);
+	assert.equal(events.at(-1)?.type, 'state');
+	off();
+});
+
+test('application shutdown persists a stopped turn without a process-exit error when the book reopens', async (t) => {
+	const { service, open } = await fixture(t, ['--resume']);
+	const running = service.send(command('fswrite', chapter, '已完成的半稿') + '\nsay 等待关窗\nwait');
+	await until(() => said(service).includes('等待关窗'), 'running turn');
+	await service.dispose();
+	await running;
+	const reopened = await open();
+	assert.equal(itemsOf(reopened, 'turn').at(-1)?.stop, 'cancelled');
+	assert.equal(reopened.state().items.at(-1)?.kind, 'turn');
+	assert.equal(
+		itemsOf(reopened, 'notice').some((item) => item.level === 'error'),
+		false,
+	);
+	assert.equal(itemsOf(reopened, 'turn').at(-1)?.changes[0].path, chapter);
 });
