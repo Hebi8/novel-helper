@@ -43,7 +43,8 @@ export function registerAssistant(ctx: MainContext): void {
 		event.preventDefault();
 		void services.closeAll().finally(() => {
 			drained = true;
-			app.quit();
+			// With nothing left to close this settles while the first quit is still unwinding, and a quit requested then is dropped.
+			setImmediate(() => app.quit());
 		});
 	});
 	ipcMain.handle(c.assistantState, async (event) => (await service(event)).state());
