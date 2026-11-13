@@ -1,5 +1,7 @@
+import { loreExtension } from '../reference/loreExtension';
+import { useWorkspace } from '../workspace';
 import { useEffect, useRef } from 'react';
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { search, searchKeymap, openSearchPanel } from '@codemirror/search';
@@ -19,6 +21,9 @@ interface Props {
 	document: DocumentModel;
 	tab: TabState;
 	active: boolean;
+	visible?: boolean;
+	side?: 'left' | 'right';
+	focused?(): void;
 	chapter: boolean;
 	settings: Settings;
 	limited: boolean;
@@ -26,7 +31,26 @@ interface Props {
 	ready(handle?: EditorHandle): void;
 	cursor(anchor: number, head: number): void;
 }
-export function Editor({ document: model, tab, active, chapter, settings, limited, ready, cursor, nextRequestId }: Props) {
+export function Editor({
+	document: model,
+	tab,
+	active,
+	chapter,
+	settings,
+	limited,
+	ready,
+	cursor,
+	nextRequestId,
+	visible = active,
+	focused,
+	side,
+}: Props) {
+	const workspace = useWorkspace();
+	const lore = useRef(new Compartment());
+	const callbacksOpen = useRef(workspace.open);
+	const entriesRef = useRef(workspace.reference.entries);
+	entriesRef.current = workspace.reference.entries;
+	callbacksOpen.current = workspace.open;
 	const parent = useRef<HTMLDivElement>(null);
 	const handle = useRef<EditorHandle | undefined>(undefined);
 	const callbacks = useRef({ ready, cursor });
@@ -38,6 +62,9 @@ export function Editor({ document: model, tab, active, chapter, settings, limite
 		});
 		const extensions = [
 			history(),
+			EditorState.readOnly.of(model.readOnly),
+			EditorView.editable.of(!model.readOnly),
+
 			ghost.extension(),
 			prose,
 			markdown(),
@@ -60,7 +87,10 @@ export function Editor({ document: model, tab, active, chapter, settings, limite
 			EditorState.create({
 				doc: model.text,
 				selection: { anchor: Math.min(anchor, model.text.length), head: Math.min(head, model.text.length) },
-				extensions,
+				extensions: [
+					lore.current.of(model.readOnly ? [] : loreExtension(entriesRef.current, (path, options) => callbacksOpen.current(path, options))),
+					...extensions,
+				],
 			});
 		const view = new EditorView({ parent: parent.current!, state: stateFor(tab.anchor, tab.head) });
 		ghost.attach(view);
@@ -92,7 +122,13 @@ export function Editor({ document: model, tab, active, chapter, settings, limite
 		};
 	}, [model]);
 	useEffect(() => {
-		handle.current?.ghost.settings(settings.enabled, settings.trigger === 'auto', limited, settings.debounceMs, JSON.stringify(settings));
+		handle.current?.ghost.settings(
+			settings.enabled && !model.readOnly,
+			settings.trigger === 'auto',
+			limited,
+			settings.debounceMs,
+			JSON.stringify(settings),
+		);
 	}, [settings, limited]);
 	useEffect(() => {
 		if (active) {
@@ -106,5 +142,21 @@ export function Editor({ document: model, tab, active, chapter, settings, limite
 			void model.save();
 		}
 	}, [active, model]);
-	return <div className="editor" ref={parent} style={{ display: active ? undefined : 'none' }} />;
+	useEffect(() => {
+		handle.current?.view.dispatch({
+			effects: lore.current.reconfigure(
+				model.readOnly
+					? []
+					: loreExtension(workspace.reference.entries, (path, options) => {
+							return callbacksOpen.current(path, options);
+						}),
+			),
+		});
+	}, [workspace.reference.entries, model]);
+	useEffect(() => {
+		if (visible) {
+			handle.current?.view.requestMeasure();
+		}
+	}, [visible]);
+	return <div className={`editor pane-${side}`} ref={parent} onFocus={focused} style={{ display: visible ? undefined : 'none' }} />;
 }

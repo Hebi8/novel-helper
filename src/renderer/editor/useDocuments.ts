@@ -1,9 +1,17 @@
 import { errorMessage } from '../errors';
 import { useRef, useState } from 'react';
-import type { DiskFile, SessionState } from '../../shared/api';
+import type { DiskFile, SessionState, OpenOptions, ReportKind } from '../../shared/api';
 import type { EditorHandle } from './Editor';
 import { DocumentModel } from './document';
+export const reportPaths: Record<ReportKind, string> = { report: 'report:last-request', usageReport: 'report:usage' };
+export const reportKind = (path: string) => (Object.keys(reportPaths) as ReportKind[]).find((key) => reportPaths[key] === path);
 export function useDocuments() {
+	const [panes, setPanes] = useState<{ left?: string; right?: string }>();
+	const panesRef = useRef(panes);
+	const setSplit = (value: typeof panes) => {
+		panesRef.current = value;
+		setPanes(value);
+	};
 	const [session, setSession] = useState<SessionState>({ tabs: [] });
 	const sessionRef = useRef(session);
 
@@ -21,10 +29,10 @@ export function useDocuments() {
 		}
 		let pending = opening.current.get(path);
 		if (!pending) {
-			pending = window.novel.book
-				.read(path)
+			const kind = reportKind(path);
+			pending = (kind ? window.novel.reports.get(kind).then((text) => ({ path, text })) : window.novel.book.read(path))
 				.then((file) => {
-					const model = new DocumentModel(path, file.text, window.novel);
+					const model = new DocumentModel(path, file.text, window.novel, kind !== undefined);
 
 					documents.current.set(path, model);
 
@@ -37,7 +45,11 @@ export function useDocuments() {
 	};
 	const flushSession = () => {
 		clearTimeout(sessionTimer.current);
-		void window.novel.window.saveSession(sessionRef.current);
+		const current = sessionRef.current;
+		void window.novel.window.saveSession({
+			tabs: current.tabs.filter((tab) => !reportKind(tab.path)),
+			active: current.active && !reportKind(current.active) ? current.active : undefined,
+		});
 	};
 	const scheduleSession = () => {
 		clearTimeout(sessionTimer.current);
@@ -49,13 +61,17 @@ export function useDocuments() {
 		scheduleSession();
 	};
 	const select = (path: string) => {
+		const split = panesRef.current;
+		if (split && split.left !== path && split.right !== path) {
+			setSplit(sessionRef.current.active === split.right ? { ...split, right: path } : { ...split, left: path });
+		}
 		const old = sessionRef.current.active;
 		if (old) {
 			void documents.current.get(old)?.save();
 		}
 		persist({ ...sessionRef.current, active: path });
 	};
-	const open = async (path: string) => {
+	const open = async (path: string, options: OpenOptions = {}) => {
 		try {
 			await load(path);
 		} catch (error) {
@@ -67,8 +83,27 @@ export function useDocuments() {
 		if (current.active) {
 			await documents.current.get(current.active)?.save();
 		}
+		if (options.beside) {
+			setSplit({ left: current.active === path ? undefined : current.active, right: path });
+		} else if (panesRef.current && panesRef.current.left !== path && panesRef.current.right !== path) {
+			setSplit(current.active === panesRef.current.right ? { ...panesRef.current, right: path } : { ...panesRef.current, left: path });
+		}
+		const offset =
+			options.line === undefined
+				? undefined
+				: documents.current
+						.get(path)!
+						.text.split('\n')
+						.slice(0, options.line)
+						.reduce((sum, line) => sum + line.length + 1, 0);
+		if (offset !== undefined) {
+			const handle = handles.current.get(path);
+			handle?.view.dispatch({ selection: { anchor: Math.min(offset, handle.view.state.doc.length) }, scrollIntoView: true });
+		}
 		persist({
-			tabs: current.tabs.some((tab) => tab.path === path) ? current.tabs : [...current.tabs, { path, anchor: 0, head: 0 }],
+			tabs: current.tabs.some((tab) => tab.path === path)
+				? current.tabs.map((tab) => (tab.path === path && offset !== undefined ? { ...tab, anchor: offset, head: offset } : tab))
+				: [...current.tabs, { path, anchor: offset ?? 0, head: offset ?? 0 }],
 			active: path,
 		});
 	};
@@ -83,6 +118,9 @@ export function useDocuments() {
 		const index = current.tabs.findIndex((tab) => tab.path === path);
 		const tabs = current.tabs.filter((tab) => tab.path !== path);
 		persist({ tabs, active: current.active === path ? tabs[Math.min(index, tabs.length - 1)]?.path : current.active });
+		if (panesRef.current?.left === path || panesRef.current?.right === path) {
+			setSplit(undefined);
+		}
 		documents.current.delete(path);
 		model.dispose();
 	};
@@ -145,9 +183,39 @@ export function useDocuments() {
 	const current = () => {
 		const tab = sessionRef.current.tabs.find((tab) => tab.path === sessionRef.current.active);
 		const model = tab ? documents.current.get(tab.path) : undefined;
-		return model && tab ? { path: model.path, text: model.text, anchor: tab.anchor, head: tab.head } : undefined;
+		return model && !model.readOnly && tab ? { path: model.path, text: model.text, anchor: tab.anchor, head: tab.head } : undefined;
+	};
+	const toggleSplit = () => {
+		if (panesRef.current) {
+			setSplit(undefined);
+		} else if (sessionRef.current.active) {
+			setSplit({
+				left: sessionRef.current.tabs.find((tab) => tab.path !== sessionRef.current.active)?.path,
+				right: sessionRef.current.active,
+			});
+		}
+	};
+	const openReport = async (kind: ReportKind) => {
+		const path = reportPaths[kind];
+		if (documents.current.has(path)) {
+			const text = await window.novel.reports.get(kind);
+			external({ path, text });
+		}
+		await open(path);
+	};
+	const refreshReports = async () => {
+		for (const kind of Object.keys(reportPaths) as ReportKind[]) {
+			const path = reportPaths[kind];
+			if (documents.current.has(path)) {
+				external({ path, text: await window.novel.reports.get(kind) });
+			}
+		}
 	};
 	return {
+		panes,
+		toggleSplit,
+		openReport,
+		refreshReports,
 		session,
 		sessionRef,
 		documents,

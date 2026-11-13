@@ -6,12 +6,21 @@ interface CommandTarget {
 	toggleRight(): void;
 	left(section: number): void;
 	right(section: number): void;
+	quickOpen(): void;
 }
 export function commands(target: CommandTarget): Record<MenuCommand, () => void> {
 	const docs = target.documents;
 	const active = () => docs.sessionRef.current.active;
 	const editor = () => (active() ? docs.handles.current.get(active()!) : undefined);
 	return {
+		split: () => docs.toggleSplit(),
+		quickOpen: target.quickOpen,
+		report: () => {
+			void docs.openReport('report');
+		},
+		usageReport: () => {
+			void docs.openReport('usageReport');
+		},
 		closeTab: () => {
 			if (active()) {
 				void docs.close(active()!);

@@ -45,9 +45,9 @@ async function withBook(
 		await welcome.evaluate((root) => window.novel.book.open(root), book);
 		page = await next;
 		await page.waitForLoadState('domcontentloaded');
-		await expect(page.getByRole('tree')).toContainText('全书');
+		await expect(page.getByRole('tree', { name: '章节', exact: true })).toContainText('全书');
 		await page
-			.getByRole('tree')
+			.getByRole('tree', { name: '章节', exact: true })
 			.getByRole('button', { name: /第2章 灯塔/ })
 			.click();
 		await expect(page.locator('.cm-content')).toContainText('林小满');
@@ -164,7 +164,7 @@ test('closing during composition ends it and saves what the editor shows', async
 test('unreadable chapters stay visible and opening errors can be dismissed or cleared by success', async () => {
 	await withBook(async ({ page, book }) => {
 		await writeFile(join(book, '正文/bad.txt'), Buffer.from([255]));
-		const bad = page.getByRole('tree').getByRole('button', { name: /bad/ });
+		const bad = page.getByRole('tree', { name: '章节', exact: true }).getByRole('button', { name: /bad/ });
 		await expect(bad).toBeVisible();
 		await bad.click();
 		await expect(page.getByRole('alert')).toContainText('这个文件不是 UTF-8 编码');
@@ -174,7 +174,7 @@ test('unreadable chapters stay visible and opening errors can be dismissed or cl
 		await bad.click();
 		await expect(page.getByRole('alert')).toBeVisible();
 		await page
-			.getByRole('tree')
+			.getByRole('tree', { name: '章节', exact: true })
 			.getByRole('button', { name: /第2章 灯塔/ })
 			.click();
 		await expect(page.getByRole('alert')).toHaveCount(0);

@@ -1,3 +1,4 @@
+import { ReferenceTools } from '../reference/ReferenceTools';
 import { zh } from '../strings';
 export function TopBar({ name, left, right }: { name?: string; left(): void; right(): void }) {
 	return (
@@ -5,8 +6,10 @@ export function TopBar({ name, left, right }: { name?: string; left(): void; rig
 			<button aria-label={zh.left} onClick={left}>
 				<PanelIcon />
 			</button>
+			<ReferenceTools kind="split" />
 			<strong>{name ?? zh.app}</strong>
 			<span className="grow" />
+			<ReferenceTools kind="find" />
 			<button
 				aria-label={zh.settings}
 				onClick={() => {

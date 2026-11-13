@@ -8,6 +8,22 @@ const listen = <T>(channel: string, listener: (value: T) => void) => {
 	};
 };
 const api: AppAPI = {
+	reference: {
+		get: () => ipcRenderer.invoke(c.referenceGet),
+		set: (path, field, value) => ipcRenderer.invoke(c.loreSet, path, field, value),
+		create: (name, type) => ipcRenderer.invoke(c.loreCreate, name, type),
+		companion: (path, kind) => ipcRenderer.invoke(c.companionOpen, path, kind),
+		quick: () => ipcRenderer.invoke(c.quickOpen),
+	},
+	buoys: {
+		get: (chapter, text) => ipcRenderer.invoke(c.buoyGet, chapter, text),
+		act: (chapter, action, node) => ipcRenderer.invoke(c.buoyAction, chapter, action, node),
+		onChanged: (listener) => listen(c.buoyChanged, listener),
+	},
+	reports: {
+		get: (kind) => ipcRenderer.invoke(c.reportGet, kind),
+		onChanged: (listener) => listen(c.reportChanged, listener),
+	},
 	book: {
 		onOpenResult: (listener) => listen(c.openResult, listener),
 		open: (root) => ipcRenderer.invoke(c.bookOpen, root),

@@ -58,6 +58,10 @@ export type MenuCommand =
 	| 'right:0'
 	| 'right:1'
 	| 'right:2'
+	| 'split'
+	| 'quickOpen'
+	| 'report'
+	| 'usageReport'
 	| 'flush';
 export interface Bootstrap {
 	openResult?: OpenResult;
@@ -101,6 +105,16 @@ export interface AppAPI {
 	};
 }
 export const channels = {
+	referenceGet: 'reference:get',
+	loreSet: 'reference:set',
+	loreCreate: 'reference:create',
+	companionOpen: 'reference:companion',
+	quickOpen: 'reference:quickOpen',
+	buoyGet: 'buoy:get',
+	buoyAction: 'buoy:action',
+	buoyChanged: 'buoy:changed',
+	reportGet: 'report:get',
+	reportChanged: 'report:changed',
 	bookOpen: 'book:open',
 	openResult: 'book:openResult',
 	bookRead: 'book:read',
@@ -123,3 +137,56 @@ export const channels = {
 	flushed: 'window:flushed',
 	close: 'window:close',
 } as const;
+
+export interface OutlineItem {
+	id: string;
+	title: string;
+	kind: 'book' | 'folder' | 'file' | 'heading';
+	file?: string;
+	line: number;
+	text: string;
+	children: string[];
+	links: { raw: string; target?: string; problem?: 'missing' | 'ambiguous' }[];
+	next?: string;
+}
+export interface ReferenceData {
+	entries: import('../core/library').LoreEntry[];
+	outlines: string[];
+	nodes: OutlineItem[];
+}
+export interface BuoyStatus {
+	chapter: string;
+	state?: import('../core/buoy').BuoyState;
+	lost: boolean;
+}
+export type BuoyAction = 'in' | 'bridge' | 'parallel' | 'dropSecond' | 'forward' | 'back' | 'relocate';
+export type ReportKind = 'report' | 'usageReport';
+export interface QuickItem {
+	path: string;
+	title: string;
+	aliases: string[];
+	kind: 'chapter' | 'lore' | 'outline' | 'file';
+	line?: number;
+}
+export interface OpenOptions {
+	line?: number;
+	beside?: boolean;
+}
+export interface AppAPI {
+	reference: {
+		get(): Promise<ReferenceData>;
+		set(path: string, field: 'always' | 'aliases' | 'type', value: import('../core/frontmatter').FieldValue): Promise<void>;
+		create(name: string, type: string): Promise<string>;
+		companion(path: string, kind: 'outline' | 'summary'): Promise<string>;
+		quick(): Promise<QuickItem[]>;
+	};
+	buoys: {
+		get(chapter: string, text?: string): Promise<BuoyStatus>;
+		act(chapter: string, action: BuoyAction, node?: string): Promise<void>;
+		onChanged(listener: (root: string) => void): () => void;
+	};
+	reports: {
+		get(kind: ReportKind): Promise<string>;
+		onChanged(listener: () => void): () => void;
+	};
+}

@@ -70,6 +70,9 @@ if (!app.requestSingleInstanceLock()) {
 				if (event.sender !== window.webContents) {
 					return;
 				}
+				if (index) {
+					await completion.buoys(index).dispose();
+				}
 				await completion.drain(String(senderId));
 				closeGate.acknowledge();
 				window.close();

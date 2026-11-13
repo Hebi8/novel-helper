@@ -1,3 +1,4 @@
+import { reportKind } from '../editor/useDocuments';
 import type { TabState } from '../../shared/api';
 import { zh } from '../strings';
 export function Tabs({
@@ -28,10 +29,12 @@ export function Tabs({
 					}}
 				>
 					<span>
-						{tab.path
-							.split('/')
-							.pop()!
-							.replace(/\.(md|txt)$/, '')}
+						{reportKind(tab.path)
+							? zh[reportKind(tab.path)!]
+							: tab.path
+									.split('/')
+									.pop()!
+									.replace(/\.(md|txt)$/, '')}
 					</span>
 					<button
 						aria-label={`${zh.closeTab} ${tab.path}`}

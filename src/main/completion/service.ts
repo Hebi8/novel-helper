@@ -1,3 +1,8 @@
+import { Buoys } from '../buoys/service';
+import { positionSource } from '../../core/buoy';
+import { renderReport, renderUsage, type RunRecord } from '../../core/report';
+import { translateReport } from '../../renderer/strings';
+import type { ReportKind } from '../../shared/api';
 import { buildContext } from '../../core/context';
 import { buildHttpRequest, complete } from '../../llm/client';
 import { costOf, ratesFor, usageKey } from '../../core/usage';
@@ -8,6 +13,44 @@ import type { CompletionInput, CompletionResult, UsageStatus } from '../../share
 import type { ProviderId } from '../../llm/providers';
 import { LINE_END_REST } from '../../shared/completion';
 export class CompletionService {
+	private positions = new Map<string, Buoys>();
+	private runs = new Map<string, RunRecord>();
+	onPositionChanged: (root: string) => void = () => {};
+	onReportChanged: () => void = () => {};
+	buoys(index: BookIndex): Buoys {
+		let service = this.positions.get(index.root);
+		if (!service) {
+			service = new Buoys(index, this.settings, this.usage, this.getKey);
+			service.onChanged = () => this.onPositionChanged(index.root);
+			service.onError = (error) => {
+				this.problem = String(error);
+				this.publish();
+			};
+			this.positions.set(index.root, service);
+		}
+		return service;
+	}
+	async closeBook(root: string): Promise<void> {
+		await this.positions.get(root)?.dispose();
+		this.positions.delete(root);
+	}
+	async report(owner: string, kind: ReportKind): Promise<string> {
+		if (kind === 'report') {
+			return renderReport(this.runs.get(owner), translateReport);
+		}
+		const ledger = await this.usage.load();
+		const model = this.settings.model();
+		return renderUsage(
+			ledger,
+			new Date(),
+			{
+				dailyLimit: this.settings.get()['usage.dailyLimitUsd'],
+				current: `${model.provider} · ${model.model}`,
+				rates: ratesFor(model.model, new Date(), model.pricing, this.settings.prices()),
+			},
+			translateReport,
+		);
+	}
 	private running = new Map<string, AbortController>();
 	private lastShown = new Map<string, { key: string; text: string }>();
 	private active = 0;
@@ -21,7 +64,15 @@ export class CompletionService {
 		readonly usage: UsageStore,
 		private readonly getKey: (provider: ProviderId) => string | undefined,
 	) {
-		usage.onDidChange(() => this.publish());
+		let ledger = JSON.stringify(usage.current());
+		usage.onDidChange(() => {
+			this.publish();
+			const current = JSON.stringify(usage.current());
+			if (current !== ledger) {
+				ledger = current;
+				this.onReportChanged();
+			}
+		});
 	}
 	status(): UsageStatus {
 		const model = this.settings.model();
@@ -48,6 +99,7 @@ export class CompletionService {
 		this.problem = undefined;
 		this.missingKey = false;
 		this.lastShown.clear();
+		this.positions.forEach((service) => service.cancel());
 		for (const controller of this.running.values()) {
 			controller.abort();
 		}
@@ -118,14 +170,18 @@ export class CompletionService {
 			const limits = this.settings.limits();
 			const library = index.library;
 			const read = async (path: string) => (await index.read(path)).text;
-			const outlinePath = library.companionOf('outline', input.path);
+			const at = library.isChapter(input.path) ? await this.buoys(index).prepare(input.path, input.text) : undefined;
+			const outlinePath = at?.position ? undefined : library.companionOf('outline', input.path);
 			const [levels, outline, previous] = await Promise.all([
 				Promise.all(
-					library.levelsOf(input.path).map(async (level) => ({
-						name: level.name,
-						book: level.path === '',
-						outline: level.outline ? { path: level.outline, content: await read(level.outline) } : undefined,
-					})),
+					library
+						.levelsOf(input.path)
+						.filter((level) => !at?.position || level.path === '')
+						.map(async (level) => ({
+							name: level.name,
+							book: level.path === '',
+							outline: level.outline ? { path: level.outline, content: await read(level.outline) } : undefined,
+						})),
 				),
 				outlinePath ? read(outlinePath).then((content) => ({ path: outlinePath, content })) : undefined,
 				Promise.all(
@@ -145,7 +201,7 @@ export class CompletionService {
 				this.publish();
 				return { status: 'skipped' };
 			}
-			const { prompt } = buildContext({
+			const { prompt, trace } = buildContext({
 				documentPath: input.path,
 				before,
 				after,
@@ -155,6 +211,7 @@ export class CompletionService {
 				levels,
 				outline,
 				previous,
+				position: at?.position && positionSource(at.graph, at.position),
 				limits,
 			});
 			const request = { ...model, apiKey, ...prompt };
@@ -166,6 +223,21 @@ export class CompletionService {
 				return { status: 'ok', text: cached.text };
 			}
 			const rates = ratesFor(model.model, new Date(), model.pricing, this.settings.prices());
+			const run: RunRecord = {
+				time: new Date(),
+				document: input.path,
+				line: before.split('\n').length,
+				trigger: input.manual ? 'manual' : 'auto',
+				provider: model.provider,
+				model: model.model,
+				trace,
+				prompt,
+				request: { url, body },
+				rates,
+			};
+			if (at) {
+				this.buoys(index).update(at, input.text);
+			}
 			this.active++;
 			requesting = true;
 			this.problem = undefined;
@@ -177,6 +249,8 @@ export class CompletionService {
 				after: lineAfter,
 				maxChars: c.maxSuggestionChars,
 				onUsage: (usage) => {
+					run.usage = usage;
+					this.onReportChanged();
 					const write = this.usage.add(usageKey(model.provider, model.model), usage, rates ? costOf(usage, rates) : undefined);
 					this.writes.add(write);
 					void write.then(
@@ -197,6 +271,9 @@ export class CompletionService {
 			if (controller.signal.aborted || outcome.status === 'cancelled') {
 				return { status: 'cancelled' };
 			}
+			run.outcome = outcome;
+			this.runs.set(owner, run);
+			this.onReportChanged();
 			if (outcome.status !== 'ok') {
 				return { status: 'error', error: outcome.error };
 			}
