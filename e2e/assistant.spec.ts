@@ -49,7 +49,7 @@ async function withBook(
 		const page = await next;
 		await page.waitForLoadState('domcontentloaded');
 		await page
-			.getByRole('tree')
+			.getByRole('tree', { name: '章节', exact: true })
 			.getByRole('button', { name: /第2章 灯塔/ })
 			.click();
 		await expect(page.locator('.writing .cm-content')).toContainText('林小满');
