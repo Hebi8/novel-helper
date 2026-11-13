@@ -1,1 +1,3 @@
-export function OutlinePanel() { return <div className="empty-panel" />; }
+export function OutlinePanel() {
+	return <div className="empty-panel" />;
+}

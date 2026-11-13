@@ -1,41 +1,76 @@
-import type { AppAPI,DiskFile } from '../../shared/api';
+import type { AppAPI, DiskFile } from '../../shared/api';
 /** One open document owns its save queue, including writes completed after switching tabs. */
 export class DocumentModel {
-  text: string;
-  base: string;
-  conflict?: string;
-  error?: string;
-  private timer?: ReturnType<typeof setTimeout>;
-  private diskRevision=0;
-  private saving: Promise<void>=Promise.resolve();
-  onChanged: () => void=() => { };
-  constructor(readonly path: string,text: string,private readonly api: AppAPI) { this.text=this.base=text; }
-  get dirty(): boolean { return this.text!==this.base; }
-  edit(text: string): void {
-    this.text=text; clearTimeout(this.timer);
-    this.timer=setTimeout(() => { void this.save(); },1000); this.onChanged();
-  }
-  external(file: DiskFile): 'reload'|'conflict' {
-    clearTimeout(this.timer);
-    this.diskRevision++;
-    if(this.dirty) { this.conflict=file.text; this.onChanged(); return 'conflict'; }
-    this.text=this.base=file.text; this.onChanged(); return 'reload';
-  }
-  save(force=false): Promise<void> {
-    clearTimeout(this.timer);
-    this.saving=this.saving.then(async () => {
-      if((!this.dirty&&!(force&&this.conflict!==undefined))||(this.conflict!==undefined&&!force)) { return; }
-      const text=this.text;
-      const revision=this.diskRevision;
-      try {
-        const result=await this.api.book.save(this.path,text,this.base,force);
-        if(result.saved) { this.base=text; if(revision===this.diskRevision) { this.conflict=undefined; } this.error=undefined; }
-        else { this.conflict=result.disk; }
-      } catch(error) { this.error=String(error); }
-      this.onChanged();
-    });
-    return this.saving;
-  }
-  useDisk(): void { this.text=this.base=this.conflict!; this.conflict=undefined; this.onChanged(); }
-  dispose(): void { clearTimeout(this.timer); }
+	text: string;
+	base: string;
+	conflict?: string;
+	error?: string;
+	private timer?: ReturnType<typeof setTimeout>;
+	private diskRevision = 0;
+	private saving: Promise<void> = Promise.resolve();
+	onChanged: () => void = () => {};
+	constructor(
+		readonly path: string,
+		text: string,
+		private readonly api: AppAPI,
+	) {
+		this.text = this.base = text;
+	}
+	get dirty(): boolean {
+		return this.text !== this.base;
+	}
+	edit(text: string): void {
+		this.text = text;
+		clearTimeout(this.timer);
+		this.timer = setTimeout(() => {
+			void this.save();
+		}, 1000);
+		this.onChanged();
+	}
+	external(file: DiskFile): 'reload' | 'conflict' {
+		clearTimeout(this.timer);
+		this.diskRevision++;
+		if (this.dirty) {
+			this.conflict = file.text;
+			this.onChanged();
+			return 'conflict';
+		}
+		this.text = this.base = file.text;
+		this.onChanged();
+		return 'reload';
+	}
+	save(force = false): Promise<void> {
+		clearTimeout(this.timer);
+		this.saving = this.saving.then(async () => {
+			if ((!this.dirty && !(force && this.conflict !== undefined)) || (this.conflict !== undefined && !force)) {
+				return;
+			}
+			const text = this.text;
+			const revision = this.diskRevision;
+			try {
+				const result = await this.api.book.save(this.path, text, this.base, force);
+				if (result.saved) {
+					this.base = text;
+					if (revision === this.diskRevision) {
+						this.conflict = undefined;
+					}
+					this.error = undefined;
+				} else {
+					this.conflict = result.disk;
+				}
+			} catch (error) {
+				this.error = String(error);
+			}
+			this.onChanged();
+		});
+		return this.saving;
+	}
+	useDisk(): void {
+		this.text = this.base = this.conflict!;
+		this.conflict = undefined;
+		this.onChanged();
+	}
+	dispose(): void {
+		clearTimeout(this.timer);
+	}
 }

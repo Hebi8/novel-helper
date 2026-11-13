@@ -1,3 +1,4 @@
+import { defaults as appDefaults } from '../shared/defaults';
 // The example workspace, indexed the way the extension indexes a folder with
 // the default settings, gives the context the README says it gives.
 
@@ -12,8 +13,7 @@ import { buildOutline, trail } from '../core/outline';
 
 const root = path.resolve(__dirname, '../..');
 const examples = path.join(root, 'examples');
-const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-const defaults = manifest.contributes.configuration.properties as Record<string, { default: unknown }>;
+const defaults = Object.fromEntries(Object.entries(appDefaults).map(([key, value]) => [`novelHelper.${key}`, { default: value }])) as Record<string, { default: unknown }>;
 
 function files(dir: string): string[] {
 	return fs.readdirSync(path.join(examples, dir), { withFileTypes: true }).flatMap((d) => {

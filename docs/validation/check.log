@@ -1,6 +1,0 @@
-
-> novel-helper@0.4.0 check
-> tsc --noEmit && tsc --noEmit -p tsconfig.test.json && eslint src e2e electron.vite.config.ts playwright.config.ts --max-warnings 0
-
-(node:94832) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
-(Use `node --trace-warnings ...` to show where the warning was created)

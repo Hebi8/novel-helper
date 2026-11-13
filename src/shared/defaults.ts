@@ -1,52 +1,40 @@
-export const defaults={
-  "enabled": true,
-  "trigger": "auto",
-  "debounceMs": 750,
-  "maxSuggestionChars": 100,
-  "provider": "anthropic",
-  "anthropic.model": "claude-haiku-5-5",
-  "openai.model": "gpt-6-luna",
-  "deepseek.model": "deepseek-flash",
-  "gemini.model": "gemini-3.5-flash-lite",
-  "openaiCompatible.baseUrl": "http://localhost:11434/v1",
-  "openaiCompatible.model": "",
-  "extraRequestBody": {},
-  "usage.prices": {},
-  "usage.dailyLimitUsd": 0,
-  "assistant.agent": "claude",
-  "assistant.command": "",
-  "assistant.args": [],
-  "assistant.snapshots.keep": 50,
-  "files.storyFolder": "",
-  "files.lore": [
-    "{设定,人物,角色,资料,世界观,lore,characters,worldbuilding}/**/*.{md,txt}"
-  ],
-  "files.chapters": [
-    "{正文,章节,chapters,manuscript}/**/*.{md,txt}"
-  ],
-  "files.outlines": [
-    "{大纲,细纲,outline,outlines}/**/*.{md,txt}"
-  ],
-  "files.summaries": [
-    "{摘要,summary,summaries}/**/*.{md,txt}"
-  ],
-  "files.bookNames": [
-    "全书",
-    "总纲",
-    "book"
-  ],
-  "context.beforeChars": 6000,
-  "context.afterChars": 200,
-  "context.alwaysChars": 1500,
-  "context.matchedChars": 2500,
-  "context.entryChars": 500,
-  "context.bookOutlineChars": 1000,
-  "context.levelOutlineChars": 800,
-  "context.outlineChars": 800,
-  "context.nextNodeChars": 300,
-  "position.updateChars": 1000,
-  "context.previousChapters": 3,
-  "context.previousChapterChars": 400
+export const defaults = {
+	enabled: true,
+	trigger: 'auto',
+	debounceMs: 750,
+	maxSuggestionChars: 100,
+	provider: 'anthropic',
+	'anthropic.model': 'claude-haiku-5-5',
+	'openai.model': 'gpt-6-luna',
+	'deepseek.model': 'deepseek-flash',
+	'gemini.model': 'gemini-3.5-flash-lite',
+	'openaiCompatible.baseUrl': 'http://localhost:11434/v1',
+	'openaiCompatible.model': '',
+	extraRequestBody: {},
+	'usage.prices': {},
+	'usage.dailyLimitUsd': 0,
+	'assistant.agent': 'claude',
+	'assistant.command': '',
+	'assistant.args': [],
+	'assistant.snapshots.keep': 50,
+	'files.storyFolder': '',
+	'files.lore': ['{设定,人物,角色,资料,世界观,lore,characters,worldbuilding}/**/*.{md,txt}'],
+	'files.chapters': ['{正文,章节,chapters,manuscript}/**/*.{md,txt}'],
+	'files.outlines': ['{大纲,细纲,outline,outlines}/**/*.{md,txt}'],
+	'files.summaries': ['{摘要,summary,summaries}/**/*.{md,txt}'],
+	'files.bookNames': ['全书', '总纲', 'book'],
+	'context.beforeChars': 6000,
+	'context.afterChars': 200,
+	'context.alwaysChars': 1500,
+	'context.matchedChars': 2500,
+	'context.entryChars': 500,
+	'context.bookOutlineChars': 1000,
+	'context.levelOutlineChars': 800,
+	'context.outlineChars': 800,
+	'context.nextNodeChars': 300,
+	'position.updateChars': 1000,
+	'context.previousChapters': 3,
+	'context.previousChapterChars': 400,
 };
-export type Settings=typeof defaults;
-export type SettingKey=keyof Settings;
+export type Settings = typeof defaults;
+export type SettingKey = keyof Settings;

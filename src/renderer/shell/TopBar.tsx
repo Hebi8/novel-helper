@@ -1,0 +1,31 @@
+import { zh } from '../strings';
+export function TopBar({ name, left, right }: { name?: string; left(): void; right(): void }) {
+	return (
+		<header className="topbar">
+			<button aria-label={zh.left} onClick={left}>
+				<PanelIcon />
+			</button>
+			<strong>{name ?? zh.app}</strong>
+			<span className="grow" />
+			<button
+				aria-label={zh.settings}
+				onClick={() => {
+					void window.novel.settings.open();
+				}}
+			>
+				☼
+			</button>
+			<button aria-label={zh.right} onClick={right}>
+				<PanelIcon right />
+			</button>
+		</header>
+	);
+}
+function PanelIcon({ right = false }: { right?: boolean }) {
+	return (
+		<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+			<rect x="2.5" y="3.5" width="15" height="13" rx="2" />
+			<path d={`M${right ? 12.5 : 7.5} 3.5v13`} />
+		</svg>
+	);
+}
