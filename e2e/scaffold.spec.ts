@@ -31,7 +31,7 @@ async function withBook(
 	const env = Object.fromEntries(
 		Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined && entry[0] !== 'ELECTRON_RUN_AS_NODE'),
 	);
-	const app = await electron.launch({ env, args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`] });
+	const app = await electron.launch({ cwd: root, env, args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`] });
 	const exited = new Promise<void>((resolve) => app.process().once('exit', () => resolve()));
 	try {
 		const page = await app.firstWindow();
@@ -43,7 +43,9 @@ async function withBook(
 			app.evaluate(({ BrowserWindow }, command) => BrowserWindow.getAllWindows()[0].webContents.send('window:command', command), command);
 		await run({ page, app, book, root, data, menu });
 	} finally {
-		await app.close();
+		if (app.process().exitCode === null) {
+			await app.close();
+		}
 		await exited;
 		await rm(root, { recursive: true, force: true });
 	}
@@ -65,8 +67,8 @@ test('welcome initializes selected items, opens the book, and discovers nested m
 			target,
 		);
 		const dialog = page.getByRole('dialog', { name: '初始化这本书', exact: true });
-		await expect(dialog.getByRole('combobox', { name: '目录名称', exact: true })).toHaveValue('en');
-		await expect(dialog.getByRole('checkbox', { name: /^chapters / })).toBeChecked();
+		await expect(dialog.getByRole('combobox', { name: '目录名称', exact: true })).toHaveValue('zh');
+		await expect(dialog.getByRole('checkbox', { name: /^正文 / })).toBeChecked();
 		await dialog.getByRole('button', { name: '确定', exact: true }).click();
 		await expect
 			.poll(() =>
@@ -75,7 +77,7 @@ test('welcome initializes selected items, opens the book, and discovers nested m
 					() => undefined,
 				),
 			)
-			.toBe('en');
+			.toBe('zh');
 		await expect.poll(() => app.windows().length).toBe(1);
 		const newPage = app.windows()[0];
 		await expect(newPage.locator('.topbar strong')).toHaveText('new-book');
@@ -145,6 +147,17 @@ test('whole-book search saves edits, counts all matches, limits rows, respects I
 		await expect(page.getByRole('option')).toHaveCount(200);
 		await expect(page.locator('.search-query output')).toHaveText('220 处');
 		await expect(page.locator('.book-search strong').first()).toHaveText('manyNeedles');
+		for (let i = 0; i < 30; i++) {
+			await input.press('ArrowDown');
+		}
+		await expect.poll(() => page.getByRole('listbox').evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+		await page.keyboard.press('Escape');
+		await writeFile(join(book, 'notes/long.txt'), '前'.repeat(1000) + 'farNeedle' + '后'.repeat(1000));
+		await menu('searchBook');
+		await input.fill('farneedle');
+		await expect(page.getByRole('option')).toHaveCount(1);
+		await expect(page.getByRole('option').locator('strong')).toHaveText('farNeedle');
+		expect((await page.getByRole('option').innerText()).length).toBeLessThan(150);
 	});
 });
 
@@ -160,7 +173,7 @@ test('settings edit in place, JSON errors do not save, editor preferences update
 		await settings.getByRole('textbox', { name: '字号', exact: true }).fill('21');
 		await settings.getByRole('textbox', { name: '字号', exact: true }).press('Enter');
 		await settings.getByRole('button', { name: '当前行自动居中', exact: true }).click();
-		await expect(page.locator('.editor:visible .cm-editor')).toHaveClass(/center-line/);
+		await expect(page.locator('.editor:visible')).toHaveClass(/center-line/);
 		await expect(page.locator('.editor:visible .cm-scroller')).toHaveCSS('font-size', '21px');
 		await page.locator('.editor:visible .cm-content').click();
 		await page.keyboard.press('Meta+ArrowDown');
@@ -210,6 +223,14 @@ test('focus hides chrome and restores sidebars; every left tree offers Finder re
 		await expect(page.locator('.sidebar.right')).toBeHidden();
 		await page.keyboard.press('Escape');
 		await expect(page.locator('.app')).toHaveClass(/focus-mode/);
+		await app.evaluate(({ BrowserWindow }) => {
+			BrowserWindow.getAllWindows()[0].emit('leave-full-screen');
+		});
+		await expect(page.locator('.app')).not.toHaveClass(/focus-mode/);
+		await expect(page.locator('.topbar')).toBeVisible();
+		await expect(page.locator('.sidebar.left')).toBeHidden();
+		await menu('focus');
+		await expect(page.locator('.app')).toHaveClass(/focus-mode/);
 		await menu('focus');
 		await expect(page.locator('.topbar')).toBeVisible();
 		await expect(page.locator('.editor:visible')).toHaveCount(2);
@@ -236,5 +257,26 @@ test('focus hides chrome and restores sidebars; every left tree offers Finder re
 			await page.getByRole('menuitem', { name: '在访达中显示', exact: true }).click();
 			await expect.poll(() => app.evaluate(() => (globalThis as typeof globalThis & { revealed?: string }).revealed)).toContain(book);
 		}
+	});
+});
+
+test('a renamed open chapter can still save edits and close its window normally', async () => {
+	await withBook(async ({ page, app, book }) => {
+		const tree = page.getByRole('tree', { name: '章节', exact: true });
+		await tree.getByRole('button', { name: '第2章 灯塔', exact: true }).click({ button: 'right' });
+		await page.getByRole('menuitem', { name: '重命名', exact: true }).click();
+		const dialog = page.getByRole('dialog', { name: '重命名', exact: true });
+		await dialog.getByRole('textbox').fill('Chapter 2 Renamed');
+		await dialog.getByRole('button', { name: '确定', exact: true }).click();
+		const path = '正文/第一卷 雾港/第一幕 来信/Chapter 2 Renamed.md';
+		const editor = page.locator('.editor:visible .cm-content');
+		await expect(editor).toHaveAttribute('aria-label', path);
+		await page.waitForTimeout(150);
+		await editor.click();
+		await page.keyboard.press('Meta+ArrowDown');
+		await page.keyboard.insertText('AfterRename');
+		await expect.poll(() => readFile(join(book, path), 'utf8').catch(() => '')).toContain('AfterRename');
+		await page.evaluate(() => window.novel.window.close());
+		await expect.poll(() => app.process().exitCode).toBe(0);
 	});
 });

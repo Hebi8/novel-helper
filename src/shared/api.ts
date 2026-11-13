@@ -81,9 +81,11 @@ export interface Bootstrap {
 	usage: UsageStatus;
 }
 export interface AppAPI {
-	finish: import('./finish').FinishAPI;
+	structure: import('./structure').StructureAPI;
+	search: { find(query: string): Promise<import('./search').SearchResult> };
 	assistant: AssistantAPI;
 	book: {
+		reveal(path: string): Promise<void>;
 		open(root?: string): Promise<OpenResult>;
 		read(path: string): Promise<DiskFile>;
 		save(path: string, text: string, base: string, force?: boolean): Promise<SaveResult>;
@@ -108,6 +110,8 @@ export interface AppAPI {
 	};
 	usage: { onChanged(listener: (status: UsageStatus) => void): () => void };
 	window: {
+		focus(enabled: boolean): Promise<void>;
+		onFocusChanged(listener: (enabled: boolean) => void): () => void;
 		bootstrap(): Promise<Bootstrap>;
 		saveSession(session: SessionState): Promise<void>;
 		flushed(): void;
@@ -116,6 +120,14 @@ export interface AppAPI {
 	};
 }
 export const channels = {
+	structurePlan: 'structure:plan',
+	structureInitialize: 'structure:initialize',
+	structureSuggest: 'structure:suggest',
+	structureCreate: 'structure:create',
+	bookReveal: 'book:reveal',
+	bookSearch: 'book:search',
+	focusSet: 'window:focus',
+	focusChanged: 'window:focusChanged',
 	assistantState: 'assistant:state',
 	assistantSend: 'assistant:send',
 	assistantStop: 'assistant:stop',

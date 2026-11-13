@@ -1,3 +1,4 @@
+import { registerSearch } from './search/ipc';
 import { registerScaffold } from './scaffold/ipc';
 import { registerReference } from './reference/ipc';
 import type { MainContext } from './context';
@@ -12,6 +13,7 @@ import { registerAssistant } from './assistant/ipc';
 // prettier-ignore
 const features = [
 	registerScaffold,
+	registerSearch,
 	registerReference,
 	registerBook,
 	registerCompletion,

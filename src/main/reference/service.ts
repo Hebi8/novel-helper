@@ -1,4 +1,4 @@
-import { MARKER_FILE, parseMarker } from '../../core/story';
+import { bookFolder } from '../book/names';
 import { join } from 'node:path';
 import type { BookIndex } from '../book/indexer';
 import { scanFiles } from '../book/indexer';
@@ -89,11 +89,7 @@ export async function openCompanion(index: BookIndex, nodePath: string, kind: 'o
 	bookPath(nodePath);
 	const find = (node: BookNode): BookNode | undefined => (node.path === nodePath ? node : node.children.map(find).find(Boolean));
 	const node = find(index.book.tree)!;
-	const marker = parseMarker((await readOptional(join(index.root, MARKER_FILE))) ?? '');
-	const root =
-		index.library.roots(kind)[0] ??
-		marker?.folders?.[kind === 'outline' ? 'outlines' : 'summaries'] ??
-		index.configuration[kind === 'outline' ? 'files.outlines' : 'files.summaries'].flatMap(globFolders)[0];
+	const root = bookFolder(index, kind);
 	const path = bookPath(node[kind] ?? [root, ...node.dirs, `${node.name}.md`].join('/'));
 	await index.mutate(path, (raw) => (raw === undefined ? '' : undefined));
 	return path;

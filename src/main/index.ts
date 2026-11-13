@@ -1,5 +1,6 @@
+import { prepareBookRename } from './assistant/ipc';
 import { prepareOpen } from './scaffold/initialize';
-import { inspectRememberedBook, restoreBooks } from './window/reopen';
+import { resolveBookRoot, restoreBooks } from './window/reopen';
 import { CloseGate } from './window/closeGate';
 import { app, BrowserWindow, ipcMain, webContents } from 'electron';
 import { join } from 'node:path';
@@ -67,6 +68,7 @@ if (!app.requestSingleInstanceLock()) {
 			}
 			const senderId = window.webContents.id;
 			const closeGate = new CloseGate();
+			window.on('leave-full-screen', () => window.webContents.send(channels.focusChanged, false));
 			window.webContents.on('render-process-gone', () => closeGate.rendererGone());
 			const onFlushed = async (event: Electron.IpcMainEvent) => {
 				if (event.sender !== window.webContents) {
@@ -118,6 +120,7 @@ if (!app.requestSingleInstanceLock()) {
 			return window;
 		};
 		const context: MainContext = {
+			prepareBookRename,
 			reindexBooks: async () => {
 				await Promise.all([...books.values()].map((book) => book.reconfigure(settings.get())));
 			},
@@ -133,44 +136,33 @@ if (!app.requestSingleInstanceLock()) {
 			broadcast: (channel, data) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channel, data)),
 			open: async (root, source) => {
 				try {
-					const prepared = await prepareOpen(root, settings.get());
-					if (prepared.roots) {
-						return { kind: 'choices', roots: prepared.roots };
+					root = await resolveBookRoot(root);
+					const existing = [...books].find(([, book]) => book.root === root);
+					if (existing) {
+						const window = BrowserWindow.fromWebContents(webContents.fromId(existing[0])!)!;
+						if (!testing) {
+							window.restore();
+							window.show();
+							window.focus();
+						}
+					} else {
+						const prepared = await prepareOpen(root, settings.get());
+						if (prepared.roots) {
+							return { kind: 'choices', roots: prepared.roots };
+						}
+						if (prepared.initialize) {
+							return { kind: 'empty', root };
+						}
+						createWindow(prepared.index!);
 					}
-					if (prepared.initialize) {
-						return { kind: 'empty', root: prepared.root };
+					if (source && !books.has(source.webContents.id) && source !== settingsWindow) {
+						source.close();
 					}
-					root = prepared.root;
+					installMenu(context);
+					return { kind: 'opened' };
 				} catch (error) {
 					return { kind: 'error', message: String(error) };
 				}
-				const inspected = await inspectRememberedBook(root, windows);
-				if ('error' in inspected) {
-					installMenu(context);
-					return { kind: 'error', message: inspected.error };
-				}
-				if (!inspected.index) {
-					return inspected.roots.length ? { kind: 'choices', roots: inspected.roots } : { kind: 'empty' };
-				}
-				const index = inspected.index;
-				await index.reconfigure(settings.get());
-				const existing = [...books].find(([, book]) => book.root === index.root);
-				if (existing) {
-					index.dispose();
-					const window = BrowserWindow.fromWebContents(webContents.fromId(existing[0])!)!;
-					if (!testing) {
-						window.restore();
-						window.show();
-						window.focus();
-					}
-				} else {
-					createWindow(index);
-				}
-				if (source && !books.has(source.webContents.id) && source !== settingsWindow) {
-					source.close();
-				}
-				installMenu(context);
-				return { kind: 'opened' };
 			},
 			initialResult: (event) => initialResults.get(event.sender.id),
 			openWelcome: (result) => {
@@ -204,8 +196,20 @@ if (!app.requestSingleInstanceLock()) {
 				createWindow();
 			}
 		});
-		if (!(await restoreBooks(windows, (root) => context.open(root)))) {
-			createWindow();
+		let reopenError: OpenResult | undefined;
+		const restored = await restoreBooks(windows, async (root) => {
+			const result = await context.open(root);
+			if (result.kind === 'error') {
+				reopenError = result;
+			}
+			return result;
+		});
+		if (!restored) {
+			if (reopenError) {
+				context.openWelcome(reopenError);
+			} else {
+				createWindow();
+			}
 		}
 	});
 }

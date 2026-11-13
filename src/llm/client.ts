@@ -202,8 +202,11 @@ export interface Answer {
  * Sends a request and reads its reply to the end. Never throws: a failure
  * comes back as `error`, with the text received until then.
  */
-export async function ask(req: ModelRequest): Promise<Answer> {
+export async function ask(req: ModelRequest, signal?: AbortSignal): Promise<Answer> {
 	const controller = new AbortController();
+	const abort = () => controller.abort();
+	if (signal?.aborted) { abort(); }
+	signal?.addEventListener('abort', abort, { once: true });
 	let timedOut = false;
 	const timer = setTimeout(() => {
 		timedOut = true;
@@ -236,6 +239,7 @@ export async function ask(req: ModelRequest): Promise<Answer> {
 		error = redact(timedOut ? `no complete answer within ${req.timeoutMs} ms` : describe(failure), req.apiKey);
 	} finally {
 		clearTimeout(timer);
+		signal?.removeEventListener('abort', abort);
 		controller.abort();
 	}
 	if (answered && usage.input !== undefined && usage.output === undefined) {

@@ -6,7 +6,7 @@ export function registerSettings(ctx: MainContext): void {
 	ipcMain.handle(channels.settingsSet, async (_event, key: SettingKey, value: Settings[SettingKey]) => {
 		ctx.settings.set(key, value);
 		if (key.startsWith('files.')) {
-			await ctx.reindexBooks?.();
+			await ctx.reindexBooks();
 		}
 		ctx.completion.settingsChanged();
 		ctx.broadcast(channels.settingsChanged, ctx.settings.get());

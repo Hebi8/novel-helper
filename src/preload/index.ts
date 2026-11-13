@@ -8,15 +8,13 @@ const listen = <T>(channel: string, listener: (value: T) => void) => {
 	};
 };
 const api: AppAPI = {
-	finish: {
-		plan: (root, language) => ipcRenderer.invoke('finish:plan', root, language),
-		initialize: (root, language, selected) => ipcRenderer.invoke('finish:initialize', root, language, selected),
-		suggest: (action, path) => ipcRenderer.invoke('finish:suggest', action, path),
-		create: (input) => ipcRenderer.invoke('finish:create', input),
-		reveal: (path) => ipcRenderer.invoke('finish:reveal', path),
-		search: (query) => ipcRenderer.invoke('finish:search', query),
-		focus: (enabled) => ipcRenderer.invoke('finish:focus', enabled),
+	structure: {
+		plan: (root, language) => ipcRenderer.invoke(c.structurePlan, root, language),
+		initialize: (root, language, selected) => ipcRenderer.invoke(c.structureInitialize, root, language, selected),
+		suggest: (action, path) => ipcRenderer.invoke(c.structureSuggest, action, path),
+		create: (input) => ipcRenderer.invoke(c.structureCreate, input),
 	},
+	search: { find: (query) => ipcRenderer.invoke(c.bookSearch, query) },
 	assistant: {
 		state: () => ipcRenderer.invoke(c.assistantState),
 		send: (text, context) => ipcRenderer.invoke(c.assistantSend, text, context),
@@ -46,6 +44,7 @@ const api: AppAPI = {
 		onChanged: (listener) => listen(c.reportChanged, listener),
 	},
 	book: {
+		reveal: (path) => ipcRenderer.invoke(c.bookReveal, path),
 		onOpenResult: (listener) => listen(c.openResult, listener),
 		open: (root) => ipcRenderer.invoke(c.bookOpen, root),
 		read: (path) => ipcRenderer.invoke(c.bookRead, path),
@@ -70,6 +69,8 @@ const api: AppAPI = {
 	},
 	usage: { onChanged: (listener) => listen(c.usageChanged, listener) },
 	window: {
+		focus: (enabled) => ipcRenderer.invoke(c.focusSet, enabled),
+		onFocusChanged: (listener) => listen(c.focusChanged, listener),
 		bootstrap: () => ipcRenderer.invoke(c.bootstrap),
 		saveSession: (session) => ipcRenderer.invoke(c.session, session),
 		flushed: () => ipcRenderer.send(c.flushed),

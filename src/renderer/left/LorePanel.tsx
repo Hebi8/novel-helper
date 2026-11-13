@@ -106,7 +106,7 @@ export function LorePanel() {
 							onClick={() => {
 								const path = menu.entry.id;
 								closeMenu();
-								void window.novel.finish.reveal(path).catch((error) => setError(errorMessage(error)));
+								void window.novel.book.reveal(path).catch((error) => setError(errorMessage(error)));
 							}}
 						>
 							{zh.reveal}

@@ -3,7 +3,7 @@ import type { TestContext } from 'node:test';
 import fs = require('node:fs/promises');
 import { bookPath } from '../main/book/paths';
 import { WindowStore } from '../main/window/state';
-import { inspectRememberedBook, restoreBooks } from '../main/window/reopen';
+import { resolveBookRoot, restoreBooks } from '../main/window/reopen';
 import { CloseGate } from '../main/window/closeGate';
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
@@ -258,21 +258,33 @@ test('saving a chapter and its watcher event never reread the other chapters', a
 		readPaths.join('\n'),
 	);
 });
-test('missing remembered books are removed and restoration reports that a welcome window is needed', async (t) => {
+test('missing remembered books retain recent entries and tabs while leaving the open list', async (t) => {
 	const { root } = await fixture(t);
-
-	const store = new WindowStore(root);
-	const missing = join(root, 'missing');
+	const store = new WindowStore(root),
+		missing = join(root, 'missing');
 	store.opened(missing);
+	const session = { tabs: [{ path: chapter, anchor: 12, head: 12 }], active: chapter };
+	store.setSession(missing, session);
 	const opened = await restoreBooks(store, async (path) => {
-		const result = await inspectRememberedBook(path, store);
-		assert.ok('error' in result);
-		return { kind: 'error', message: '不存在' };
+		await assert.rejects(resolveBookRoot(path), /找不到这本书/);
+		return { kind: 'error', message: '找不到这本书' };
 	});
 	assert.equal(opened, 0);
 	assert.deepEqual(store.value.open, []);
-	assert.deepEqual(store.value.recent, []);
-	assert.deepEqual(new WindowStore(root).value.recent, []);
+	assert.deepEqual(store.value.recent, [missing]);
+	assert.deepEqual(new WindowStore(root).session(missing), session);
+});
+test('choices and initialization results retain remembered books and tabs', async (t) => {
+	const { root, book } = await fixture(t);
+	for (const kind of ['choices', 'empty'] as const) {
+		const store = new WindowStore(root);
+		store.opened(book);
+		store.setSession(book, { tabs: [{ path: chapter, anchor: 3, head: 3 }], active: chapter });
+		await restoreBooks(store, async () => (kind === 'choices' ? { kind, roots: [book] } : { kind, root: book }));
+		assert.deepEqual(store.value.open, []);
+		assert.ok(store.value.recent.includes(book));
+		assert.equal(store.session(book).tabs[0].anchor, 3);
+	}
 });
 test('story discovery does not read unrelated documents and skips inaccessible descendants', async (t) => {
 	const { root, book } = await fixture(t);

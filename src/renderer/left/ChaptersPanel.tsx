@@ -79,7 +79,7 @@ export function ChaptersPanel({ tree, selected, open }: Props) {
 						{
 							label: zh.reveal,
 							run: () => {
-								void window.novel.finish.reveal(menu.item.path).catch((error) => setError(errorMessage(error)));
+								void window.novel.book.reveal(menu.item.path).catch((error) => setError(errorMessage(error)));
 							},
 						},
 					]}

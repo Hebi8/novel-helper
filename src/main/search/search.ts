@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { scanFiles } from '../book/indexer';
 import { readDocument } from '../book/files';
 import { comparePaths } from '../../core/naturalSort';
-import type { SearchResult } from '../../shared/finish';
+import type { SearchResult } from '../../shared/search';
 function lower(text: string) {
 	let folded = '';
 	const starts: number[] = [],
@@ -20,7 +20,7 @@ function lower(text: string) {
 	return { folded, starts, ends };
 }
 export function searchTexts(files: { path: string; text: string }[], query: string): SearchResult {
-	const result: SearchResult = { total: 0, groups: [] };
+	const result: SearchResult = { total: 0, groups: [], skipped: [] };
 	if (!query) {
 		return result;
 	}
@@ -49,15 +49,20 @@ export function searchTexts(files: { path: string; text: string }[], query: stri
 }
 export async function searchBook(root: string, query: string): Promise<SearchResult> {
 	if (!query) {
-		return { total: 0, groups: [] };
+		return { total: 0, groups: [], skipped: [] };
 	}
 	const paths = (await scanFiles(root, '')).sort(comparePaths);
-	const files = [];
+	const files = [],
+		skipped: SearchResult['skipped'] = [];
 	for (const path of paths) {
-		const document = await readDocument(join(root, path));
-		if (document) {
-			files.push({ path, text: document.text });
+		try {
+			const document = await readDocument(join(root, path));
+			if (document) {
+				files.push({ path, text: document.text });
+			}
+		} catch (error) {
+			skipped.push({ path, reason: error instanceof Error ? error.message : String(error) });
 		}
 	}
-	return searchTexts(files, query);
+	return { ...searchTexts(files, query), skipped };
 }

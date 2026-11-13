@@ -667,6 +667,12 @@ for (const format of ['mixed lines', 'non-UTF8'] as const) {
 		assert.match(describeBuoy(status.state, status.lost, status.unreadable), /读不了/);
 		assert.ok(describeBuoy(status.state, status.lost, status.unreadable).includes(mirror));
 		await assert.rejects(f.buoys.act(chapter, 'relocate'), /读不了/);
+		for (const action of ['forward', 'back'] as const) {
+			await assert.rejects(
+				f.buoys.act(chapter, action),
+				(error) => error instanceof Error && error.message === describeBuoy(status.state, status.lost, status.unreadable),
+			);
+		}
 		assert.equal(f.requests.length, 0);
 		await writeFile(join(f.book, mirror), original);
 		await f.index.refresh(mirror);

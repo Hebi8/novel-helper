@@ -1,11 +1,19 @@
-import { assertBookAvailable } from '../scaffold/activity';
 import { dirname } from 'node:path';
 import { buildOutline, type OutlineGraph } from '../../core/outline';
 import { readdir, realpath, stat, mkdir } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { join, basename, matchesGlob } from 'node:path';
 import { Library, globRootDepth, globFolders, type FileKind } from '../../core/library';
-import { MARKER_FILE, SCAN_DEPTH, SCAN_EXCLUDE, parseMarker, storyState, storiesFromMarkers, isUsable } from '../../core/story';
+import {
+	MARKER_FILE,
+	SCAN_DEPTH,
+	SCAN_EXCLUDE,
+	parseMarker,
+	type Marker,
+	storyState,
+	storiesFromMarkers,
+	isUsable,
+} from '../../core/story';
 import { defaults, type Settings } from '../../shared/defaults';
 import type { Book, DiskFile, SaveResult } from '../../shared/api';
 import { atomicWrite, readOptional, readDocument, FileFormatError, type LineEnding } from './files';
@@ -106,7 +114,7 @@ export class BookIndex {
 	private queue: Promise<void> = Promise.resolve();
 	private timer?: ReturnType<typeof setTimeout>;
 	private disposed = false;
-	private marked = false;
+	marker?: Marker;
 	private readonly changedListeners = new Set<(book: Book) => void>();
 	private readonly fileListeners = new Set<(file: DiskFile) => void>();
 	onChanged(listener: (book: Book) => void): () => void {
@@ -135,7 +143,7 @@ export class BookIndex {
 		try {
 			const marker = await readOptional(join(this.root, MARKER_FILE));
 			const metadata = marker !== undefined ? parseMarker(marker) : undefined;
-			this.marked = metadata !== undefined;
+			this.marker = metadata;
 			if (metadata?.book && this.library.empty) {
 				this.library = new Library([...new Set([metadata.book, ...this.settings['files.bookNames']])]);
 			}
@@ -157,7 +165,7 @@ export class BookIndex {
 		};
 	}
 	async usable(): Promise<boolean> {
-		return isUsable(storyState({ valid: true, exists: true, marked: this.marked, hasFiles: !this.library.empty }));
+		return isUsable(storyState({ valid: true, exists: true, marked: this.marker !== undefined, hasFiles: !this.library.empty }));
 	}
 	start(): void {
 		this.watcher = watch(this.root, { recursive: true }, (_event, filename) => {
@@ -211,7 +219,6 @@ export class BookIndex {
 		return { path, text: content?.text ?? '' };
 	}
 	save(path: string, text: string, base: string, force = false): Promise<SaveResult> {
-		assertBookAvailable(this.root);
 		return this.enqueue(async () => {
 			const disk = await readDocument(join(this.root, path));
 			if (!force && disk?.text !== base) {
@@ -374,7 +381,6 @@ export class BookIndex {
 		this.notify();
 	}
 	mutate(path: string, change: (raw: string | undefined) => string | undefined): Promise<void> {
-		assertBookAvailable(this.root);
 		return this.enqueue(async () => {
 			const full = join(this.root, path);
 			const before = await readOptional(full);
@@ -393,7 +399,7 @@ export class BookIndex {
 			this.settings = settings;
 		});
 	}
-	/** Stop the watcher while a prepared directory transaction is committed. */
+	/** Serialize structural changes with saves and suspend watcher notifications, including on failure. */
 	exclusive<T>(operation: () => Promise<T>): Promise<T> {
 		return this.enqueue(async () => {
 			const watching = !!this.watcher;
@@ -402,7 +408,8 @@ export class BookIndex {
 			clearTimeout(this.timer);
 			this.pending.clear();
 			try {
-				const result = await operation();
+				return await operation();
+			} finally {
 				this.library = new Library(this.settings['files.bookNames']);
 				this.files.clear();
 				this.contents.clear();
@@ -411,12 +418,13 @@ export class BookIndex {
 				this.referenceVersion++;
 				this.buoyVersion++;
 				this.graph = undefined;
-				await this.load();
-				this.notify();
-				return result;
-			} finally {
-				if (watching) {
-					this.start();
+				try {
+					await this.load();
+					this.notify();
+				} finally {
+					if (watching) {
+						this.start();
+					}
 				}
 			}
 		});

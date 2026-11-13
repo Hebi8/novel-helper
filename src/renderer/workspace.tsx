@@ -8,7 +8,7 @@ export interface EditorSnapshot {
 }
 /** Panels share the writing workspace without owning or duplicating its editor. */
 export interface Workspace {
-	structure(action: import('../shared/finish').StructureAction, path?: string): void;
+	structure(action: import('../shared/structure').StructureAction, path?: string): void;
 	searchBook(): void;
 	book?: Book;
 	session: SessionState;

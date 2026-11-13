@@ -1,19 +1,20 @@
+import { searchExcerpt } from '../../shared/search';
 import { useEffect, useRef, useState } from 'react';
-import type { SearchResult, SearchMatch } from '../../shared/finish';
+import type { SearchResult, SearchMatch } from '../../shared/search';
 import { useWorkspace } from '../workspace';
 import { zh } from '../strings';
 import { errorMessage } from '../errors';
 export function Search({ close }: { close(): void }) {
 	const workspace = useWorkspace();
+	const list = useRef<HTMLDivElement>(null);
 	const [query, setQuery] = useState('');
-	const [result, setResult] = useState<SearchResult>({ total: 0, groups: [] });
+	const [result, setResult] = useState<SearchResult>({ total: 0, groups: [], skipped: [] });
 	const [selected, setSelected] = useState(0);
 	const [error, setError] = useState('');
-	const composing = useRef(false);
 	const rows = result.groups.flatMap((group) => group.matches.map((match) => ({ path: group.path, match })));
 	useEffect(() => {
 		let alive = true;
-		setResult({ total: 0, groups: [] });
+		setResult({ total: 0, groups: [], skipped: [] });
 		setSelected(0);
 		const timer = setTimeout(() => {
 			void workspace
@@ -25,7 +26,7 @@ export function Search({ close }: { close(): void }) {
 					if (!alive) {
 						return;
 					}
-					const value = await window.novel.finish.search(query);
+					const value = await window.novel.search.find(query);
 					if (alive) {
 						setResult(value);
 						setError('');
@@ -42,6 +43,9 @@ export function Search({ close }: { close(): void }) {
 			clearTimeout(timer);
 		};
 	}, [query]);
+	useEffect(() => {
+		list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+	}, [selected]);
 	const open = (path: string, match: SearchMatch) => {
 		void workspace.open(path, { offset: match.offset }).then(() => {
 			close();
@@ -55,14 +59,8 @@ export function Search({ close }: { close(): void }) {
 				className="quick-open book-search"
 				role="dialog"
 				aria-label={zh.searchBook}
-				onCompositionStart={() => {
-					composing.current = true;
-				}}
-				onCompositionEnd={() => {
-					composing.current = false;
-				}}
 				onKeyDown={(event) => {
-					if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) {
+					if (event.nativeEvent.isComposing) {
 						return;
 					}
 					if (event.key === 'Escape') {
@@ -89,12 +87,13 @@ export function Search({ close }: { close(): void }) {
 					<output>{zh.searchCount(result.total)}</output>
 				</div>
 				{error ? <p role="alert">{error}</p> : null}
-				<div className="quick-results" role="listbox">
+				<div className="quick-results" role="listbox" ref={list}>
 					{result.groups.map((group) => (
 						<div key={group.path} role="group" aria-label={group.path}>
 							<h4>{group.path}</h4>
 							{group.matches.map((match) => {
 								const i = row++;
+								const excerpt = searchExcerpt(match);
 								return (
 									<button
 										key={match.offset}
@@ -105,9 +104,9 @@ export function Search({ close }: { close(): void }) {
 									>
 										<small>{match.line + 1}</small>
 										<span>
-											{match.text.slice(0, match.column)}
-											<strong>{match.text.slice(match.column, match.column + match.length)}</strong>
-											{match.text.slice(match.column + match.length)}
+											{excerpt.before}
+											<strong>{excerpt.hit}</strong>
+											{excerpt.after}
 										</span>
 									</button>
 								);
@@ -115,6 +114,18 @@ export function Search({ close }: { close(): void }) {
 						</div>
 					))}
 				</div>
+				{result.skipped.length ? (
+					<div className="search-skipped">
+						<p>{zh.searchSkipped}</p>
+						<ul>
+							{result.skipped.map((file) => (
+								<li key={file.path}>
+									{file.path}：{file.reason}
+								</li>
+							))}
+						</ul>
+					</div>
+				) : null}
 			</div>
 		</div>
 	);

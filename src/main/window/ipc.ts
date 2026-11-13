@@ -2,6 +2,9 @@ import { ipcMain } from 'electron';
 import { channels, type SessionState } from '../../shared/api';
 import type { MainContext } from '../context';
 export function registerWindow(ctx: MainContext): void {
+	ipcMain.handle(channels.focusSet, (event, enabled: boolean) => {
+		ctx.windowFor(event).setFullScreen(enabled);
+	});
 	ipcMain.on(channels.close, (event) => {
 		ctx.windowFor(event).close();
 	});

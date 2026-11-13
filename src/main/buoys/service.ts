@@ -32,7 +32,7 @@ import {
 } from '../../core/buoy';
 import { frontmatterLength, stem } from '../../core/text';
 import { costOf, ratesFor, usageKey } from '../../core/usage';
-import { askPosition } from './request';
+import { ask } from '../../llm/client';
 import type { ProviderId } from '../../llm/providers';
 import type { OutlineGraph } from '../../core/outline';
 import type { BuoyAction, BuoyStatus } from '../../shared/api';
@@ -65,7 +65,7 @@ export class Buoys {
 		private settings: SettingsStore,
 		private usage: UsageStore,
 		private getKey: (provider: ProviderId) => string | undefined,
-		private request: typeof askPosition = askPosition,
+		private request: typeof ask = ask,
 	) {}
 	private serial<T>(work: () => Promise<T>): Promise<T> {
 		const done = this.last.then(work);
@@ -241,13 +241,13 @@ export class Buoys {
 		}
 		const at = await this.read(chapter);
 		const text = (await this.index.read(chapter)).text;
+		if (at.unreadable.length && ['forward', 'back', 'relocate'].includes(action)) {
+			throw new Error(zh.buoyUnreadable(at.unreadable));
+		}
 		if (!at.graph.leaves.length) {
 			throw new Error(zh.buoyEmpty);
 		}
 		if (action === 'relocate') {
-			if (at.unreadable.length) {
-				throw new Error(zh.buoyUnreadable(at.unreadable));
-			}
 			if (!text.slice(frontmatterLength(text)).trim()) {
 				throw new Error(zh.buoyNoText);
 			}

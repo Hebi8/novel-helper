@@ -69,7 +69,7 @@ export function OutlinePanel() {
 						{
 							label: zh.reveal,
 							run: () => {
-								void window.novel.finish.reveal(menu.path).catch((error) => setError(errorMessage(error)));
+								void window.novel.book.reveal(menu.path).catch((error) => setError(errorMessage(error)));
 							},
 						},
 					]}

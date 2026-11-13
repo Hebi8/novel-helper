@@ -2,7 +2,7 @@ import { writingPreferences } from './preferences';
 import { ConflictBar } from './ConflictBar';
 import { loreExtension, updateLore } from '../reference/loreExtension';
 import { useWorkspace } from '../workspace';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
@@ -48,6 +48,8 @@ export function Editor({
 	side,
 }: Props) {
 	const workspace = useWorkspace();
+	const settingsRef = useRef(settings);
+	settingsRef.current = settings;
 	const callbacksOpen = useRef(workspace.open);
 	const entriesRef = useRef(workspace.reference.entries);
 	entriesRef.current = workspace.reference.entries;
@@ -68,7 +70,7 @@ export function Editor({
 
 			ghost.extension(),
 			prose,
-			writingPreferences(settings),
+			writingPreferences(() => settingsRef.current['editor.centerLine']),
 			markdown(),
 			EditorView.lineWrapping,
 			EditorState.phrases.of(zh.search),
@@ -157,9 +159,19 @@ export function Editor({
 		}
 	}, [visible]);
 	return (
-		<div className={`editor-pane pane-${side}`} onFocus={focused} style={{ display: visible ? undefined : 'none' }}>
+		<div
+			className={`editor-pane pane-${side}`}
+			onFocus={focused}
+			style={
+				{
+					display: visible ? undefined : 'none',
+					'--writing-font': settings['editor.fontFamily'],
+					'--writing-size': `${settings['editor.fontSize']}px`,
+				} as CSSProperties
+			}
+		>
 			<ConflictBar document={model} reload={() => handle.current?.reload()} />
-			<div className="editor" ref={parent} />
+			<div className={`editor ${settings['editor.centerLine'] ? 'center-line' : ''}`} ref={parent} />
 		</div>
 	);
 }

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "language": "zh",
+  "folders": {
+    "chapters": "正文",
+    "outlines": "大纲",
+    "summaries": "摘要",
+    "lore": ["设定", "人物"]
+  },
+  "book": "全书"
+}

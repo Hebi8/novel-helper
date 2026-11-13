@@ -6,7 +6,7 @@ import { Popover } from './Popover';
 import { errorMessage } from '../errors';
 import { zh } from '../strings';
 export function Initialize({ root, close, opened }: { root: string; close(): void; opened(result: OpenResult): void }) {
-	const [language, setLanguage] = useState<NamesLanguage>('en');
+	const [language, setLanguage] = useState<NamesLanguage>('zh');
 	const [items, setItems] = useState<ScaffoldItem[]>([]);
 	const [selected, setSelected] = useState<string[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -15,7 +15,7 @@ export function Initialize({ root, close, opened }: { root: string; close(): voi
 	useEffect(() => {
 		let alive = true;
 		setLoading(true);
-		void window.novel.finish
+		void window.novel.structure
 			.plan(root, language)
 			.then((items) => {
 				if (!alive) {
@@ -42,7 +42,7 @@ export function Initialize({ root, close, opened }: { root: string; close(): voi
 			pending={pending || loading}
 			submit={() => {
 				setPending(true);
-				void window.novel.finish
+				void window.novel.structure
 					.initialize(root, language, selected)
 					.then(opened)
 					.catch((error) => setError(errorMessage(error)))

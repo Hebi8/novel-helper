@@ -12,14 +12,11 @@
 	"scripts": {
 		"dev": "electron-vite dev",
 		"build": "electron-vite build",
-		"pretest": "npm run native && node -e \"require('fs').rmSync('out',{recursive:true,force:true})\" && tsc -p tsconfig.test.json",
+		"pretest": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\" && tsc -p tsconfig.test.json",
 		"test": "node scripts/test.cjs",
 		"e2e": "npm run build && playwright test",
 		"check": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && eslint src e2e electron.vite.config.ts playwright.config.ts --max-warnings 0 && prettier --check .",
 		"format": "prettier --write .",
-		"native": "node scripts/native.cjs",
-		"predev": "npm run native",
-		"prebuild": "npm run native",
 		"pack": "npm run build && electron-builder --mac dir --arm64 --publish never"
 	},
 	"dependencies": {
@@ -58,16 +55,12 @@
 			"output": "release"
 		},
 		"files": [
-			"dist/**/*",
+			"dist/main/**/*",
+			"dist/preload/**/*",
+			"dist/renderer/**/*",
 			"package.json",
 			"LICENSE",
 			"THIRD-PARTY-NOTICES.md"
-		],
-		"extraResources": [
-			{
-				"from": "dist/native/book-fs",
-				"to": "book-fs"
-			}
 		],
 		"mac": {
 			"target": [

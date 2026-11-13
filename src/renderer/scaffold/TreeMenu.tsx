@@ -5,7 +5,7 @@ export function TreeMenu({ x, y, close, actions }: { x: number; y: number; close
 			className="menu-backdrop"
 			onMouseDown={close}
 			onKeyDown={(event) => {
-				if (event.key === 'Escape' && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+				if (event.key === 'Escape') {
 					close();
 				}
 			}}

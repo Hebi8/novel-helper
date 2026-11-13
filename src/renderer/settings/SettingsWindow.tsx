@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PROVIDERS, type ProviderId } from '../../llm/providers';
 import type { Settings, SettingKey } from '../../shared/api';
 import { settingGroups, saveSettingText, jsonSettings } from '../../shared/settings';
@@ -12,7 +12,6 @@ export function SettingsWindow() {
 	const [value, setValue] = useState('');
 	const [error, setError] = useState('');
 	const [pending, setPending] = useState(false);
-	const composing = useRef(false);
 	useEffect(() => {
 		void window.novel.settings.get().then(update);
 		const off = window.novel.settings.onChanged(update);
@@ -58,7 +57,7 @@ export function SettingsWindow() {
 		setError('');
 	};
 	const commit = async () => {
-		if (!editing || pending || composing.current) {
+		if (!editing || pending) {
 			return;
 		}
 		setPending(true);
@@ -86,14 +85,8 @@ export function SettingsWindow() {
 				value={value}
 				disabled={pending}
 				onChange={(event) => setValue(event.target.value)}
-				onCompositionStart={() => {
-					composing.current = true;
-				}}
-				onCompositionEnd={() => {
-					composing.current = false;
-				}}
 				onKeyDown={(event) => {
-					if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) {
+					if (event.nativeEvent.isComposing) {
 						return;
 					}
 					if (event.key === 'Enter') {

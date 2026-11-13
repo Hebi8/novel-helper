@@ -1,49 +1,27 @@
-import { parseDocument } from 'yaml';
 import { movedPath } from '../../shared/paths';
-import { join, dirname, basename } from 'node:path';
-import { readdir, readFile, readlink, mkdtemp, mkdir, rm, rename, realpath } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { join, dirname } from 'node:path';
+import { readdir, mkdir, link, unlink, rename } from 'node:fs/promises';
 import type { Rename } from '../../core/library';
 import { nameProblem } from '../../core/book';
-import { BUOY_FOLDER } from '../../core/buoy';
-import { BookIndex } from '../book/indexer';
+import { BUOY_FOLDER, hasOpenMarks, markAt, parseBuoyFile, renameState, serializeBuoyFile } from '../../core/buoy';
+import { frontmatterLength } from '../../core/text';
+import type { BookIndex } from '../book/indexer';
 import { atomicWrite, readOptional } from '../book/files';
-import { info, safePath, moveAtomic, runFile } from './disk';
+import { info, safePath } from './disk';
 import { findNode } from './structure';
 import { zh } from '../../renderer/strings';
-async function manifest(root: string, path = ''): Promise<string[]> {
-	const full = join(root, path),
-		stat = (await info(full))!;
-	if (stat.isSymbolicLink()) {
-		return [`${path}:link:${await readlink(full)}`];
-	}
-	if (stat.isDirectory()) {
-		return [
-			`${path}:dir:${stat.mode}`,
-			...(await Promise.all((await readdir(full)).sort().map((name) => manifest(root, path ? `${path}/${name}` : name)))).flat(),
-		];
-	}
-	if (!stat.isFile() || stat.nlink !== 1) {
-		throw new Error(`${zh.renameUnsupported}: ${path}`);
-	}
-	return [
-		`${path}:${stat.mode}:${stat.size}:${stat.mtimeMs}:${createHash('sha256')
-			.update(await readFile(full))
-			.digest('hex')}`,
-	];
-}
+import type { RenameResult } from '../../shared/structure';
 async function jsonFiles(root: string, path: string): Promise<string[]> {
 	if (!(await info(join(root, path)))) {
 		return [];
 	}
+	await safePath(root, path);
 	const entries = await readdir(join(root, path), { withFileTypes: true });
 	return (
 		await Promise.all(
 			entries.map(async (entry) => {
 				const file = `${path}/${entry.name}`;
-				if (entry.isSymbolicLink()) {
-					throw new Error(zh.renameLink);
-				}
+				await safePath(root, file);
 				return entry.isDirectory() ? jsonFiles(root, file) : entry.name.endsWith('.json') ? [file] : [];
 			}),
 		)
@@ -54,10 +32,14 @@ export async function renamePlan(index: BookIndex, path: string, name: string): 
 	if (!node || node.kind === 'book' || nameProblem(name, [])) {
 		throw new Error(zh.invalidName);
 	}
-	if (name.trim() === node.name) {
+	name = name.trim();
+	if (name === node.name) {
 		return [];
 	}
-	const plan = index.library.renames(node, name.trim());
+	if (name.toLowerCase() === node.name.toLowerCase()) {
+		throw new Error(zh.renameCase);
+	}
+	const plan = index.library.renames(node, name);
 	if (plan.blocked) {
 		throw new Error(`${zh.renameShared}: ${plan.blocked.path}`);
 	}
@@ -66,79 +48,89 @@ export async function renamePlan(index: BookIndex, path: string, name: string): 
 	if (await info(join(index.root, buoyFrom))) {
 		renames.push({ from: buoyFrom, to: `${BUOY_FOLDER}/${movedPath(node.path, renames)}${node.kind === 'chapter' ? '.json' : ''}` });
 	}
+	const files: Rename[] = [],
+		directories: Rename[] = [];
 	for (const move of renames) {
 		const source = await safePath(index.root, move.from),
 			target = await safePath(index.root, move.to);
-		if (!(await info(source))) {
+		const sourceInfo = await info(source);
+		if (!sourceInfo) {
 			throw new Error(`${zh.fileMissing}: ${move.from}`);
 		}
 		if (await info(target)) {
 			throw new Error(`${zh.fileExists}: ${move.to}`);
 		}
+		(sourceInfo.isDirectory() ? directories : files).push(move);
 	}
-	return renames;
+	// A volume's companion files go first, so an unsupported hard-link operation stops before its directories move.
+	return [...files, ...directories];
 }
-/** All work is prepared on a same-volume clone; only the final exchange touches the original tree. */
-export async function renameBook(
-	index: BookIndex,
-	path: string,
-	name: string,
-	exchange: (from: string, to: string) => Promise<void> = (from, to) => moveAtomic(from, to, true),
-): Promise<Rename[]> {
-	const root = await realpath(index.root);
-	const before = JSON.stringify(await manifest(root));
-	const current = new BookIndex(root, index.configuration);
-	await current.load();
-	const renames = await renamePlan(current, path, name);
-	current.dispose();
-	if (!renames.length) {
-		return [];
+async function buoyWrites(index: BookIndex, renames: Rename[]) {
+	const writes: { path: string; text: string }[] = [];
+	for (const path of await jsonFiles(index.root, BUOY_FOLDER)) {
+		const raw = (await readOptional(join(index.root, path)))!;
+		const chapter = path.slice(BUOY_FOLDER.length + 1, -'.json'.length);
+		const text = hasOpenMarks(raw) ? (await index.read(chapter)).text : '';
+		const file = parseBuoyFile(raw, (state) => markAt(text, text.length - frontmatterLength(text), state, 'assistant', new Date()));
+		if (!file) {
+			throw new Error(`${zh.renameBuoy}: ${path}`);
+		}
+		const target = movedPath(path, renames);
+		const after = {
+			...file,
+			chapter: target.slice(BUOY_FOLDER.length + 1, -'.json'.length),
+			marks: file.marks.map((mark) => ({ ...mark, state: renameState(mark.state, renames) })),
+		};
+		if (serializeBuoyFile(after) !== serializeBuoyFile(file)) {
+			writes.push({ path: target, text: serializeBuoyFile(after) });
+		}
 	}
-	const temporary = await mkdtemp(join(dirname(root), `.${basename(root)}-rename-`));
-	const staged = join(temporary, 'book');
+	return writes;
+}
+const diskOperations = { link, unlink, rename, write: atomicWrite };
+/** Preflight first; on an unexpected failure report the actual completed moves without rolling them back. */
+export async function renameBook(index: BookIndex, path: string, name: string, disk = diskOperations): Promise<RenameResult> {
+	const plan = await renamePlan(index, path, name);
+	if (!plan.length) {
+		return { renames: [] };
+	}
+	const writes = await buoyWrites(index, plan);
+	const completed: Rename[] = [],
+		written: string[] = [];
+	let linked: Rename | undefined;
 	try {
-		// cp preserves metadata and uses APFS copy-on-write; unsupported volumes fail before the commit.
-		await runFile('/bin/cp', ['-cRp', root, staged]);
-		if (JSON.stringify(await manifest(staged)) !== before) {
-			throw new Error(zh.renameChanged);
-		}
-		for (const { from, to } of renames) {
-			await mkdir(dirname(join(staged, to)), { recursive: true });
-			await rename(join(staged, from), join(staged, to));
-		}
-		for (const file of await jsonFiles(staged, BUOY_FOLDER)) {
-			const raw = (await readOptional(join(staged, file)))!;
-			if (parseDocument(raw).errors.length) {
-				throw new Error(zh.renameBuoy);
+		for (const move of plan) {
+			const from = join(index.root, move.from),
+				to = join(index.root, move.to);
+			await mkdir(dirname(to), { recursive: true });
+			if ((await info(from))!.isDirectory()) {
+				await disk.rename(from, to);
+			} else {
+				await disk.link(from, to);
+				linked = move;
+				await disk.unlink(from);
+				linked = undefined;
 			}
-			const data = JSON.parse(raw);
-			if (typeof data.chapter !== 'string' || !Array.isArray(data.marks)) {
-				throw new Error(zh.renameBuoy);
-			}
-			data.chapter = movedPath(data.chapter, renames);
-			for (const mark of data.marks) {
-				if (!Array.isArray(mark.state?.nodes)) {
-					throw new Error(zh.renameBuoy);
-				}
-				for (const node of mark.state.nodes) {
-					if (typeof node.id !== 'string') {
-						throw new Error(zh.renameBuoy);
-					}
-					const hash = node.id.indexOf('#');
-					const filePath = hash === -1 ? node.id : node.id.slice(0, hash);
-					node.id = movedPath(filePath, renames) + (hash === -1 ? '' : node.id.slice(hash));
-				}
-			}
-			if (JSON.stringify(data) !== JSON.stringify(JSON.parse(raw))) {
-				await atomicWrite(join(staged, file), JSON.stringify(data, null, 2) + '\n');
-			}
+			completed.push(move);
 		}
-		if (JSON.stringify(await manifest(root)) !== before) {
-			throw new Error(zh.renameChanged);
+		for (const write of writes) {
+			await disk.write(join(index.root, write.path), write.text);
+			written.push(write.path);
 		}
-		await exchange(staged, root);
-	} finally {
-		await rm(temporary, { recursive: true, force: true });
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		const reason = ['ENOTSUP', 'EOPNOTSUPP', 'EXDEV'].includes(code ?? '') ? zh.renameUnsupported : String(error);
+		return {
+			renames: completed,
+			error: zh.renamePartial(
+				completed,
+				plan.slice(completed.length),
+				written,
+				writes.slice(written.length).map((write) => write.path),
+				linked,
+				reason,
+			),
+		};
 	}
-	return renames;
+	return { renames: completed };
 }

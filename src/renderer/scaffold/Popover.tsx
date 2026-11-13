@@ -16,7 +16,6 @@ export function Popover({
 	multiline?: boolean;
 }) {
 	const element = useRef<HTMLDivElement>(null);
-	const composing = useRef(false);
 	useEffect(() => {
 		element.current?.querySelector<HTMLElement>('input, textarea, select, button')?.focus();
 	}, []);
@@ -24,17 +23,11 @@ export function Popover({
 		<div className="popover-backdrop">
 			<div
 				ref={element}
-				className="input-popover finish-popover"
+				className="input-popover form-popover"
 				role="dialog"
 				aria-label={title}
-				onCompositionStart={() => {
-					composing.current = true;
-				}}
-				onCompositionEnd={() => {
-					composing.current = false;
-				}}
 				onKeyDown={(event) => {
-					if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) {
+					if (event.nativeEvent.isComposing) {
 						return;
 					}
 					if (event.key === 'Escape' && !pending) {

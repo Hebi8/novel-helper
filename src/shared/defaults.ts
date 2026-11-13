@@ -20,7 +20,6 @@ export const defaults = {
 	'assistant.command': '',
 	'assistant.args': [] as string[],
 	'assistant.snapshots.keep': 50,
-	'files.storyFolder': '',
 	'files.lore': ['{设定,人物,角色,资料,世界观,lore,characters,worldbuilding}/**/*.{md,txt}'],
 	'files.chapters': ['{正文,章节,chapters,manuscript}/**/*.{md,txt}'],
 	'files.outlines': ['{大纲,细纲,outline,outlines}/**/*.{md,txt}'],

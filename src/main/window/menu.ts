@@ -1,4 +1,3 @@
-import { mkdirSync } from 'node:fs';
 import { app, BrowserWindow, dialog, Menu, shell, type MenuItemConstructorOptions } from 'electron';
 import { channels, type MenuCommand } from '../../shared/api';
 import { zh } from '../../renderer/strings';
@@ -126,7 +125,6 @@ export function installMenu(ctx: MainContext): void {
 						label: zh.openLogs,
 						click: () => {
 							const logs = app.getPath('logs');
-							mkdirSync(logs, { recursive: true });
 							shell.showItemInFolder(logs);
 						},
 					},

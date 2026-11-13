@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { StructureAction, StructureInput as Input } from '../../shared/finish';
+import type { StructureAction, StructureInput as Input } from '../../shared/structure';
 import { Popover } from './Popover';
 import { zh } from '../strings';
 import { errorMessage } from '../errors';
@@ -21,7 +21,7 @@ export function StructureInput({
 	const [loading, setLoading] = useState(true);
 	useEffect(() => {
 		let alive = true;
-		void window.novel.finish
+		void window.novel.structure
 			.suggest(action, path)
 			.then((value) => {
 				if (alive) {

@@ -1,7 +1,7 @@
 import { Initialize } from './scaffold/Initialize';
 import { StructureInput } from './scaffold/StructureInput';
 import { Search } from './scaffold/Search';
-import type { StructureAction } from '../shared/finish';
+import type { StructureAction } from '../shared/structure';
 import { QuickOpen } from './reference/QuickOpen';
 import { useReferences } from './reference/useReferences';
 import { errorMessage } from './errors';
@@ -41,7 +41,7 @@ export function App() {
 		if (!book) {
 			return;
 		}
-		void window.novel.finish
+		void window.novel.window
 			.focus(!focus)
 			.then(() => {
 				setFocus(!focus);
@@ -103,6 +103,7 @@ export function App() {
 			.catch((error) => setError(errorMessage(error)));
 		const unsubscribes = [
 			window.novel.book.onOpenResult(setOpenResult),
+			window.novel.window.onFocusChanged(setFocus),
 			window.novel.reports.onChanged(() => {
 				void docs.refreshReports().catch((error) => setError(errorMessage(error)));
 			}),
@@ -164,9 +165,12 @@ export function App() {
 							if (!(await docs.saveAll())) {
 								throw new Error(zh.assistantSaveFailed);
 							}
-							const result = await window.novel.finish.create(input);
+							const result = await window.novel.structure.create(input);
 							if (result.renames) {
 								docs.remap(result.renames);
+							}
+							if (result.error) {
+								setError(result.error);
 							}
 							if (result.path) {
 								await docs.open(result.path);

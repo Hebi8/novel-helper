@@ -3,7 +3,7 @@
 ## Unreleased — Mac application
 
 - A standalone macOS writing application with React and CodeMirror, autosave, ghost text, lore cards, outline buoys, split editing and an ACP assistant with turn snapshots and diffs. The VS Code extension remains on the `vscode-extension` branch; book formats are compatible.
-- Initialize or discover books, create numbered chapters and nested volumes, and rename chapters with their outlines, summaries and buoy records through an atomic directory exchange.
+- Initialize or discover books, create numbered chapters and nested volumes, and rename chapters with their outlines, summaries and buoy records. Renames check all destinations first and report completed operations if interrupted.
 - Complete grouped settings, writing font and size, optional current-line centering, literal whole-book search, focus mode, Finder reveal and a log-directory menu item.
 - Add an unsigned arm64 directory build with `npm run pack`, update the source-running instructions and third-party notices.
 

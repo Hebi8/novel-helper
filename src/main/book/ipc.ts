@@ -1,8 +1,13 @@
+import { safePath } from '../scaffold/disk';
 import { bookPath } from './paths';
-import { ipcMain, dialog } from 'electron';
+import { ipcMain, dialog, shell } from 'electron';
 import { channels } from '../../shared/api';
 import type { MainContext } from '../context';
 export function registerBook(ctx: MainContext): void {
+	ipcMain.handle(channels.bookReveal, async (event, path: string) => {
+		const book = ctx.bookFor(event)!;
+		shell.showItemInFolder(path ? await safePath(book.root, path) : book.root);
+	});
 	ipcMain.handle(channels.bookOpen, async (event, root?: string) => {
 		const window = ctx.windowFor(event);
 		const selected = root ?? (await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })).filePaths[0];

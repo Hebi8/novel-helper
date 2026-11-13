@@ -1,14 +1,15 @@
-import { inspectBook } from '../book/indexer';
+import { realpath } from 'node:fs/promises';
 import type { WindowStore } from './state';
 import type { OpenResult } from '../../shared/api';
 import { zh } from '../../renderer/strings';
-export async function inspectRememberedBook(root: string, store: WindowStore) {
+export async function resolveBookRoot(root: string): Promise<string> {
 	try {
-		return await inspectBook(root);
+		return await realpath(root);
 	} catch (error) {
-		store.forget(root);
-		const missing = ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '');
-		return { roots: [], error: missing ? zh.missingBook : String(error) };
+		if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+			throw new Error(zh.missingBook);
+		}
+		throw error;
 	}
 }
 export async function restoreBooks(store: WindowStore, open: (root: string) => Promise<OpenResult>): Promise<number> {
@@ -17,7 +18,8 @@ export async function restoreBooks(store: WindowStore, open: (root: string) => P
 		if ((await open(root)).kind === 'opened') {
 			count++;
 		} else {
-			store.forget(root);
+			store.value.open = store.value.open.filter((path) => path !== root);
+			store.save();
 		}
 	}
 	return count;
