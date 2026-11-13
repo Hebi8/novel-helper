@@ -5,6 +5,8 @@ import type { Settings, SettingKey } from './defaults';
 import type { AssistantAPI } from './assistant';
 export type { Settings, SettingKey };
 export interface Book {
+	referenceVersion?: number;
+	buoyVersion?: number;
 	root: string;
 	name: string;
 	tree: BookNode;
@@ -177,6 +179,7 @@ export interface BuoyStatus {
 export type BuoyAction = 'in' | 'bridge' | 'parallel' | 'dropSecond' | 'forward' | 'back' | 'relocate';
 export type ReportKind = 'report' | 'usageReport';
 export interface QuickItem {
+	id: string;
 	path: string;
 	title: string;
 	aliases: string[];

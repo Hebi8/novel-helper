@@ -1,4 +1,4 @@
-import { ReferenceTools } from '../reference/ReferenceTools';
+import { SplitButton, FindButton } from '../reference/ReferenceTools';
 import { zh } from '../strings';
 import { assistantEvents } from '../assistant/events';
 export function TopBar({ name, left, right }: { name?: string; left(): void; right(): void }) {
@@ -7,7 +7,7 @@ export function TopBar({ name, left, right }: { name?: string; left(): void; rig
 			<button aria-label={zh.left} onClick={left}>
 				<PanelIcon />
 			</button>
-			<ReferenceTools kind="split" />
+			<SplitButton />
 			<strong>{name ?? zh.app}</strong>
 			<span className="grow" />
 			<button aria-label={zh.assistantSnapshots} disabled={!name} onClick={() => window.dispatchEvent(new Event(assistantEvents.history))}>
@@ -15,7 +15,7 @@ export function TopBar({ name, left, right }: { name?: string; left(): void; rig
 					<path d="M4 5.5h12v11H4zM6 3h8M2 9V7a7.5 7.5 0 1 1 0 6M2 9h4" />
 				</svg>
 			</button>
-			<ReferenceTools kind="find" />
+			<FindButton />
 			<button
 				aria-label={zh.settings}
 				onClick={() => {

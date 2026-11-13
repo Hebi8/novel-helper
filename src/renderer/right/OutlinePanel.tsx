@@ -101,6 +101,16 @@ export function OutlinePanel() {
 						{label}
 					</button>
 				))}
+				{workspace.buoy?.state && workspace.buoy.state.kind !== 'in' ? (
+					<button
+						disabled={pending}
+						onClick={() => {
+							void act('dropSecond');
+						}}
+					>
+						{zh.buoyDrop}
+					</button>
+				) : null}
 			</div>
 			<div className="position-summary">
 				{workspace.chapter
@@ -127,7 +137,6 @@ export function OutlinePanel() {
 								['in', zh.buoyIn],
 								['bridge', zh.buoyBridge],
 								['parallel', zh.buoyParallel],
-								['dropSecond', zh.buoyDrop],
 							] as const
 						).map(([action, label]) => (
 							<button

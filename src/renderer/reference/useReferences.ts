@@ -21,7 +21,10 @@ export function useReferences(
 			.get()
 			.then((data) => {
 				if (alive) {
-					setReference(data);
+					setReference((previous) => ({
+						...data,
+						entries: JSON.stringify(previous.entries) === JSON.stringify(data.entries) ? previous.entries : data.entries,
+					}));
 				}
 			})
 			.catch((error) => {
@@ -32,7 +35,7 @@ export function useReferences(
 		return () => {
 			alive = false;
 		};
-	}, [book]);
+	}, [book?.root, book?.referenceVersion]);
 	useEffect(() => {
 		if (!book || !chapter) {
 			setBuoy(undefined);
@@ -64,6 +67,6 @@ export function useReferences(
 			version++;
 			stop();
 		};
-	}, [book, chapter]);
+	}, [book?.root, book?.referenceVersion, book?.buoyVersion, chapter]);
 	return { reference, buoy };
 }

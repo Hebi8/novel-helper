@@ -16,6 +16,7 @@ export interface Workspace {
 	buoy?: BuoyStatus;
 	chapter?: string;
 	split(): void;
+	focusEditor(): void;
 	find(): void;
 	quickOpen(): void;
 	report(kind: ReportKind): Promise<void>;

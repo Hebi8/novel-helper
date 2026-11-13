@@ -11,8 +11,16 @@ export function LorePanel() {
 	const [menu, setMenu] = useState<{ entry: LoreEntry; x: number; y: number }>();
 	const [edit, setEdit] = useState<Edit>();
 	const [error, setError] = useState('');
-	const run = async (operation: () => Promise<void>) => {
+	const closeMenu = () => {
 		setMenu(undefined);
+		workspace.focusEditor();
+	};
+	const closeEdit = () => {
+		setEdit(undefined);
+		workspace.focusEditor();
+	};
+	const run = async (operation: () => Promise<void>) => {
+		closeMenu();
 		try {
 			if (await workspace.saveAll()) {
 				await operation();
@@ -58,10 +66,10 @@ export function LorePanel() {
 			{menu ? (
 				<div
 					className="menu-backdrop"
-					onMouseDown={() => setMenu(undefined)}
+					onMouseDown={closeMenu}
 					onKeyDown={(event) => {
-						if (event.key === 'Escape') {
-							setMenu(undefined);
+						if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+							closeMenu();
 						}
 					}}
 				>
@@ -100,8 +108,12 @@ export function LorePanel() {
 				<LoreInput
 					edit={edit}
 					types={groups.map((group) => group.type)}
-					close={() => setEdit(undefined)}
+					close={closeEdit}
 					submit={async (name, type) => {
+						type = type.trim();
+						if (edit.kind !== 'aliases' && !type) {
+							return false;
+						}
 						if (!(await workspace.saveAll())) {
 							return false;
 						}
@@ -145,7 +157,7 @@ function LoreInput({
 				role="dialog"
 				aria-label={title}
 				onKeyDown={(event) => {
-					if (event.key === 'Escape') {
+					if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
 						close();
 					}
 				}}
@@ -188,7 +200,7 @@ function LoreInput({
 					<button type="button" onClick={close}>
 						{zh.cancel}
 					</button>
-					<button disabled={pending} type="submit">
+					<button disabled={pending || (edit.kind !== 'aliases' && !type.trim())} type="submit">
 						{zh.confirm}
 					</button>
 				</div>

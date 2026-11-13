@@ -1,4 +1,5 @@
-import { loreExtension } from '../reference/loreExtension';
+import { ConflictBar } from './ConflictBar';
+import { loreExtension, updateLore } from '../reference/loreExtension';
 import { useWorkspace } from '../workspace';
 import { useEffect, useRef } from 'react';
 import { Compartment, EditorState } from '@codemirror/state';
@@ -133,7 +134,9 @@ export function Editor({
 	useEffect(() => {
 		if (active) {
 			handle.current?.view.requestMeasure();
-			handle.current?.view.focus();
+			if (!parent.current?.parentElement?.contains(window.document.activeElement)) {
+				handle.current?.view.focus();
+			}
 			if (handle.current) {
 				handle.current.view.dispatch({ effects: EditorView.scrollIntoView(handle.current.view.state.selection.main.head) });
 			}
@@ -143,20 +146,19 @@ export function Editor({
 		}
 	}, [active, model]);
 	useEffect(() => {
-		handle.current?.view.dispatch({
-			effects: lore.current.reconfigure(
-				model.readOnly
-					? []
-					: loreExtension(workspace.reference.entries, (path, options) => {
-							return callbacksOpen.current(path, options);
-						}),
-			),
-		});
+		if (!model.readOnly) {
+			handle.current?.view.dispatch({ effects: updateLore.of(workspace.reference.entries) });
+		}
 	}, [workspace.reference.entries, model]);
 	useEffect(() => {
 		if (visible) {
 			handle.current?.view.requestMeasure();
 		}
 	}, [visible]);
-	return <div className={`editor pane-${side}`} ref={parent} onFocus={focused} style={{ display: visible ? undefined : 'none' }} />;
+	return (
+		<div className={`editor-pane pane-${side}`} onFocus={focused} style={{ display: visible ? undefined : 'none' }}>
+			<ConflictBar document={model} reload={() => handle.current?.reload()} />
+			<div className="editor" ref={parent} />
+		</div>
+	);
 }

@@ -221,7 +221,7 @@ test('external open marks are completed from chapter text and a following manual
 	);
 });
 for (const gate of ['off', 'key', 'limit'] as const) {
-	test(`position requests are suppressed by ${gate}, including manual relocation`, async (t) => {
+	test(`position requests are suppressed by ${gate}, while manual relocation only requires a key`, async (t) => {
 		const f = await fixture(t);
 		if (gate === 'off') {
 			f.settings.set('enabled', false);
@@ -235,8 +235,15 @@ for (const gate of ['off', 'key', 'limit'] as const) {
 		}
 		f.buoys.update(await f.buoys.read(chapter), '文'.repeat(2000));
 		await f.buoys.drain();
-		await assert.rejects(f.buoys.act(chapter, 'relocate'));
 		assert.equal(f.requests.length, 0);
+		if (gate === 'key') {
+			await assert.rejects(f.buoys.act(chapter, 'relocate'));
+			assert.equal(f.requests.length, 0);
+		} else {
+			f.answer('1');
+			await f.buoys.act(chapter, 'relocate');
+			assert.equal(f.requests.length, 1);
+		}
 	});
 }
 test('late model answers cannot replace a manual mark or a changed outline', async (t) => {
@@ -335,7 +342,7 @@ test('quick open includes chapters, lore aliases, outline headings and auxiliary
 	assert.ok(rankQuick(items, '潮汐').some((item) => item.title === '潮汐钟'));
 	const lore = items.find((item) => item.aliases.length)!;
 	assert.equal(rankQuick(items, lore.aliases[0])[0].path, lore.path);
-	const source = ['前潮汐后', '潮汐研究', '潮汐'].map((title) => ({ path: title, title, kind: 'file' as const, aliases: [] }));
+	const source = ['前潮汐后', '潮汐研究', '潮汐'].map((title) => ({ id: title, path: title, title, kind: 'file' as const, aliases: [] }));
 	assert.deepEqual(
 		rankQuick(source, '潮汐').map((item) => item.title),
 		['潮汐', '潮汐研究', '前潮汐后'],
@@ -510,4 +517,132 @@ test('CR-only frontmatter is not rewritten by the LF/CRLF field editor', async (
 	await f.seed(path, text);
 	await assert.rejects(setLoreField(f.index, path, 'always', true), /无法只改/);
 	assert.equal(await readFile(join(f.book, path), 'utf8'), text);
+});
+
+test('reference revision changes only for lore and outline content, not chapter saves', async (t) => {
+	const f = await fixture(t);
+	const version = f.index.book.referenceVersion;
+	const original = (await f.index.read(chapter)).text;
+	await f.index.save(chapter, original + '字', original);
+	await f.index.refresh(chapter);
+	assert.equal(f.index.book.referenceVersion, version);
+	const lore = '人物/林小满.md';
+	const text = (await f.index.read(lore)).text;
+	await f.index.save(lore, text + '改变了设定', text);
+	const changed = f.index.book.referenceVersion!;
+	assert.ok(changed > version!);
+	await f.index.refresh(lore);
+	assert.equal(f.index.book.referenceVersion, changed);
+});
+
+test('quick-open candidate ids distinguish an outline file from its first-line heading', async (t) => {
+	const f = await fixture(t);
+	const items = await quickItems(f.index);
+	assert.equal(new Set(items.map((item) => item.id)).size, items.length);
+	const firstLine = items.filter((item) => item.path === mirror && item.line === 0);
+	assert.ok(firstLine.length > 1);
+	assert.equal(new Set(firstLine.map((item) => item.id)).size, firstLine.length);
+	const filtered = rankQuick(items, '第2章');
+	assert.ok(filtered.every((item) => [item.title, ...item.aliases].some((name) => name.includes('第2章'))));
+});
+
+test('unreadable outlines stay listed while lore, buoys and continuation still work', async (t) => {
+	const f = await fixture(t);
+	for (const [path, raw] of [
+		['大纲/mixed.md', Buffer.from('甲\r\n乙\n')],
+		['大纲/bytes.md', Buffer.from([255])],
+	] as const) {
+		await writeFile(join(f.book, path), raw);
+		await f.index.refresh(path);
+		await assert.rejects(f.index.read(path));
+	}
+	await f.seed('大纲/全书.md', '甲\r\n乙\n');
+	const data = await referenceData(f.index);
+	assert.ok(data.outlines.includes('大纲/mixed.md'));
+	assert.ok(data.outlines.includes('大纲/bytes.md'));
+	assert.ok(!data.nodes.some((node) => ['大纲/mixed.md', '大纲/bytes.md'].includes(node.file ?? '')));
+	assert.ok(data.entries.some((entry) => entry.name === '林小满'));
+	assert.equal((await f.buoys.status(chapter)).state!.nodes[0].title, '周伯收信');
+	assert.ok((await quickItems(f.index)).some((item) => item.path === '大纲/mixed.md'));
+	t.mock.method(globalThis, 'fetch', async () => new Response(openaiText('门里传来声音。') + OPENAI_END));
+	const service = new CompletionService(f.settings, f.usage, () => undefined);
+	const text = (await f.index.read(chapter)).text;
+	assert.equal(
+		(await service.request('bad-outline', f.index, { id: 1, path: chapter, text, offset: text.length, manual: true })).status,
+		'ok',
+	);
+	await service.drain();
+});
+
+test('opening existing companions preserves inode, mtime and symbolic links', async (t) => {
+	const f = await fixture(t);
+	const { lstat, symlink } = await import('node:fs/promises');
+	const file = join(f.book, mirror);
+	const before = await lstat(file);
+	await openCompanion(f.index, chapter, 'outline');
+	const after = await lstat(file);
+	assert.equal(after.ino, before.ino);
+	assert.equal(after.mtimeMs, before.mtimeMs);
+	const summary = chapter.replace('正文/', '摘要/');
+	await mkdir(dirname(join(f.book, summary)), { recursive: true });
+	await writeFile(join(f.book, 'summary-target.md'), '摘要');
+	await symlink(join(f.book, 'summary-target.md'), join(f.book, summary));
+	await f.index.refresh(summary);
+	const link = await lstat(join(f.book, summary));
+	await openCompanion(f.index, chapter, 'summary');
+	assert.equal((await lstat(join(f.book, summary))).ino, link.ino);
+	assert.ok((await lstat(join(f.book, summary))).isSymbolicLink());
+});
+
+test('blank previous-chapter summaries use the chapter ending in continuation context', async (t) => {
+	const f = await fixture(t);
+	const previous = f.index.library.previousChapters(chapter, 1)[0];
+	const summary = f.index.library.companionOf('summary', previous)!;
+	await f.seed(summary, '  \n\t');
+	await f.seed(previous, '前章结尾仍然应该进入上下文。');
+	let sent = '';
+	t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+		sent = String(init.body);
+		return new Response(openaiText('新的正文。') + OPENAI_END);
+	});
+	const service = new CompletionService(f.settings, f.usage, () => undefined);
+	const text = (await f.index.read(chapter)).text;
+	await service.request('empty-summary', f.index, { id: 1, path: chapter, text, offset: text.length, manual: true });
+	await service.drain();
+	assert.match(sent, /前章结尾仍然应该进入上下文/);
+});
+
+test('closing a book aborts an in-flight position transport without waiting or appending a mark', async (t) => {
+	const f = await fixture(t);
+	let signal!: AbortSignal;
+	let started!: () => void;
+	const begun = new Promise<void>((resolve) => {
+		started = resolve;
+	});
+	t.mock.method(globalThis, 'fetch', (_url: unknown, init: RequestInit) => {
+		signal = init.signal!;
+		started();
+		return new Promise<Response>((_resolve, reject) =>
+			signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }),
+		);
+	});
+	const service = new CompletionService(f.settings, f.usage, () => undefined);
+	const buoy = service.buoys(f.index);
+	const before = await readFile(join(f.book, buoyPath(chapter)), 'utf8');
+	buoy.update(await buoy.read(chapter), '文'.repeat(2000));
+	await begun;
+	await service.closeBook(f.book);
+	assert.equal(signal.aborted, true);
+	await buoy.drain();
+	assert.equal(await readFile(join(f.book, buoyPath(chapter)), 'utf8'), before);
+});
+
+test('request and usage reports translate the empty state and daily limit', async (t) => {
+	const f = await fixture(t);
+	const service = new CompletionService(f.settings, f.usage, () => undefined);
+	assert.doesNotMatch(await service.report('new', 'report'), /Pause at the end/);
+	f.settings.set('usage.dailyLimitUsd', 3);
+	const report = await service.report('new', 'usageReport');
+	assert.match(report, /日上限：\$3/);
+	assert.doesNotMatch(report, /Daily limit/);
 });
