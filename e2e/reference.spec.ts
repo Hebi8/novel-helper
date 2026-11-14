@@ -29,6 +29,9 @@ async function withReferenceBook(
 			provider: 'openaiCompatible',
 			'openaiCompatible.model': 'test',
 			'openaiCompatible.baseUrl': server.baseUrl,
+			'assistant.agent': 'custom',
+			'assistant.command': process.execPath,
+			'assistant.args': ['--experimental-strip-types', resolve('src/test/fakeAgent.ts'), '--close'],
 		}),
 	);
 	await writeFile(
@@ -77,7 +80,10 @@ test('lore cards, quick open, grouped edits, manual buoys, split and last-reques
 		await page.keyboard.press('Escape');
 		await page.keyboard.press('F12');
 		await expect(page.locator('.tabs [aria-selected=true]')).toContainText('林小满');
-		await expect(page.locator('.editor:visible .cm-content')).toContainText('aliases:');
+		await expect(page.locator('.editor-pane:visible .lore-form')).toBeVisible();
+		await expect(page.locator('.editor-pane:visible').getByLabel('别名')).toHaveValue('小满、林姑娘');
+		await expect(page.locator('.editor:visible .cm-content')).toContainText('林小满每天天不亮就出门');
+		await expect(page.locator('.editor:visible .cm-content')).not.toContainText('aliases:');
 		await menu('quickOpen');
 		await page.getByRole('textbox', { name: '快速打开', exact: true }).fill('潮汐');
 		await page.keyboard.press('Enter');
@@ -178,6 +184,198 @@ test('usage and last-request reports render Markdown, support copy, follow theme
 		await page.locator('.sidebar.left .tree').getByRole('button', { name: '全书', exact: true }).click();
 		await expect(page.locator('.editor:visible .cm-content')).toContainText('- 主线：');
 		await expect(page.locator('.report-view:visible')).toHaveCount(0);
+	});
+});
+
+test('lore entry frontmatter form edits single fields losslessly, supports undo, toggles source, falls back on unsafe YAML, and tracks external, context-menu, and assistant edits', async () => {
+	await withReferenceBook(async ({ page, book }) => {
+		// Chapters and outlines do not show the lore form.
+		await expect(page.locator('.lore-form')).toHaveCount(0);
+		await page.locator('.sidebar.left .segments').getByRole('button', { name: '大纲', exact: true }).click();
+		await page.locator('.sidebar.left .tree').getByRole('button', { name: '全书', exact: true }).click();
+		await expect(page.locator('.lore-form')).toHaveCount(0);
+
+		const towerRel = '设定/北角灯塔.md';
+		const towerPath = join(book, towerRel);
+		const initialTower = [
+			'---',
+			'# 礁石灯塔',
+			'type: 地点',
+			'aliases: [灯塔, 旧灯塔]  # 镇上叫法',
+			'era: 旧港',
+			'lit: false',
+			'tags: [礁石, 航标]',
+			'---',
+			'雾港北角礁石上的白色灯塔。',
+			'',
+		].join('\n');
+		await writeFile(towerPath, initialTower);
+
+		await page.locator('.sidebar.left .segments').getByRole('button', { name: '设定', exact: true }).click();
+		await expect(page.locator('.sidebar.left .lore-row').filter({ hasText: '北角灯塔' })).toBeVisible();
+		await page.locator('.sidebar.left .lore-row').filter({ hasText: '北角灯塔' }).click();
+
+		const pane = page.locator('.editor-pane:visible');
+		const form = pane.locator('.lore-form');
+		await expect(form).toBeVisible();
+		await expect(pane.locator('.editor .cm-content')).toHaveText('雾港北角礁石上的白色灯塔。\n');
+		await expect(pane.locator('.editor .cm-content')).not.toContainText('---');
+
+		const typeInput = form.getByLabel('类型');
+		const aliasesInput = form.getByLabel('别名');
+		const alwaysBox = form.getByLabel('常驻');
+		const summaryInput = form.getByLabel('摘要');
+		const eraInput = form.getByLabel('era');
+		const litBox = form.getByLabel('lit');
+		const tagsInput = form.getByLabel('tags');
+
+		await expect(typeInput).toHaveValue('地点');
+		await expect(aliasesInput).toHaveValue('灯塔、旧灯塔');
+		await expect(alwaysBox).not.toBeChecked();
+		await expect(summaryInput).toHaveValue('');
+		await expect(eraInput).toHaveValue('旧港');
+		await expect(litBox).not.toBeChecked();
+		await expect(tagsInput).toHaveValue('礁石, 航标');
+
+		// Focusing and blurring an absent empty fixed field does not write it into the file.
+		await summaryInput.focus();
+		await aliasesInput.focus();
+		await page.waitForTimeout(1200);
+		expect(await readFile(towerPath, 'utf8')).toBe(initialTower);
+
+		// IME composition Enter does not commit mid-composition.
+		await eraInput.fill('新纪元');
+		await eraInput.dispatchEvent('keydown', { key: 'Enter', isComposing: true });
+		await page.waitForTimeout(1200);
+		expect(await readFile(towerPath, 'utf8')).toBe(initialTower);
+		await eraInput.fill('十年前');
+		await eraInput.press('Enter');
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(initialTower.replace('era: 旧港', 'era: 十年前'));
+
+		// Select an existing type from the dropdown, then enter a custom new type.
+		await form.locator('.lore-type-arrow').click();
+		await expect(form.getByRole('option', { name: /人物/ })).toBeVisible();
+		await form.getByRole('option', { name: /物件/ }).click();
+		await expect(typeInput).toHaveValue('物件');
+		await expect.poll(() => readFile(towerPath, 'utf8')).toContain('# 礁石灯塔\ntype: 物件\n');
+
+		await typeInput.fill('建筑');
+		await typeInput.press('Enter');
+		await aliasesInput.fill('灯塔, 旧灯塔、北塔');
+		await aliasesInput.blur();
+		await alwaysBox.check();
+		await summaryInput.fill('北角礁石上的旧灯塔。');
+		await summaryInput.press('Enter');
+		await litBox.check();
+		await tagsInput.fill('风暴, 铜钟');
+		await tagsInput.press('Enter');
+
+		const expectedEdited = [
+			'---',
+			'# 礁石灯塔',
+			'type: 建筑',
+			'aliases: [灯塔, 旧灯塔, 北塔]  # 镇上叫法',
+			'era: 十年前',
+			'lit: true',
+			'tags: [风暴, 铜钟]',
+			'always: true',
+			'summary: 北角礁石上的旧灯塔。',
+			'---',
+			'雾港北角礁石上的白色灯塔。',
+			'',
+		].join('\n');
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(expectedEdited);
+
+		// Body edit and form edits share one history stack and undo/redo via Cmd+Z / Cmd+Shift+Z.
+		await pane.locator('.editor .cm-content').click();
+		await page.keyboard.press('Meta+ArrowDown');
+		await page.keyboard.insertText('塔顶挂着潮汐钟。');
+		await expect(pane.locator('.editor .cm-content')).toContainText('塔顶挂着潮汐钟。');
+
+		await page.keyboard.press('Meta+z');
+		await expect(pane.locator('.editor .cm-content')).not.toContainText('塔顶挂着潮汐钟。');
+
+		await tagsInput.focus();
+		await page.keyboard.press('Meta+z');
+		await expect(tagsInput).toHaveValue('礁石, 航标');
+
+		await page.keyboard.press('Meta+z');
+		await expect(litBox).not.toBeChecked();
+
+		await page.keyboard.press('Meta+Shift+z');
+		await expect(litBox).toBeChecked();
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(expectedEdited.replace('tags: [风暴, 铜钟]', 'tags: [礁石, 航标]'));
+
+		// Toggle between 表单 and 源码.
+		await form.getByRole('button', { name: '源码', exact: true }).click();
+		await expect(pane.locator('.lore-form')).toHaveCount(0);
+		await expect(pane.locator('.editor .cm-content')).toContainText('# 礁石灯塔');
+		await expect(pane.locator('.editor .cm-content')).toContainText('type: 建筑');
+		await pane.getByRole('button', { name: '表单', exact: true }).click();
+		await expect(pane.locator('.lore-form')).toBeVisible();
+		await expect(pane.locator('.editor .cm-content')).not.toContainText('type: 建筑');
+
+		// Unsafe frontmatter (multiline, nested, invalid YAML) shows raw source without touching the file.
+		const unsafeCases: Array<[string, string]> = [
+			['设定/多行条目.md', '---\ntype: 物件\nsummary: |\n  第一行\n  第二行\n---\n多行正文。\n'],
+			['设定/嵌套条目.md', '---\ntype: 物件\nmeta:\n  level: 2\n---\n嵌套正文。\n'],
+			['设定/坏语法.md', '---\naliases: [未闭合\n---\n坏语法正文。\n'],
+		];
+		for (const [rel, raw] of unsafeCases) {
+			await writeFile(join(book, rel), raw);
+		}
+		for (const [rel, raw] of unsafeCases) {
+			const entryName = rel.slice(rel.indexOf('/') + 1, -3);
+			await expect(page.locator('.sidebar.left .lore-row').filter({ hasText: entryName })).toBeVisible();
+			await page.locator('.sidebar.left .lore-row').filter({ hasText: entryName }).click();
+			await expect(page.locator('.editor-pane:visible .lore-form')).toHaveCount(0);
+			await expect(page.locator('.editor-pane:visible .lore-mode-toggle')).toHaveCount(0);
+			await expect(page.locator('.editor:visible .cm-content')).toContainText('---');
+			expect(await readFile(join(book, rel), 'utf8')).toBe(raw);
+		}
+
+		// Switch back to 北角灯塔 and verify external, context-menu, and assistant edits update the form.
+		await page.getByRole('tab').filter({ hasText: '北角灯塔' }).click();
+		await expect(form).toBeVisible();
+
+		const diskUpdated = (await readFile(towerPath, 'utf8')).replace('北角礁石上的旧灯塔。', '外部修改后的摘要。');
+		await writeFile(towerPath, diskUpdated);
+		await expect(summaryInput).toHaveValue('外部修改后的摘要。');
+
+		const row = page.locator('.sidebar.left .lore-row').filter({ hasText: '北角灯塔' });
+		await row.click({ button: 'right' });
+		await page.getByRole('menuitem', { name: '改别名', exact: true }).click();
+		await page.getByRole('dialog', { name: '改别名', exact: true }).getByLabel('别名').fill('老塔、白塔');
+		await page.getByRole('button', { name: '确定', exact: true }).click();
+		await expect(aliasesInput).toHaveValue('老塔、白塔');
+
+		await row.click({ button: 'right' });
+		await page.getByRole('menuitem', { name: '改类型', exact: true }).click();
+		await page.getByRole('dialog', { name: '改类型', exact: true }).locator('input').fill('古迹');
+		await page.getByRole('button', { name: '确定', exact: true }).click();
+		await expect(typeInput).toHaveValue('古迹');
+
+		await page.locator('.sidebar.right .segments').getByRole('button', { name: '助手', exact: true }).click();
+		const assistantRewritten = [
+			'---',
+			'type: 遗迹',
+			'aliases: [北角古塔]',
+			'always: false',
+			'summary: 助手更新后的摘要。',
+			'---',
+			'助手更新后的灯塔正文。',
+			'',
+		].join('\n');
+		await page
+			.getByRole('textbox', { name: '给助手的消息' })
+			.fill(JSON.stringify(['write', towerRel, assistantRewritten]) + '\nsay 已改好灯塔条目');
+		await page.getByRole('button', { name: '发送', exact: true }).click();
+		await expect(page.locator('.assistant-reply')).toContainText('已改好灯塔条目');
+		await expect(typeInput).toHaveValue('遗迹');
+		await expect(aliasesInput).toHaveValue('北角古塔');
+		await expect(alwaysBox).not.toBeChecked();
+		await expect(summaryInput).toHaveValue('助手更新后的摘要。');
+		await expect(pane.locator('.editor .cm-content')).toHaveText('助手更新后的灯塔正文。\n');
 	});
 });
 

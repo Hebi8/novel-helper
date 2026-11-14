@@ -53,7 +53,7 @@ Use **⌘O** or **打开文件夹** to choose a folder. If the folder is not its
 | Focus assistant / stop assistant | ⌘L / ⌘. |
 | Settings | ⌘, |
 
-The left sidebar edits chapters, outlines and lore. The right sidebar reads outlines and lore, and holds the assistant. Book files are edited as plain Markdown in tabs. Font, size and optional current-line centering are configurable; colors follow the system. Focus mode hides application chrome and restores the previous sidebar state when toggled again. Esc remains available to dismiss ghost text.
+The left sidebar edits chapters, outlines and lore. The right sidebar reads outlines and lore, and holds the assistant. Chapters, outlines and other files are edited as plain Markdown in tabs; lore entries show a frontmatter form above the body, with a top-right toggle between form and raw source (falling back to raw source untouched when frontmatter cannot be rewritten losslessly). Font, size and optional current-line centering are configurable; colors follow the system. Focus mode hides application chrome and restores the previous sidebar state when toggled again. Esc remains available to dismiss ghost text.
 
 Typing pauses save after one second; switching tabs, leaving the window and starting an assistant turn also save. Search and rename save pending edits first. IME composition is respected. External changes reload clean documents; unsaved documents show a conflict with a diff and a choice of versions. Files retain their line endings. Unsupported encoding or mixed line endings stop editing. There is no file deletion, dragging or reorder interface.
 
@@ -102,7 +102,7 @@ summary: A seventeen-year-old postal worker in the harbor town.
 The entry's full text goes here.
 ```
 
-Without `name`, the filename is the name. `aliases` also match mentions. `type` is an author-defined category; without it, the top-level folder supplies the group. `always` includes the entry with every request. `summary` replaces the body in context; otherwise the body is truncated to the configured entry budget. Names use longest matching and English word boundaries. The lore context menu changes only the selected frontmatter field; ambiguous syntax is left untouched.
+Without `name`, the filename is the name. `aliases` also match mentions. `type` is an author-defined category; without it, the top-level folder supplies the group. `always` includes the entry with every request. `summary` replaces the body in context; otherwise the body is truncated to the configured entry budget. Names use longest matching and English word boundaries. Opening a lore entry shows a form for `type`, `aliases`, `always`, `summary` and other single-line string, boolean or string-list frontmatter fields above the body, rewriting only the edited field through lossless frontmatter edits with **⌘Z** undo (leaving empty absent fixed fields unwritten, switching between **表单** and **源码**, and showing raw source untouched whenever frontmatter cannot be rewritten losslessly); the lore context menu likewise changes only the selected frontmatter field.
 
 Optional lore templates live in `.novel-helper/templates/`, named after a type, with `default.md` as the general template. Template fields are `{{name}}` and `{{type}}`.
 

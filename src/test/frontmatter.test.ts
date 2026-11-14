@@ -2,6 +2,7 @@ import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { type FieldValue, FrontmatterError, setField } from '../core/frontmatter';
 import { parseLoreEntry } from '../core/library';
+import { commitLoreField, inspectLoreForm } from '../core/loreForm';
 
 const FILE = `---
 # 主角
@@ -123,6 +124,112 @@ describe('setField', () => {
 				assert.deepEqual((entry as unknown as Record<string, unknown>)[key], value, after);
 				assert.equal(entry.body, before.body);
 			}
+		}
+	});
+});
+
+describe('loreForm', () => {
+	test('parses fixed and extra fields while preserving prefix and body byte-for-byte', () => {
+		const extraFile = [
+			'---',
+			'# 守塔档案',
+			'type: 人物',
+			'aliases: [老周, 守塔人]  # 别称',
+			'faction: 北角灯塔',
+			'retired: true',
+			'tags: [旧事, 风暴]',
+			'---',
+			'周伯的左手少了两根手指。',
+			'',
+		].join('\n');
+		const parsed = inspectLoreForm(extraFile);
+		assert.ok(parsed);
+		assert.equal(parsed.prefix + parsed.body, extraFile);
+		assert.equal(parsed.body, '周伯的左手少了两根手指。\n');
+		assert.equal(parsed.type, '人物');
+		assert.deepEqual(parsed.aliases, ['老周', '守塔人']);
+		assert.equal(parsed.always, false);
+		assert.equal(parsed.summary, '');
+		assert.deepEqual(parsed.present, { type: true, aliases: true, always: false, summary: false });
+		assert.deepEqual(parsed.extras, [
+			{ key: 'faction', kind: 'string', value: '北角灯塔' },
+			{ key: 'retired', kind: 'boolean', value: true },
+			{ key: 'tags', kind: 'list', value: ['旧事', '风暴'] },
+		]);
+	});
+
+	test('accepts files without frontmatter, empty frontmatter, BOM, CRLF, and blank template values', () => {
+		const plain = inspectLoreForm('纯正文内容\n');
+		assert.ok(plain);
+		assert.equal(plain.prefix, '');
+		assert.equal(plain.body, '纯正文内容\n');
+		assert.deepEqual(plain.present, { type: false, aliases: false, always: false, summary: false });
+
+		const bom = inspectLoreForm('\uFEFF纯正文');
+		assert.ok(bom);
+		assert.equal(bom.prefix + bom.body, '\uFEFF纯正文');
+
+		const template = '---\ntype: 人物\naliases: []\nsummary:\n---\n\n## 外貌\n';
+		const parsedTemplate = inspectLoreForm(template);
+		assert.ok(parsedTemplate);
+		assert.equal(parsedTemplate.type, '人物');
+		assert.deepEqual(parsedTemplate.aliases, []);
+		assert.equal(parsedTemplate.summary, '');
+		assert.deepEqual(parsedTemplate.present, { type: true, aliases: true, always: false, summary: true });
+
+		const crlf = '---\r\ntype: 地点\r\n---\r\n雾港\r\n';
+		const parsedCrlf = inspectLoreForm(crlf);
+		assert.ok(parsedCrlf);
+		assert.equal(parsedCrlf.prefix + parsedCrlf.body, crlf);
+	});
+
+	test('leaves absent empty fixed fields unwritten and edits only the one changed field', () => {
+		const minimal = '---\n# 地点注释\ntype: 地点\n---\n北角礁石上的白色灯塔。\n';
+		const data = inspectLoreForm(minimal)!;
+		assert.equal(commitLoreField(minimal, data, 'summary', ''), undefined);
+		assert.equal(commitLoreField(minimal, data, 'summary', '   '), undefined);
+		assert.equal(commitLoreField(minimal, data, 'aliases', ' , 、 '), undefined);
+		assert.equal(commitLoreField(minimal, data, 'always', false), undefined);
+		assert.equal(commitLoreField(minimal, data, 'type', '地点'), undefined);
+
+		const withAliases = commitLoreField(minimal, data, 'aliases', '灯塔, 旧灯塔、北塔')!;
+		assert.equal(withAliases, '---\n# 地点注释\ntype: 地点\naliases: [灯塔, 旧灯塔, 北塔]\n---\n北角礁石上的白色灯塔。\n');
+
+		const withAlways = commitLoreField(FILE, inspectLoreForm(FILE)!, 'always', true)!;
+		assert.equal(withAlways, FILE.replace('always: false', 'always: true'));
+
+		const clearedSummary = commitLoreField(FILE, inspectLoreForm(FILE)!, 'summary', '')!;
+		assert.equal(clearedSummary, FILE.replace('十七岁，雾港邮局的送信员。', '""'));
+
+		const withExtras = '---\ntype: 人物\nfaction: 邮局\nretired: false\ntags: [送信, 海边]\n---\n正文\n';
+		const extraData = inspectLoreForm(withExtras)!;
+		assert.equal(commitLoreField(withExtras, extraData, 'faction', '邮局'), undefined);
+		assert.equal(commitLoreField(withExtras, extraData, 'faction', '北角灯塔'), withExtras.replace('faction: 邮局', 'faction: 北角灯塔'));
+		assert.equal(commitLoreField(withExtras, extraData, 'retired', true), withExtras.replace('retired: false', 'retired: true'));
+		assert.equal(
+			commitLoreField(withExtras, extraData, 'tags', '雾港，旧信, 铜纽扣'),
+			withExtras.replace('tags: [送信, 海边]', 'tags: [雾港, 旧信, 铜纽扣]'),
+		);
+	});
+
+	test('falls back to undefined for invalid, unclosed, nested, multiline, or non-lossless frontmatter', () => {
+		const unsafe = [
+			'---\naliases: [小满\n---\n正文',
+			'---\ntype: 人物\n未闭合的正文',
+			'---\n{type: 人物, always: false}\n---\n正文',
+			'---\n  type: 人物\n  always: false\n---\n正文',
+			'---\nsummary: |\n  第一行\n  第二行\n---\n正文',
+			'---\nsummary: >\n  折叠第一行\n  折叠第二行\n---\n正文',
+			'---\naliases:\n  - 小满\n  - 林姑娘\n---\n正文',
+			'---\ntype: 人物\nmeta:\n  age: 17\n---\n正文',
+			'---\ntype: 人物\nmeta: { role: 主角 }\n---\n正文',
+			'---\ntype: 人物\nage: 17\n---\n正文',
+			'---\ntype: 人物\nnote: null\n---\n正文',
+			'---\naliases: ["a, b", 老周]\n---\n正文',
+			'---\ntype: 人物\ntags: [1, 2]\n---\n正文',
+		];
+		for (const sample of unsafe) {
+			assert.equal(inspectLoreForm(sample), undefined, sample);
 		}
 	});
 });

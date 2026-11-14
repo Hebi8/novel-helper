@@ -161,6 +161,8 @@ export const zh = {
 	aliases: '别名',
 	loreType: '类型',
 	loreName: '名字',
+	loreForm: '表单',
+	loreSource: '源码',
 	newLore: '新建条目',
 	setAlways: '设为常驻',
 	unsetAlways: '取消常驻',
