@@ -53,7 +53,7 @@ Use **⌘O** or **打开文件夹** to choose a folder. If the folder is not its
 | Focus assistant / stop assistant | ⌘L / ⌘. |
 | Settings | ⌘, |
 
-The left sidebar edits chapters, outlines and lore. The right sidebar reads outlines and lore, and holds the assistant. Content is edited as plain Markdown in tabs. Font, size and optional current-line centering are configurable; colors follow the system. Focus mode hides application chrome and restores the previous sidebar state when toggled again. Esc remains available to dismiss ghost text.
+The left sidebar edits chapters, outlines and lore. The right sidebar reads outlines and lore, and holds the assistant. Book files are edited as plain Markdown in tabs. Font, size and optional current-line centering are configurable; colors follow the system. Focus mode hides application chrome and restores the previous sidebar state when toggled again. Esc remains available to dismiss ghost text.
 
 Typing pauses save after one second; switching tabs, leaving the window and starting an assistant turn also save. Search and rename save pending edits first. IME composition is respected. External changes reload clean documents; unsaved documents show a conflict with a diff and a choice of versions. Files retain their line endings. Unsupported encoding or mixed line endings stop editing. There is no file deletion, dragging or reorder interface.
 
@@ -127,7 +127,7 @@ Buoys are stored in `.novel-helper/buoys/<chapter-path>.json`, with a history of
 
 Shared companions, destination conflicts, case-only name changes and unreadable records stop the rename before anything moves. If an unexpected error interrupts the moves, the app reports completed and remaining operations and updates tabs to the paths that actually changed; it does not roll back.
 
-Requests include always-on lore, the book and ancestor outlines, previous chapters (summaries when available), current buoy nodes and the next node, matching lore, and text around the cursor. Without buoys, the same-named chapter outline is used. The **续写** menu opens read-only request and usage reports.
+Requests include always-on lore, the book and ancestor outlines, previous chapters (summaries when available), current buoy nodes and the next node, matching lore, and text around the cursor. Without buoys, the same-named chapter outline is used. The status bar and **续写** menu open read-only request and usage reports rendered as formatted Markdown.
 
 ## Settings
 

@@ -1,9 +1,9 @@
-// A small Markdown reader for the assistant's panel. It turns text into a
-// tree of blocks and inline pieces, and the panel builds elements from that
-// tree with text nodes. There is no HTML on the way: tags in what the agent
-// writes stay text, and a link is one only when it goes to http, https or
-// mailto. Text that is still being streamed is read as far as it goes (a
-// code block that is not closed yet runs to the end).
+// A small Markdown reader for the assistant's panel and read-only reports. It
+// turns text into a tree of blocks and inline pieces, and the UI builds
+// elements from that tree with text nodes. There is no HTML on the way: tags in
+// what the agent writes stay text, and a link is one only when it goes to http,
+// https or mailto. Text that is still being streamed is read as far as it goes
+// (a code block that is not closed yet runs to the end).
 
 export type Inline =
 	| string
@@ -11,13 +11,15 @@ export type Inline =
 	| { type: 'strong' | 'em' | 'del'; children: Inline[] }
 	| { type: 'link'; href: string; children: Inline[] };
 
+export type TableAlign = 'left' | 'center' | 'right' | undefined;
+
 export type Block =
 	| { type: 'paragraph'; children: Inline[] }
 	| { type: 'heading'; level: number; children: Inline[] }
 	| { type: 'code'; language: string; text: string }
 	| { type: 'quote'; children: Block[] }
 	| { type: 'list'; ordered: boolean; start: number; items: Block[][] }
-	| { type: 'table'; head: Inline[][]; rows: Inline[][][] }
+	| { type: 'table'; head: Inline[][]; align?: TableAlign[]; rows: Inline[][][] }
 	| { type: 'rule' };
 
 // In order: code, strong, em, strike-through, image or link, a bare address, an escaped character.
@@ -81,9 +83,27 @@ function cells(row: string): Inline[][] {
 	return inner.split(/(?<!\\)\|/).map((cell) => parseInline(cell.trim().replace(/\\\|/g, '|')));
 }
 
+function alignments(row: string): TableAlign[] | undefined {
+	const inner = row.trim().replace(/^\|/, '').replace(/\|$/, '');
+	const cols = inner.split('|').map((cell): TableAlign => {
+		const trimmed = cell.trim();
+		const left = trimmed.startsWith(':');
+		const right = trimmed.endsWith(':');
+		return left && right ? 'center' : right ? 'right' : left ? 'left' : undefined;
+	});
+	return cols.some(Boolean) ? cols : undefined;
+}
+
 function startsBlock(lines: string[], i: number): boolean {
 	const line = lines[i];
-	return FENCE.test(line) || HEADING.test(line) || RULE.test(line) || QUOTE.test(line) || BULLET.test(line) || (line.includes('|') && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1]));
+	return (
+		FENCE.test(line) ||
+		HEADING.test(line) ||
+		RULE.test(line) ||
+		QUOTE.test(line) ||
+		BULLET.test(line) ||
+		(line.includes('|') && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1]))
+	);
 }
 
 function parseLines(lines: string[]): Block[] {
@@ -155,11 +175,12 @@ function parseLines(lines: string[]): Block[] {
 		}
 		if (line.includes('|') && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1])) {
 			const head = cells(line);
+			const align = alignments(lines[i + 1]);
 			const rows: Inline[][][] = [];
 			for (i += 2; i < lines.length && lines[i].includes('|') && !blank(lines[i]); i++) {
 				rows.push(cells(lines[i]));
 			}
-			blocks.push({ type: 'table', head, rows });
+			blocks.push(align ? { type: 'table', head, align, rows } : { type: 'table', head, rows });
 			continue;
 		}
 		const body = [line];

@@ -12,7 +12,8 @@ import { RightSidebar } from './right/RightSidebar';
 import { Tabs } from './tabs/Tabs';
 import { StatusBar } from './statusbar/StatusBar';
 import { Editor } from './editor/Editor';
-import { useDocuments } from './editor/useDocuments';
+import { ReportView } from './editor/ReportView';
+import { reportKind, useDocuments } from './editor/useDocuments';
 import { TopBar } from './shell/TopBar';
 import { Welcome } from './shell/Welcome';
 import { commands } from './shell/commands';
@@ -239,39 +240,53 @@ export function App() {
 							/>
 
 							<div className={`editor-panes ${docs.panes && !focus ? 'split' : ''}`}>
-								{session.tabs.map((tab) => (
-									<Editor
-										key={tab.path}
-										document={documents.current.get(tab.path)!}
-										tab={tab}
-										active={tab.path === session.active}
-										visible={
-											focus
-												? tab.path === session.active
-												: docs.panes
-													? tab.path === docs.panes.left || tab.path === docs.panes.right
-													: tab.path === session.active
+								{session.tabs.map((tab) => {
+									const kind = reportKind(tab.path);
+									const visible = focus
+										? tab.path === session.active
+										: docs.panes
+											? tab.path === docs.panes.left || tab.path === docs.panes.right
+											: tab.path === session.active;
+									const side = docs.panes?.right === tab.path ? 'right' : 'left';
+									const focused = () => {
+										if (session.active !== tab.path) {
+											docs.select(tab.path);
 										}
-										side={docs.panes?.right === tab.path ? 'right' : 'left'}
-										focused={() => {
-											if (session.active !== tab.path) {
-												docs.select(tab.path);
-											}
-										}}
-										chapter={book ? isChapter(book.tree, tab.path) : false}
-										settings={initial.settings}
-										limited={initial.usage.state === 'limit'}
-										nextRequestId={docs.nextRequestId}
-										ready={(handle) => {
-											if (handle) {
-												handles.current.set(tab.path, handle);
-											} else {
-												handles.current.delete(tab.path);
-											}
-										}}
-										cursor={(anchor, head) => docs.cursor(tab.path, anchor, head)}
-									/>
-								))}
+									};
+									return kind ? (
+										<ReportView
+											key={tab.path}
+											kind={kind}
+											document={documents.current.get(tab.path)!}
+											active={tab.path === session.active}
+											visible={visible}
+											side={side}
+											focused={focused}
+										/>
+									) : (
+										<Editor
+											key={tab.path}
+											document={documents.current.get(tab.path)!}
+											tab={tab}
+											active={tab.path === session.active}
+											visible={visible}
+											side={side}
+											focused={focused}
+											chapter={book ? isChapter(book.tree, tab.path) : false}
+											settings={initial.settings}
+											limited={initial.usage.state === 'limit'}
+											nextRequestId={docs.nextRequestId}
+											ready={(handle) => {
+												if (handle) {
+													handles.current.set(tab.path, handle);
+												} else {
+													handles.current.delete(tab.path);
+												}
+											}}
+											cursor={(anchor, head) => docs.cursor(tab.path, anchor, head)}
+										/>
+									);
+								})}
 							</div>
 						</main>
 						{book ? <RightSidebar hidden={focus || !rightOpen} section={right} select={setRight} /> : null}

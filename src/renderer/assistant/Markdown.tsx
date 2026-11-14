@@ -31,7 +31,7 @@ function Inlines({ pieces }: { pieces: Inline[] }) {
 		);
 	});
 }
-function Blocks({ blocks }: { blocks: Block[] }) {
+function Blocks({ blocks, headingOffset }: { blocks: Block[]; headingOffset: number }) {
 	return blocks.map((block, index) => {
 		switch (block.type) {
 			case 'paragraph':
@@ -41,7 +41,7 @@ function Blocks({ blocks }: { blocks: Block[] }) {
 					</p>
 				);
 			case 'heading': {
-				const Heading = `h${Math.min(block.level + 2, 6)}` as 'h3' | 'h4' | 'h5' | 'h6';
+				const Heading = `h${Math.min(Math.max(block.level + headingOffset, 1), 6)}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
 				return (
 					<Heading key={index}>
 						<Inlines pieces={block.children} />
@@ -57,13 +57,13 @@ function Blocks({ blocks }: { blocks: Block[] }) {
 			case 'quote':
 				return (
 					<blockquote key={index}>
-						<Blocks blocks={block.children} />
+						<Blocks blocks={block.children} headingOffset={headingOffset} />
 					</blockquote>
 				);
 			case 'list': {
 				const items = block.items.map((item, i) => (
 					<li key={i}>
-						<Blocks blocks={item} />
+						<Blocks blocks={item} headingOffset={headingOffset} />
 					</li>
 				));
 				return block.ordered ? (
@@ -74,23 +74,26 @@ function Blocks({ blocks }: { blocks: Block[] }) {
 					<ul key={index}>{items}</ul>
 				);
 			}
-			case 'table':
+			case 'table': {
+				const showHead = block.head.some((cell) => cell.length > 0);
 				return (
 					<table key={index}>
-						<thead>
-							<tr>
-								{block.head.map((cell, i) => (
-									<th key={i}>
-										<Inlines pieces={cell} />
-									</th>
-								))}
-							</tr>
-						</thead>
+						{showHead ? (
+							<thead>
+								<tr>
+									{block.head.map((cell, i) => (
+										<th key={i} style={block.align?.[i] ? { textAlign: block.align[i] } : undefined}>
+											<Inlines pieces={cell} />
+										</th>
+									))}
+								</tr>
+							</thead>
+						) : null}
 						<tbody>
 							{block.rows.map((row, i) => (
 								<tr key={i}>
 									{row.map((cell, j) => (
-										<td key={j}>
+										<td key={j} style={block.align?.[j] ? { textAlign: block.align[j] } : undefined}>
 											<Inlines pieces={cell} />
 										</td>
 									))}
@@ -99,15 +102,24 @@ function Blocks({ blocks }: { blocks: Block[] }) {
 						</tbody>
 					</table>
 				);
+			}
 			case 'rule':
 				return <hr key={index} />;
 		}
 	});
 }
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({
+	text,
+	headingOffset = 2,
+	className,
+}: {
+	text: string;
+	headingOffset?: number;
+	className?: string;
+}) {
 	return (
-		<div className="assistant-markdown">
-			<Blocks blocks={parseMarkdown(text)} />
+		<div className={className ? `assistant-markdown ${className}` : 'assistant-markdown'}>
+			<Blocks blocks={parseMarkdown(text)} headingOffset={headingOffset} />
 		</div>
 	);
 });

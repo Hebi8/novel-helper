@@ -114,11 +114,70 @@ test('lore cards, quick open, grouped edits, manual buoys, split and last-reques
 		).toBe(true);
 		await menu('report');
 		await expect(page.locator('.tabs [aria-selected=true]')).toContainText('上次发给模型的内容');
-		// The editor only renders the lines in view; the buoy's place in the request is checked on the server below.
-		await expect(page.locator('.editor:visible .cm-content')).toContainText('用到的条目');
-		await expect(page.locator('.editor:visible .cm-content')).toHaveAttribute('contenteditable', 'false');
+		const report = page.locator('.report-view:visible');
+		await expect(report.locator('h1')).toHaveText('上次发给模型的内容');
+		await expect(report.locator('h2').filter({ hasText: '用到的条目' })).toBeVisible();
+		await expect(page.locator('.editor:visible')).toHaveCount(0);
 		expect(server.received.length).toBeGreaterThan(0);
 		expect(JSON.stringify(server.received.at(-1)!.body)).toContain('商量渡海');
+	});
+});
+
+test('usage and last-request reports render Markdown, support copy, follow themes, and leave book files as plain Markdown', async () => {
+	await withReferenceBook(async ({ page, app, menu }) => {
+		await page.locator('.editor:visible .cm-content').click();
+		await page.keyboard.press('Meta+ArrowDown');
+		await page.keyboard.press('Alt+Backslash');
+		await expect(page.locator('.ghost-text')).toContainText('门后传来一声叹息。');
+		await expect(page.locator('.statusbar button').filter({ hasText: '今天 1 次' })).toBeVisible();
+
+		// Status bar opens Usage and estimated cost rendered as Markdown.
+		await page.locator('.statusbar button').filter({ hasText: '今天 1 次' }).click();
+		await expect(page.locator('.tabs [aria-selected=true]')).toContainText('用量和估算花费');
+		const usageView = page.locator('.report-view:visible');
+		await expect(usageView.locator('h1')).toHaveText('用量和估算花费');
+		await expect(usageView.locator('h2').first()).toContainText('今天（');
+		await expect(usageView.locator('table').first().locator('thead th', { hasText: '请求数' })).toHaveCSS('text-align', 'right');
+		await expect(usageView.locator('table').first().locator('tbody td').nth(1)).toHaveText('1');
+		await expect(usageView.locator('ul li').first()).toBeVisible();
+		await expect(page.locator('.editor:visible')).toHaveCount(0);
+
+		// Last-request report renders headings, headless key-value table, entry table, nested list, and fenced code blocks.
+		await menu('report');
+		await expect(page.locator('.tabs [aria-selected=true]')).toContainText('上次发给模型的内容');
+		const reportView = page.locator('.report-view:visible');
+		await expect(reportView.locator('h1')).toHaveText('上次发给模型的内容');
+		await expect(reportView.locator('table').first().locator('thead')).toHaveCount(0);
+		await expect(reportView.locator('table').first().locator('tbody td').first()).toHaveText('时间');
+		await expect(reportView.locator('h2').filter({ hasText: '大纲和前文' })).toBeVisible();
+		await expect(reportView.locator('ul ul li').first()).toContainText('节点');
+		await expect(reportView.locator('h3').filter({ hasText: '请求参数' })).toBeVisible();
+		await expect(reportView.locator('pre code').first()).not.toBeEmpty();
+
+		// Rendered report text can be selected and copied.
+		await reportView.locator('h1').evaluate((heading) => {
+			const selection = window.getSelection()!;
+			selection.removeAllRanges();
+			const range = document.createRange();
+			range.selectNodeContents(heading);
+			selection.addRange(range);
+			document.execCommand('copy');
+		});
+		expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe('上次发给模型的内容');
+
+		// Light and dark themes apply to the report view.
+		await page.emulateMedia({ colorScheme: 'light' });
+		const lightBg = await reportView.evaluate((el) => getComputedStyle(el).backgroundColor);
+		await page.emulateMedia({ colorScheme: 'dark' });
+		const darkBg = await reportView.evaluate((el) => getComputedStyle(el).backgroundColor);
+		expect(lightBg).not.toBe(darkBg);
+		await page.emulateMedia({ colorScheme: null });
+
+		// Book Markdown files still show plain Markdown source in CodeMirror.
+		await page.locator('.sidebar.left .segments').getByRole('button', { name: '大纲', exact: true }).click();
+		await page.locator('.sidebar.left .tree').getByRole('button', { name: '全书', exact: true }).click();
+		await expect(page.locator('.editor:visible .cm-content')).toContainText('- 主线：');
+		await expect(page.locator('.report-view:visible')).toHaveCount(0);
 	});
 });
 

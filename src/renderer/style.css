@@ -885,9 +885,103 @@ select:focus-visible {
 	grid-row: 1;
 	border-left: 1px solid var(--line);
 }
-.editor-panes.split .cm-content {
+.editor-panes.split .cm-content,
+.editor-panes.split .report-markdown {
 	padding-left: 24px;
 	padding-right: 24px;
+}
+.report-view {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	background: var(--paper);
+	color: var(--ink);
+	outline: 0;
+	user-select: text;
+	-webkit-user-select: text;
+}
+.report-view ::selection {
+	background: #b4532a25;
+}
+.report-markdown {
+	max-width: 816px;
+	width: 100%;
+	margin: 0 auto;
+	padding: 36px 48px 96px;
+	font-size: 14px;
+	line-height: 1.75;
+	overflow-wrap: anywhere;
+}
+.report-markdown h1 {
+	font-size: 22px;
+	font-weight: 600;
+	margin: 0 0 16px;
+}
+.report-markdown h2 {
+	font-size: 16px;
+	font-weight: 600;
+	margin: 26px 0 10px;
+}
+.report-markdown h3 {
+	font-size: 14px;
+	font-weight: 600;
+	margin: 18px 0 8px;
+}
+.report-markdown p {
+	margin: 8px 0;
+}
+.report-markdown ul,
+.report-markdown ol {
+	margin: 8px 0;
+	padding-left: 22px;
+}
+.report-markdown li {
+	margin: 4px 0;
+}
+.report-markdown li > p {
+	margin: 2px 0;
+}
+.report-markdown table {
+	width: 100%;
+	margin: 10px 0 14px;
+	font-size: 13px;
+}
+.report-markdown th,
+.report-markdown td {
+	padding: 6px 10px;
+	text-align: left;
+	vertical-align: top;
+}
+.report-markdown th {
+	background: var(--panel);
+	color: var(--soft);
+	font-weight: 600;
+}
+.report-markdown table > tbody:first-child td:first-child {
+	width: 160px;
+	color: var(--soft);
+	white-space: nowrap;
+}
+.report-markdown code {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 12px;
+	background: var(--bubble);
+	padding: 1px 4px;
+	border-radius: 4px;
+}
+.report-markdown pre {
+	margin: 8px 0 14px;
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--panel);
+	font-size: 12px;
+	line-height: 1.6;
+}
+.report-markdown pre code {
+	background: none;
+	padding: 0;
+	border-radius: 0;
 }
 .lore-name {
 	text-decoration: underline dotted var(--faint);

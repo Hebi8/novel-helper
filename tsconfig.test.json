@@ -1,6 +1,6 @@
 {
 	"extends": "./tsconfig.json",
 	"compilerOptions": { "module": "Node16", "moduleResolution": "Node16", "rootDir": "src", "outDir": "out", "noEmit": false },
-	"include": ["src/test/**/*.ts"],
+	"include": ["src/test/**/*.ts", "src/renderer/env.d.ts"],
 	"exclude": []
 }
