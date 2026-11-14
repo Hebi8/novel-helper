@@ -31,6 +31,11 @@ export class AssistantRegistry {
 	async busy(root: string): Promise<boolean> {
 		return (await this.live.get(root))?.state().busy ?? false;
 	}
+	async each(visit: (service: AssistantService) => void): Promise<void> {
+		for (const pending of this.live.values()) {
+			visit(await pending);
+		}
+	}
 	async closeAll(): Promise<void> {
 		await Promise.all([...this.live.keys()].map((root) => this.close(root)).concat([...this.closing.values()]));
 	}

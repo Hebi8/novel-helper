@@ -22,7 +22,7 @@ type Modal =
 
 export function AssistantPanel() {
 	const workspace = useWorkspace();
-	const [state, setState] = useState<AssistantState>({ items: [], busy: false, status: '' });
+	const [state, setState] = useState<AssistantState>({ items: [], busy: false, status: '', options: [] });
 	const [draft, setDraft] = useState('');
 	const [error, setError] = useState('');
 	const [saving, setSaving] = useState(false);
@@ -246,6 +246,23 @@ export function AssistantPanel() {
 						}}
 					/>
 					<div className="assistant-actions">
+						{state.options.map((option) => (
+							<select
+								key={option.id}
+								aria-label={option.category === 'model' ? zh.model : zh.assistantThought}
+								value={option.value}
+								disabled={busy}
+								onChange={(event) => {
+									run(window.novel.assistant.setOption(option.id, event.target.value));
+								}}
+							>
+								{option.values.map((entry) => (
+									<option key={entry.value} value={entry.value}>
+										{entry.name}
+									</option>
+								))}
+							</select>
+						))}
 						{busy ? (
 							<button disabled={resetting} onClick={stop}>
 								{zh.assistantStop}

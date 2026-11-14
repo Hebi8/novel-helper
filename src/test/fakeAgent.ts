@@ -10,6 +10,8 @@
 //   run COMMAND                asks permission to run a command
 //   echo                       says the blocks that came before this one
 //   system | session           says the system prompt it was given; the session id, its mode and the sessions closed
+//   config                     says the current session config option values
+//   setconfig ID VALUE         changes a session config option and sends config_option_update
 //   wait                       waits to be cancelled
 //   refuse                     ends the turn as refused
 //   stderr TEXT | exit CODE    writes to stderr; ends the process
@@ -17,7 +19,9 @@
 //
 // Flags: --resume, --system-prompt and --close declare those capabilities,
 // --modes starts sessions in a mode called `auto` next to one called
-// `default` (and --mode-fails refuses to change it), --auth makes it ask for
+// `default` (and --mode-fails refuses to change it), --options reports model
+// and effort configOptions (customizable with --models=id:Name,... and
+// --no-effort), --auth makes it ask for
 // a login. --init-fails answers the first request with an error and lives
 // on; --init-hangs does not answer it at all. --pid=FILE writes the
 // process id to FILE on start.
@@ -26,11 +30,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Readable, Writable } from 'node:stream';
+import type { SessionConfigOption } from '@agentclientprotocol/sdk' with { 'resolution-mode': 'import' };
 
 async function main(): Promise<void> {
 	const acp = await import('@agentclientprotocol/sdk');
 	const flags = new Set(process.argv.slice(2));
 	const pidFile = process.argv.find((flag) => flag.startsWith('--pid='))?.slice('--pid='.length);
+	const modelsArg = process.argv.find((flag) => flag.startsWith('--models='))?.slice('--models='.length);
 	if (pidFile) {
 		fs.writeFileSync(pidFile, String(process.pid));
 	}
@@ -38,17 +44,89 @@ async function main(): Promise<void> {
 		process.stderr.write('fake agent could not start\n');
 		process.exit(1);
 	}
+	const modelChoices = modelsArg
+		? modelsArg.split(',').map((item) => {
+				const [value, name = value] = item.split(':');
+				return { value, name };
+			})
+		: [
+				{ value: 'sonnet', name: 'Sonnet' },
+				{ value: 'opus', name: 'Opus' },
+			];
+	const effortChoices = [
+		{ value: 'low', name: 'Low' },
+		{ value: 'medium', name: 'Medium' },
+		{ value: 'high', name: 'High' },
+	];
 	const cancels = new Map<string, () => void>();
 	let cwd = process.cwd();
 	let system = '(none)';
 	let sessions = 0;
 	let calls = 0;
 	let mode = 'auto';
+	let model = modelChoices[0].value;
+	let effort = 'medium';
 	const closed: string[] = [];
-	const modes = () => (flags.has('--modes') ? { modes: { currentModeId: mode, availableModes: [{ id: 'default', name: 'Manual' }, { id: 'auto', name: 'Auto' }] } } : {});
-	const open = (params: { cwd: string; systemPrompt?: { content: Array<{ type: string; text?: string }> } | null }) => {
+	const configOptions = (): SessionConfigOption[] => {
+		if (!flags.has('--options')) {
+			return [];
+		}
+		return [
+			{
+				id: 'model',
+				name: 'Model',
+				category: 'model',
+				type: 'select',
+				currentValue: model,
+				options: modelChoices,
+			},
+			...(flags.has('--no-effort')
+				? []
+				: [
+						{
+							id: 'effort',
+							name: 'Effort',
+							category: 'thought_level' as const,
+							type: 'select' as const,
+							currentValue: effort,
+							options: effortChoices,
+						},
+					]),
+		];
+	};
+	const sessionMeta = () => ({
+		...(flags.has('--modes') && {
+			modes: {
+				currentModeId: mode,
+				availableModes: [
+					{ id: 'default', name: 'Manual' },
+					{ id: 'auto', name: 'Auto' },
+				],
+			},
+		}),
+		...(flags.has('--options') && { configOptions: configOptions() }),
+	});
+	const applyConfig = (configId: string, value: string) => {
+		if (configId === 'model' && modelChoices.some((choice) => choice.value === value)) {
+			model = value;
+			return;
+		}
+		if (configId === 'effort' && !flags.has('--no-effort') && effortChoices.some((choice) => choice.value === value)) {
+			effort = value;
+			return;
+		}
+		throw acp.RequestError.invalidParams(undefined, `unknown option ${configId}=${value}`);
+	};
+	const open = (
+		params: { cwd: string; systemPrompt?: { content: Array<{ type: string; text?: string }> } | null },
+		resetDefaults: boolean,
+	) => {
 		cwd = params.cwd;
 		system = params.systemPrompt?.content.map((block) => block.text).join('') ?? '(none)';
+		if (resetDefaults) {
+			model = modelChoices[0].value;
+			effort = 'medium';
+		}
 	};
 
 	acp
@@ -75,8 +153,8 @@ async function main(): Promise<void> {
 			if (flags.has('--auth')) {
 				throw acp.RequestError.authRequired();
 			}
-			open(params);
-			return { sessionId: `fake-${process.pid}-${++sessions}`, ...modes() };
+			open(params, true);
+			return { sessionId: `fake-${process.pid}-${++sessions}`, ...sessionMeta() };
 		})
 		.onRequest(acp.methods.agent.session.setMode, ({ params }) => {
 			if (flags.has('--mode-fails')) {
@@ -84,6 +162,13 @@ async function main(): Promise<void> {
 			}
 			mode = params.modeId;
 			return {};
+		})
+		.onRequest(acp.methods.agent.session.setConfigOption, ({ params }) => {
+			if ('type' in params) {
+				throw acp.RequestError.invalidParams(undefined, 'only select options supported');
+			}
+			applyConfig(params.configId, params.value);
+			return { configOptions: configOptions() };
 		})
 		.onRequest(acp.methods.agent.session.close, ({ params }) => {
 			closed.push(params.sessionId);
@@ -93,8 +178,8 @@ async function main(): Promise<void> {
 			if (params.sessionId.startsWith('gone')) {
 				throw acp.RequestError.resourceNotFound(params.sessionId);
 			}
-			open(params);
-			return modes();
+			open(params, false);
+			return sessionMeta();
 		})
 		.onNotification(acp.methods.agent.session.cancel, ({ params }) => cancels.get(params.sessionId)?.())
 		.onRequest(acp.methods.agent.session.prompt, async ({ params, client }) => {
@@ -181,6 +266,16 @@ async function main(): Promise<void> {
 						break;
 					case 'session':
 						await say(`${sessionId} mode=${mode} closed=${closed.join(',')}`);
+						break;
+					case 'config':
+						await say(`model=${model} effort=${effort}`);
+						break;
+					case 'setconfig':
+						applyConfig(first, text);
+						await client.notify(acp.methods.client.session.update, {
+							sessionId,
+							update: { sessionUpdate: 'config_option_update', configOptions: configOptions() },
+						});
 						break;
 					case 'wait':
 						await new Promise<void>((resolve) => cancels.set(sessionId, resolve));

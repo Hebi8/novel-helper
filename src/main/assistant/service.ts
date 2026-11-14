@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { mkdir, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { AgentClient, AgentFailure, agentCommand, type AgentCommand, type AgentHandlers } from '../../acp/client';
+import { AgentClient, AgentFailure, agentCommand, type AgentCommand, type AgentHandlers, type SessionConfigOption } from '../../acp/client';
 import { whereIs } from '../../acp/places';
 import { editorContextBlock, revertNote, workspaceBrief, type EditorContext } from '../../core/assistantBrief';
 import { allowOnce, decide, pathsOf } from '../../core/permission';
@@ -11,7 +11,8 @@ import { titleOf, type Change, type SnapshotRecord } from '../../core/snapshot';
 import { Transcript, type AskOption, type Item } from '../../core/transcript';
 import { SnapshotStore, type Blocked } from '../../storage/snapshotStore';
 import type { Settings } from '../../shared/defaults';
-import type { AssistantDiff, AssistantEvent, AssistantState } from '../../shared/assistant';
+import type { AssistantDiff, AssistantEvent, AssistantOption, AssistantOptionCategory, AssistantState } from '../../shared/assistant';
+import type { StoredAgentOptions } from '../settings/store';
 import { assistantMessages as m } from '../../renderer/strings';
 import { atomicWrite, readOptional } from '../book/files';
 import { bookPath } from '../book/paths';
@@ -27,9 +28,27 @@ export interface AssistantOptions {
 	root: string;
 	userData: string;
 	settings(): Settings;
+	assistantOptions?(agent: string): StoredAgentOptions | undefined;
+	setAssistantOptions?(agent: string, value: StoredAgentOptions): void;
 	names(): Promise<StoryNames>;
 	environment?(): Promise<void>;
 }
+
+const categories: AssistantOptionCategory[] = ['model', 'thought_level'];
+function extractOptions(configOptions: readonly SessionConfigOption[]): AssistantOption[] {
+	return categories.flatMap((category) =>
+		configOptions.flatMap((option) => {
+			if (option.type !== 'select' || option.category !== category) {
+				return [];
+			}
+			const values = option.options
+				.flatMap((entry) => ('options' in entry ? entry.options : [entry]))
+				.map(({ value, name }) => ({ value, name }));
+			return values.length ? [{ id: option.id, name: option.name, category, value: option.currentValue, values }] : [];
+		}),
+	);
+}
+
 export class AssistantService {
 	private transcript = new Transcript();
 	private session?: Saved['session'];
@@ -43,9 +62,12 @@ export class AssistantService {
 	private resetting = false;
 	private starting?: AbortController;
 	private running?: Promise<unknown>;
+	private configuring: Promise<void> = Promise.resolve();
 	private saving: Promise<void> = Promise.resolve();
+	private lastOptions = '[]';
 	private askCount = 0;
 	private seenFiles = new Map<string, string>();
+	private readonly localAgentOptions = new Map<string, StoredAgentOptions>();
 	private readonly asks = new Map<string, (allow?: boolean) => void>();
 	private readonly listeners = new Set<(event: AssistantEvent) => void>();
 	private readonly turnListeners = new Set<(changes: Change[]) => void>();
@@ -77,9 +99,12 @@ export class AssistantService {
 				}
 			}
 		}
+		this.lastOptions = JSON.stringify(this.currentOptions());
 	}
 	state(): AssistantState {
-		return { items: structuredClone(this.transcript.items), busy: this.busy, status: this.status };
+		const options = this.currentOptions();
+		this.lastOptions = JSON.stringify(options);
+		return { items: structuredClone(this.transcript.items), busy: this.busy, status: this.status, options };
 	}
 	onChanged(listener: (event: AssistantEvent) => void): () => void {
 		this.listeners.add(listener);
@@ -98,6 +123,138 @@ export class AssistantService {
 		return () => {
 			this.revertListeners.delete(listener);
 		};
+	}
+	refreshOptions(): void {
+		this.emitOptions();
+	}
+	private getStored(agent: string): StoredAgentOptions | undefined {
+		if (this.options.assistantOptions) {
+			return this.options.assistantOptions(agent);
+		}
+		const stored = this.localAgentOptions.get(agent);
+		return stored ? structuredClone(stored) : undefined;
+	}
+	private setStored(agent: string, value: StoredAgentOptions): void {
+		if (this.options.setAssistantOptions) {
+			this.options.setAssistantOptions(agent, value);
+			return;
+		}
+		if (!value.options.length && !Object.keys(value.selected).length) {
+			this.localAgentOptions.delete(agent);
+		} else {
+			this.localAgentOptions.set(agent, structuredClone(value));
+		}
+	}
+	private currentAgent(): string | undefined {
+		const settings = this.options.settings();
+		const command = agentCommand({
+			agent: settings['assistant.agent'],
+			command: settings['assistant.command'],
+			args: settings['assistant.args'],
+		});
+		return command ? JSON.stringify(command) : undefined;
+	}
+	private currentOptions(): AssistantOption[] {
+		const agent = this.currentAgent();
+		if (!agent) {
+			return [];
+		}
+		if (this.client?.sessionId !== undefined && this.session?.agent === agent) {
+			return extractOptions(this.client.configOptions);
+		}
+		const stored = this.getStored(agent);
+		if (!stored) {
+			return [];
+		}
+		return stored.options.map((option) => {
+			const wanted = stored.selected[option.id];
+			const value = wanted !== undefined && option.values.some((entry) => entry.value === wanted) ? wanted : option.value;
+			return { ...option, value, values: option.values.map((entry) => ({ ...entry })) };
+		});
+	}
+	private pruneSelected(options: AssistantOption[], selected: Record<string, string>, syncLive = false): Record<string, string> {
+		for (const [id, value] of Object.entries(selected)) {
+			const current = options.find((option) => option.id === id);
+			if (!current || !current.values.some((entry) => entry.value === value)) {
+				delete selected[id];
+			} else if (syncLive) {
+				selected[id] = current.value;
+			}
+		}
+		return selected;
+	}
+	private emitOptions(): void {
+		if (this.disposed) {
+			return;
+		}
+		const options = this.currentOptions();
+		const next = JSON.stringify(options);
+		if (next !== this.lastOptions) {
+			this.lastOptions = next;
+			this.emit({ type: 'options', options });
+		}
+	}
+	private syncLiveOptions(): void {
+		if (!this.client || !this.session) {
+			return;
+		}
+		const agent = this.session.agent;
+		const options = extractOptions(this.client.configOptions);
+		const selected = this.pruneSelected(options, { ...this.getStored(agent)?.selected }, true);
+		this.setStored(agent, { options, selected });
+		this.emitOptions();
+	}
+	private async applyStoredOptions(agent: string, client: AgentClient): Promise<void> {
+		const stored = this.getStored(agent);
+		const selected = { ...stored?.selected };
+		for (const [id, value] of Object.entries(selected)) {
+			const current = extractOptions(client.configOptions).find((option) => option.id === id);
+			if (!current || !current.values.some((entry) => entry.value === value)) {
+				delete selected[id];
+				continue;
+			}
+			if (current.value !== value) {
+				await client.setConfigOption(id, value);
+			}
+		}
+		const options = extractOptions(client.configOptions);
+		this.setStored(agent, { options, selected: this.pruneSelected(options, selected, true) });
+		this.emitOptions();
+	}
+	async setOption(id: string, value: string): Promise<boolean> {
+		if (this.busy || this.disposed || this.resetting) {
+			return false;
+		}
+		const task = this.configuring.then(async () => {
+			if (this.busy || this.disposed || this.resetting) {
+				return false;
+			}
+			const agent = this.currentAgent();
+			if (!agent) {
+				return false;
+			}
+			const current = this.currentOptions().find((option) => option.id === id);
+			if (!current || !current.values.some((entry) => entry.value === value)) {
+				return false;
+			}
+			const stored = this.getStored(agent) ?? { options: [], selected: {} };
+			if (this.client?.sessionId !== undefined && this.session?.agent === agent) {
+				await this.client.setConfigOption(id, value);
+				const options = extractOptions(this.client.configOptions);
+				const actual = options.find((option) => option.id === id)?.value ?? value;
+				const selected = this.pruneSelected(options, { ...stored.selected, [id]: actual }, true);
+				this.setStored(agent, { options, selected });
+			} else {
+				this.setStored(agent, { options: stored.options, selected: { ...stored.selected, [id]: value } });
+			}
+			this.emitOptions();
+			return true;
+		});
+		this.configuring = task.then(
+			() => undefined,
+			() => undefined,
+		);
+		return task;
 	}
 	private changed(): void {
 		this.emit({ type: 'state', state: this.state() });
@@ -179,6 +336,10 @@ export class AssistantService {
 		};
 		return {
 			update: (update) => {
+				if (update.sessionUpdate === 'config_option_update') {
+					this.syncLiveOptions();
+					return;
+				}
 				const index = this.transcript.apply(update, name);
 				if (index !== undefined) {
 					this.show(index);
@@ -271,6 +432,7 @@ export class AssistantService {
 					closed: (failure) => {
 						if (started && this.client === started) {
 							this.client = undefined;
+							this.emitOptions();
 							if (!this.busy && !this.disposed) {
 								this.explain(failure, command, 'turn');
 								void this.save();
@@ -288,6 +450,7 @@ export class AssistantService {
 			const { resumed, briefed } = await client.open(this.options.root, workspaceBrief(names), previous);
 			this.briefPending = !briefed;
 			this.session = { agent, id: client.sessionId };
+			await this.applyStoredOptions(agent, client);
 			await this.save();
 			if (previous !== undefined && !resumed) {
 				this.notice('info', m.newConversation);
@@ -328,6 +491,7 @@ export class AssistantService {
 		return (await this.exclusive(() => this.run(text.trim(), context))) ?? false;
 	}
 	private async run(text: string, context: Partial<EditorContext>): Promise<boolean> {
+		await this.configuring;
 		this.stopped = false;
 		const settings = this.options.settings();
 		const command = agentCommand({
@@ -407,6 +571,7 @@ export class AssistantService {
 			this.starting.abort();
 			this.client?.stop();
 			this.client = undefined;
+			this.emitOptions();
 		} else if (this.busy) {
 			void this.client?.cancel();
 		}
@@ -419,6 +584,7 @@ export class AssistantService {
 		try {
 			this.stop();
 			await this.running;
+			await this.configuring;
 			await this.client?.close();
 			this.session = undefined;
 			this.notes = [];
@@ -489,6 +655,7 @@ export class AssistantService {
 		this.client?.stop();
 		this.client = undefined;
 		await this.running;
+		await this.configuring;
 		await this.save();
 		this.listeners.clear();
 		this.turnListeners.clear();

@@ -607,7 +607,18 @@ select:focus-visible {
 .assistant-actions {
 	display: flex;
 	justify-content: flex-end;
+	align-items: center;
 	gap: 6px;
+}
+.assistant-actions select {
+	min-width: 0;
+	max-width: 112px;
+	padding: 3px 6px;
+	border: 1px solid var(--line);
+	border-radius: 5px;
+	background: var(--paper);
+	color: var(--soft);
+	font-size: 11px;
 }
 .assistant-actions button,
 .assistant-turn > button,
@@ -663,6 +674,7 @@ select:focus-visible {
 	float: right;
 }
 .assistant-panel button:disabled,
+.assistant-panel select:disabled,
 .assistant-dialog button:disabled {
 	opacity: 0.4;
 	cursor: default;

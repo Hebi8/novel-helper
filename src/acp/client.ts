@@ -11,13 +11,14 @@ import type {
 	ContentBlock,
 	NewSessionRequest,
 	RequestPermissionRequest,
+	SessionConfigOption,
 	SessionModeState,
 	SessionUpdate,
 	StopReason,
 	SystemPrompt,
 } from '@agentclientprotocol/sdk' with { 'resolution-mode': 'import' };
 
-export type { ContentBlock, RequestPermissionRequest, SessionUpdate, StopReason };
+export type { ContentBlock, RequestPermissionRequest, SessionConfigOption, SessionUpdate, StopReason };
 
 /**
  * The Claude adapter the preset starts. A fixed version, not the latest:
@@ -88,6 +89,7 @@ export class AgentClient {
 	/** What the agent said it can do when the connection was set up. */
 	capabilities: AgentCapabilities = {};
 	sessionId?: string;
+	configOptions: SessionConfigOption[] = [];
 	private connection!: ClientConnection;
 	private stderr = '';
 	private stopped = false;
@@ -135,6 +137,9 @@ export class AgentClient {
 			.client({ name: 'novel-helper' })
 			.onNotification(acp.methods.client.session.update, ({ params }) => {
 				if (mine(params.sessionId)) {
+					if (params.update.sessionUpdate === 'config_option_update') {
+						client.configOptions = params.update.configOptions;
+					}
 					handlers.update(params.update);
 				}
 			})
@@ -214,6 +219,7 @@ export class AgentClient {
 		const base: NewSessionRequest = { cwd, mcpServers: [], ...(systemPrompt && { systemPrompt }) };
 		const briefed = systemPrompt !== undefined;
 		this.sessionId = undefined;
+		this.configOptions = [];
 		if (previous !== undefined && (session?.resume || this.capabilities.loadSession)) {
 			this.replaying = true;
 			try {
@@ -222,6 +228,7 @@ export class AgentClient {
 					session?.resume ? this.connection.agent.request(acp.methods.agent.session.resume, request) : this.connection.agent.request(acp.methods.agent.session.load, request),
 				);
 				await this.enterMode(previous, response.modes);
+				this.configOptions = response.configOptions ?? [];
 				this.sessionId = previous;
 				return { resumed: true, briefed: true };
 			} catch (error) {
@@ -235,6 +242,7 @@ export class AgentClient {
 		}
 		const response = await this.ask(this.connection.agent.request(acp.methods.agent.session.new, base));
 		await this.enterMode(response.sessionId, response.modes);
+		this.configOptions = response.configOptions ?? [];
 		this.sessionId = response.sessionId;
 		return { resumed: false, briefed };
 	}
@@ -247,10 +255,25 @@ export class AgentClient {
 		}
 	}
 
+	/** Sets a session configuration option and updates `configOptions` with what the agent reports back. */
+	async setConfigOption(configId: string, value: string): Promise<SessionConfigOption[]> {
+		const acp = await import('@agentclientprotocol/sdk');
+		const response = await this.ask(
+			this.connection.agent.request(acp.methods.agent.session.setConfigOption, {
+				sessionId: this.sessionId!,
+				configId,
+				value,
+			}),
+		);
+		this.configOptions = response.configOptions;
+		return this.configOptions;
+	}
+
 	/** Ends the session, for an agent that can; the process stays for the next one. */
 	async close(): Promise<void> {
 		const sessionId = this.sessionId;
 		this.sessionId = undefined;
+		this.configOptions = [];
 		if (sessionId !== undefined && this.capabilities.sessionCapabilities?.close) {
 			const acp = await import('@agentclientprotocol/sdk');
 			await this.connection.agent.request(acp.methods.agent.session.close, { sessionId }).catch(() => undefined);

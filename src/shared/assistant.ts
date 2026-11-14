@@ -3,14 +3,24 @@ import type { Item } from '../core/transcript';
 import type { SnapshotRecord } from '../core/snapshot';
 import type { Blocked } from '../storage/snapshotStore';
 
+export type AssistantOptionCategory = 'model' | 'thought_level';
+export interface AssistantOption {
+	id: string;
+	name: string;
+	category: AssistantOptionCategory;
+	value: string;
+	values: { value: string; name: string }[];
+}
 export interface AssistantState {
 	items: Item[];
 	busy: boolean;
 	status: string;
+	options: AssistantOption[];
 }
 export type AssistantEvent =
 	| { type: 'state'; state: AssistantState }
 	| { type: 'status'; busy: boolean; status: string }
+	| { type: 'options'; options: AssistantOption[] }
 	| { type: 'item'; index: number; item: Item };
 export interface AssistantDiff {
 	path: string;
@@ -21,6 +31,7 @@ export interface AssistantDiff {
 export interface AssistantAPI {
 	state(): Promise<AssistantState>;
 	send(text: string, context?: Partial<EditorContext>): Promise<boolean>;
+	setOption(id: string, value: string): Promise<boolean>;
 	stop(): Promise<void>;
 	newSession(): Promise<void>;
 	answer(id: string, allow: boolean): Promise<void>;

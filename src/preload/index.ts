@@ -18,6 +18,7 @@ const api: AppAPI = {
 	assistant: {
 		state: () => ipcRenderer.invoke(c.assistantState),
 		send: (text, context) => ipcRenderer.invoke(c.assistantSend, text, context),
+		setOption: (id, value) => ipcRenderer.invoke(c.assistantSetOption, id, value),
 		stop: () => ipcRenderer.invoke(c.assistantStop),
 		newSession: () => ipcRenderer.invoke(c.assistantNewSession),
 		answer: (id, allow) => ipcRenderer.invoke(c.assistantAnswer, id, allow),

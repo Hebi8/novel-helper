@@ -17,6 +17,9 @@ export async function prepareBookRename(root: string): Promise<void> {
 		throw new Error(zh.renameBusy);
 	}
 }
+export function notifyAssistantSettingsChanged(): void {
+	void services.each((service) => service.refreshOptions());
+}
 export function registerAssistant(ctx: MainContext): void {
 	const userData = app.getPath('userData');
 	void prepareAgentEnvironment().catch((error: Error) =>
@@ -29,6 +32,8 @@ export function registerAssistant(ctx: MainContext): void {
 				root: book.root,
 				userData,
 				settings: () => ctx.settings.get(),
+				assistantOptions: (agent) => ctx.settings.assistantOptions(agent),
+				setAssistantOptions: (agent, value) => ctx.settings.setAssistantOptions(agent, value),
 				names: async () => bookNames(book),
 			});
 			await assistant.load();
@@ -59,6 +64,13 @@ export function registerAssistant(ctx: MainContext): void {
 	ipcMain.handle(c.assistantSend, async (event, text: string, context?: Partial<EditorContext>) =>
 		(await service(event)).send(text, context),
 	);
+	ipcMain.handle(c.assistantSetOption, async (event, id: string, value: string) => {
+		const changed = await (await service(event)).setOption(id, value);
+		if (changed) {
+			notifyAssistantSettingsChanged();
+		}
+		return changed;
+	});
 	ipcMain.handle(c.assistantStop, async (event) => (await service(event)).stop());
 	ipcMain.handle(c.assistantNewSession, async (event) => (await service(event)).newSession());
 	ipcMain.handle(c.assistantAnswer, async (event, id: string, allow: boolean) => (await service(event)).answer(id, allow));

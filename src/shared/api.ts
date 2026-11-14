@@ -130,6 +130,7 @@ export const channels = {
 	focusChanged: 'window:focusChanged',
 	assistantState: 'assistant:state',
 	assistantSend: 'assistant:send',
+	assistantSetOption: 'assistant:setOption',
 	assistantStop: 'assistant:stop',
 	assistantNewSession: 'assistant:newSession',
 	assistantAnswer: 'assistant:answer',

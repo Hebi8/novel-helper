@@ -241,3 +241,27 @@ test('stopping during agent startup restores the unsent draft without adding a u
 		['--init-hangs'],
 	);
 });
+
+test('assistant model and thought-level dropdowns appear, switch options, and apply to subsequent messages', async () => {
+	await withBook(
+		async ({ page }) => {
+			const composer = page.locator('.assistant-composer');
+			await expect(composer.getByRole('combobox')).toHaveCount(0);
+			await send(page, 'config');
+			await expect(page.locator('.assistant-reply').last()).toHaveText('model=sonnet effort=medium');
+			await idle(page);
+			const model = composer.getByRole('combobox', { name: '模型', exact: true });
+			const effort = composer.getByRole('combobox', { name: '思考', exact: true });
+			await expect(model).toHaveValue('sonnet');
+			await expect(effort).toHaveValue('medium');
+			await model.selectOption('opus');
+			await effort.selectOption('high');
+			await expect(model).toHaveValue('opus');
+			await expect(effort).toHaveValue('high');
+			await send(page, 'config');
+			await expect(page.locator('.assistant-reply').last()).toHaveText('model=opus effort=high');
+			await idle(page);
+		},
+		['--options'],
+	);
+});

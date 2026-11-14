@@ -57,8 +57,16 @@ async function fixture(t: TestContext, flags: string[] = []) {
 	const index = new BookIndex(book);
 	await index.load();
 	const services: AssistantService[] = [];
-	const open = async (root = book, names: () => Promise<StoryNames> = async () => bookNames(index)) => {
-		const service = new AssistantService({ root, userData, settings: () => settings.get(), names, environment: async () => {} });
+	const open = async (root = book, names: () => Promise<StoryNames> = async () => bookNames(index), store: SettingsStore = settings) => {
+		const service = new AssistantService({
+			root,
+			userData,
+			settings: () => store.get(),
+			assistantOptions: (agent) => store.assistantOptions(agent),
+			setAssistantOptions: (agent, value) => store.setAssistantOptions(agent, value),
+			names,
+			environment: async () => {},
+		});
 		services.push(service);
 		await service.load();
 		return service;
@@ -778,4 +786,154 @@ test('application shutdown persists a stopped turn without a process-exit error 
 		false,
 	);
 	assert.equal(itemsOf(reopened, 'turn').at(-1)?.changes[0].path, chapter);
+});
+
+test('agent model and thought-level options reach state, update via set_config_option and notifications, and block changes while busy', async (t) => {
+	const withoutOptions = await fixture(t);
+	assert.deepEqual(withoutOptions.service.state().options, []);
+	await withoutOptions.service.send('say 无选项');
+	assert.deepEqual(withoutOptions.service.state().options, []);
+	assert.equal(await withoutOptions.service.setOption('model', 'opus'), false);
+
+	const { service } = await fixture(t, ['--options', '--modes']);
+	let rendered = service.state();
+	const off = service.onChanged((event) => {
+		rendered = applyAssistantEvent(rendered, event);
+	});
+	await service.send('config');
+	assert.equal(said(service), 'model=sonnet effort=medium');
+	assert.deepEqual(service.state().options, [
+		{
+			id: 'model',
+			name: 'Model',
+			category: 'model',
+			value: 'sonnet',
+			values: [
+				{ value: 'sonnet', name: 'Sonnet' },
+				{ value: 'opus', name: 'Opus' },
+			],
+		},
+		{
+			id: 'effort',
+			name: 'Effort',
+			category: 'thought_level',
+			value: 'medium',
+			values: [
+				{ value: 'low', name: 'Low' },
+				{ value: 'medium', name: 'Medium' },
+				{ value: 'high', name: 'High' },
+			],
+		},
+	]);
+	assert.deepEqual(rendered, service.state());
+
+	assert.equal(await service.setOption('model', 'opus'), true);
+	assert.equal(await service.setOption('effort', 'high'), true);
+	assert.equal(rendered.options[0].value, 'opus');
+	assert.equal(rendered.options[1].value, 'high');
+	await service.send('config');
+	assert.equal(said(service), 'model=opus effort=high');
+
+	// Agent-pushed config_option_update updates the state immediately.
+	await service.send('setconfig effort low\nconfig');
+	assert.equal(said(service), 'model=opus effort=low');
+	assert.equal(service.state().options[1].value, 'low');
+	assert.equal(rendered.options[1].value, 'low');
+
+	// Changing options while a turn is running is rejected.
+	const running = service.send('say 进行中\nwait');
+	await until(() => said(service) === '进行中' && service.state().busy, 'busy turn');
+	assert.equal(await service.setOption('model', 'sonnet'), false);
+	assert.equal(service.state().options[0].value, 'opus');
+	service.stop();
+	await running;
+	await service.send('config');
+	assert.equal(said(service), 'model=opus effort=low');
+	off();
+});
+
+test('remembered selections apply before new or resumed messages, fall back to agent defaults when absent, and stay separate per agent', async (t) => {
+	const { service, userData, book, index, open, root } = await fixture(t, ['--options', '--close', '--resume']);
+	await service.send('config');
+	assert.equal(await service.setOption('model', 'opus'), true);
+	assert.equal(await service.setOption('effort', 'high'), true);
+
+	// New session applies remembered options before sending the first message.
+	await service.newSession();
+	assert.equal(service.state().options[0].value, 'opus');
+	await service.send('config');
+	assert.equal(said(service), 'model=opus effort=high');
+
+	// Agent crash and restart resumes with the real current value.
+	await service.send('stderr crash\nexit 2');
+	await service.send('config');
+	assert.equal(said(service), 'model=opus effort=high');
+	assert.equal(service.state().options[0].value, 'opus');
+	await service.dispose();
+
+	// Reloading settings from disk exposes cached options before starting the agent.
+	const pidFile = join(root, 'lazy.pid');
+	const reloadedSettings = new SettingsStore(userData);
+	assert.equal(reloadedSettings.get()['assistant.agent'], 'custom');
+	const reopened = await open(book, async () => bookNames(index), reloadedSettings);
+	assert.equal(reopened.state().options[0].value, 'opus');
+	assert.equal(reopened.state().options[1].value, 'high');
+	assert.equal(await reopened.setOption('effort', 'low'), true);
+	assert.equal(reopened.state().options[1].value, 'low');
+
+	// Separate per-agent storage: preset Claude vs custom commands do not overwrite one another.
+	reloadedSettings.set('assistant.args', [fakeAgent, '--options', `--pid=${pidFile}`, '--models=haiku:Haiku,sonnet:Sonnet']);
+	reopened.refreshOptions();
+	assert.deepEqual(reopened.state().options, []);
+	assert.equal(existsSync(pidFile), false);
+	await reopened.send('config');
+	assert.equal(existsSync(pidFile), true);
+	assert.equal(said(reopened), 'model=haiku effort=medium');
+	assert.equal(await reopened.setOption('model', 'sonnet'), true);
+
+	// Switching to preset Claude uses its own separate stored options, and falls back to the agent default if a remembered model disappears.
+	reloadedSettings.set('assistant.agent', 'claude');
+	reopened.refreshOptions();
+	assert.deepEqual(reopened.state().options, []);
+	let claudeModels = '--models=sonnet:Sonnet,opus:Opus';
+	const start = AgentClient.start;
+	t.mock.method(
+		AgentClient,
+		'start',
+		(
+			chosen: Parameters<typeof start>[0],
+			cwd: Parameters<typeof start>[1],
+			handlers: Parameters<typeof start>[2],
+			signal: Parameters<typeof start>[3],
+		) =>
+			start(
+				{ command: process.execPath, args: [fakeAgent, '--options', '--close', claudeModels], mode: chosen.mode },
+				cwd,
+				handlers,
+				signal,
+			),
+	);
+	await reopened.send('config');
+	assert.equal(said(reopened), 'model=sonnet effort=medium');
+	assert.equal(await reopened.setOption('model', 'opus'), true);
+	await reopened.dispose();
+
+	claudeModels = '--models=sonnet:Sonnet,haiku:Haiku';
+	const afterUpgrade = await open(book, async () => bookNames(index), reloadedSettings);
+	assert.equal(afterUpgrade.state().options[0].value, 'opus');
+	await afterUpgrade.send('config');
+	assert.equal(said(afterUpgrade), 'model=sonnet effort=medium');
+	assert.equal(afterUpgrade.state().options[0].value, 'sonnet');
+	assert.deepEqual(
+		afterUpgrade.state().options[0].values.map((entry) => entry.value),
+		['sonnet', 'haiku'],
+	);
+
+	// Switching back to the first custom command still remembers its own choice.
+	t.mock.restoreAll();
+	reloadedSettings.set('assistant.agent', 'custom');
+	reloadedSettings.set('assistant.args', [fakeAgent, '--options', '--close', '--resume']);
+	afterUpgrade.refreshOptions();
+	assert.equal(afterUpgrade.state().options[0].value, 'opus');
+	assert.equal(afterUpgrade.state().options[1].value, 'low');
 });

@@ -143,7 +143,7 @@ All settings belong to the application. A book cannot change providers, endpoint
 
 Install and log in to Claude Code locally. Node.js 22+ and `npx` must be available. The application starts the official `@agentclientprotocol/claude-agent-acp` adapter through ACP. It does not manage Claude Code's login or give it the continuation API key. The login-shell PATH is loaded when the app starts.
 
-The assistant receives the open file, cursor and selection. Permissions beyond permitted book operations appear as **允许这一次** or **不允许**. The preset adapter also loads the book's `.claude` settings: its allow rules and hooks do not pass through the app's permission cards. Inspect that directory before using someone else's book.
+The assistant receives the open file, cursor and selection. When the agent reports model or thought-level options through ACP, dropdowns next to the send button switch them and remember the choice per agent. Permissions beyond permitted book operations appear as **允许这一次** or **不允许**. The preset adapter also loads the book's `.claude` settings: its allow rules and hooks do not pass through the app's permission cards. Inspect that directory before using someone else's book.
 
 Every assistant turn has before/after snapshots, a file list, diffs and a way to revert the entire turn. Reverting saves the current state first and can itself be undone. Snapshot retention defaults to 50. These are assistant-turn snapshots; ordinary typing has no periodic snapshots. Custom ACP agents can be configured with `assistant.agent`, `assistant.command` and JSON `assistant.args`. Agent changes apply at its next start.
 
