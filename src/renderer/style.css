@@ -697,7 +697,7 @@ select:focus-visible {
 	display: flex;
 	flex-direction: column;
 	gap: 5px;
-	padding: 7px 8px 8px;
+	padding: 7px 6px 8px;
 	border-top: 1px solid var(--line);
 }
 .assistant-effort-row:first-child {
@@ -709,9 +709,8 @@ select:focus-visible {
 	color: var(--soft);
 }
 .assistant-effort-segments {
-	display: grid;
-	grid-auto-flow: column;
-	grid-auto-columns: minmax(0, 1fr);
+	display: flex;
+	flex-wrap: wrap;
 	gap: 1px;
 	width: 100%;
 	padding: 2px;
@@ -719,13 +718,12 @@ select:focus-visible {
 	background: var(--panel);
 }
 .assistant-effort-segments button {
-	min-width: 0;
-	padding: 3px 1px;
+	flex: 1 0 auto;
+	padding: 3px 2px;
 	font-size: 11px;
+	letter-spacing: -0.02em;
 	color: var(--soft);
 	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
 	text-align: center;
 	border-radius: 4px;
 }

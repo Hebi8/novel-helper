@@ -21,6 +21,7 @@ export function useDocuments() {
 	const sessionTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const documents = useRef(new Map<string, DocumentModel>());
 	const handles = useRef(new Map<string, EditorHandle>());
+	const pendingOffsets = useRef(new Map<string, number>());
 	const opening = useRef(new Map<string, Promise<DocumentModel>>());
 	const serial = useRef(0);
 	const nextRequestId = () => ++serial.current;
@@ -101,7 +102,12 @@ export function useDocuments() {
 							.slice(0, options.line)
 							.reduce((sum, line) => sum + line.length + 1, 0);
 		if (offset !== undefined) {
-			handles.current.get(path)?.goTo(offset);
+			const handle = handles.current.get(path);
+			if (handle) {
+				handle.goTo(offset);
+			} else {
+				pendingOffsets.current.set(path, offset);
+			}
 		}
 		persist({
 			tabs: current.tabs.some((tab) => tab.path === path)
@@ -124,6 +130,7 @@ export function useDocuments() {
 		if (panesRef.current?.left === path || panesRef.current?.right === path) {
 			setSplit(undefined);
 		}
+		pendingOffsets.current.delete(path);
 		documents.current.delete(path);
 		model.dispose();
 	};
@@ -225,6 +232,11 @@ export function useDocuments() {
 			mapped.set(model.path, model);
 		}
 		documents.current = mapped;
+		const mappedOffsets = new Map<string, number>();
+		for (const [path, offset] of pendingOffsets.current) {
+			mappedOffsets.set(move(path), offset);
+		}
+		pendingOffsets.current = mappedOffsets;
 		if (panesRef.current) {
 			setSplit({
 				left: panesRef.current.left && move(panesRef.current.left),
@@ -233,8 +245,21 @@ export function useDocuments() {
 		}
 		persist({ tabs: current.tabs.map((tab) => ({ ...tab, path: move(tab.path) })), active: current.active && move(current.active) });
 	};
+	const registerHandle = (path: string, handle?: EditorHandle) => {
+		if (handle) {
+			handles.current.set(path, handle);
+			const offset = pendingOffsets.current.get(path);
+			if (offset !== undefined) {
+				pendingOffsets.current.delete(path);
+				handle.goTo(offset);
+			}
+		} else {
+			handles.current.delete(path);
+		}
+	};
 	return {
 		remap,
+		registerHandle,
 		focus: () => {
 			const path = sessionRef.current.active;
 			if (path) {

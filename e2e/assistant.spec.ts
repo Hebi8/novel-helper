@@ -262,7 +262,7 @@ test('stopping during agent startup restores the unsent draft without adding a u
 	);
 });
 
-test('assistant model and effort popover fetches options on first show, lays out six efforts on one equal-width row, switches via popover, and stays lazy when cached', async () => {
+test('assistant model and effort popover fetches options on first show, sizes six efforts by text on one row without truncation, switches via popover, and stays lazy when cached', async () => {
 	await withBook(
 		async ({ page, data, pidFile, closeApp }) => {
 			// Hidden assistant panel does not start the agent.
@@ -297,7 +297,7 @@ test('assistant model and effort popover fetches options on first show, lays out
 			await expect(popover.locator('.assistant-model-item[aria-pressed="true"]')).toContainText('Default (recommended)');
 			await expect(popover.locator('.assistant-model-item[aria-pressed="true"] .assistant-model-check')).toHaveText('✓');
 
-			// Effort label sits above the row, and all six effort levels fit equal-width on a single horizontal line in the 280px right sidebar.
+			// Effort label sits above the row; all six effort levels fit on a single horizontal line in the 280px right sidebar, sized by text width without truncation or ellipsis.
 			const effortLabel = popover.locator('.assistant-effort-label');
 			const effortGroup = popover.getByRole('group', { name: '强度', exact: true });
 			const labelBox = (await effortLabel.boundingBox())!;
@@ -305,21 +305,43 @@ test('assistant model and effort popover fetches options on first show, lays out
 			expect(labelBox.y + labelBox.height).toBeLessThanOrEqual(groupBox.y + 1);
 			const effortButtons = effortGroup.locator('button');
 			await expect(effortButtons).toHaveCount(6);
-			const boxes = await Promise.all(
-				Array.from({ length: 6 }, (_, index) =>
-					effortButtons
-						.nth(index)
-						.boundingBox()
-						.then((box) => box!),
-				),
+			const metrics = await effortButtons.evaluateAll((buttons) =>
+				buttons.map((button) => {
+					const rect = button.getBoundingClientRect();
+					return {
+						text: button.textContent,
+						y: rect.y,
+						width: rect.width,
+						scrollWidth: button.scrollWidth,
+						clientWidth: button.clientWidth,
+						textOverflow: getComputedStyle(button).textOverflow,
+					};
+				}),
 			);
-			for (const box of boxes) {
-				expect(Math.abs(box.y - boxes[0].y)).toBeLessThanOrEqual(1);
-				expect(Math.abs(box.width - boxes[0].width)).toBeLessThanOrEqual(1.5);
+			for (const item of metrics) {
+				expect(Math.abs(item.y - metrics[0].y)).toBeLessThanOrEqual(1);
+				expect(item.scrollWidth).toBeLessThanOrEqual(item.clientWidth);
+				expect(item.textOverflow).toBe('clip');
+			}
+			expect(metrics[0].width).toBeGreaterThan(metrics[1].width + 4);
+			expect(metrics[2].width).toBeGreaterThan(metrics[5].width + 4);
+
+			// Selecting Default (bold) also keeps all six levels on one row without truncation.
+			await effortGroup.getByRole('button', { name: 'Default', exact: true }).click();
+			await expect(effortGroup.getByRole('button', { name: 'Default', exact: true })).toHaveAttribute('aria-pressed', 'true');
+			const boldDefaultMetrics = await effortButtons.evaluateAll((buttons) =>
+				buttons.map((button) => ({
+					y: button.getBoundingClientRect().y,
+					scrollWidth: button.scrollWidth,
+					clientWidth: button.clientWidth,
+				})),
+			);
+			for (const item of boldDefaultMetrics) {
+				expect(Math.abs(item.y - boldDefaultMetrics[0].y)).toBeLessThanOrEqual(1);
+				expect(item.scrollWidth).toBeLessThanOrEqual(item.clientWidth);
 			}
 
 			// Changing effort updates immediately and keeps the popover open.
-			await expect(effortGroup.getByRole('button', { name: 'Medium', exact: true })).toHaveAttribute('aria-pressed', 'true');
 			await effortGroup.getByRole('button', { name: 'High', exact: true }).click();
 			await expect(popover).toBeVisible();
 			await expect(trigger).toHaveText('Default (recommended) High');
@@ -410,7 +432,7 @@ test('assistant model and effort popover fetches options on first show, lays out
 	);
 });
 
-test('switching from agent A to uncached agent B while A is opening its session stops A and leaves only B running', async () => {
+test('switching from agent A to uncached agent B while A is opening its session stops A, leaves only B running, and wraps long effort labels without ellipsis', async () => {
 	const switchDir = await mkdtemp(join(tmpdir(), 'novel-e2e-agent-switch-'));
 	const openingA = join(switchDir, 'a.opening');
 	const pidFileB = join(switchDir, 'b.pid');
@@ -431,6 +453,7 @@ test('switching from agent A to uncached agent B while A is opening its session 
 					'--close',
 					`--pid=${pidFileB}`,
 					'--models=opus:AgentB Opus',
+					'--efforts=low:Low,medium:Medium,deep:Extended Deep Reasoning,max:Maximum Effort',
 				];
 				await page.evaluate((args) => window.novel.settings.set('assistant.args', args), nextArgs);
 
@@ -442,6 +465,26 @@ test('switching from agent A to uncached agent B while A is opening its session 
 				expect(pidB).not.toBe(pidA);
 				expect(() => process.kill(pidA, 0)).toThrow();
 				expect(() => process.kill(pidB, 0)).not.toThrow();
+
+				await trigger.click();
+				const wrappedMetrics = await page
+					.locator('.assistant-composer')
+					.getByRole('group', { name: '强度', exact: true })
+					.locator('button')
+					.evaluateAll((buttons) =>
+						buttons.map((button) => ({
+							y: button.getBoundingClientRect().y,
+							scrollWidth: button.scrollWidth,
+							clientWidth: button.clientWidth,
+							textOverflow: getComputedStyle(button).textOverflow,
+						})),
+					);
+				expect(wrappedMetrics.at(-1)!.y).toBeGreaterThan(wrappedMetrics[0].y + 8);
+				for (const item of wrappedMetrics) {
+					expect(item.scrollWidth).toBeLessThanOrEqual(item.clientWidth);
+					expect(item.textOverflow).toBe('clip');
+				}
+				await page.keyboard.press('Escape');
 
 				await send(page, 'session');
 				await expect(page.locator('.assistant-reply').last()).toContainText(`fake-${pidB}-1`);

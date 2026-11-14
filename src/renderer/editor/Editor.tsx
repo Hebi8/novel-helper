@@ -20,6 +20,7 @@ import { prose } from './prose';
 import { zh } from '../strings';
 
 const formEdit = Annotation.define<boolean>();
+const revealHidden = Annotation.define<boolean>();
 const setHideFrontmatter = StateEffect.define<boolean>();
 const hideFrontmatter = StateField.define<boolean>({
 	create: () => false,
@@ -88,6 +89,9 @@ const frontmatterGuard = EditorState.transactionFilter.of((tr) => {
 		const endGuard = hiddenFrontmatterEnd(tr.state);
 		const sel = tr.newSelection;
 		if (endGuard > 0 && sel.ranges.some((range) => range.anchor < endGuard || range.head < endGuard)) {
+			if (tr.isUserEvent('select.search') || tr.annotation(revealHidden)) {
+				return [tr, { effects: setHideFrontmatter.of(false) }];
+			}
 			return [tr, { selection: clampSelection(sel, endGuard) }];
 		}
 		return tr;
@@ -209,6 +213,10 @@ export function Editor({
 			keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
 			EditorView.contentAttributes.of({ 'aria-label': model.path, spellcheck: 'false' }),
 			EditorView.updateListener.of((update) => {
+				if (update.startState.field(hideFrontmatter) && !update.state.field(hideFrontmatter) && loreRef.current && !sourceModeRef.current) {
+					sourceModeRef.current = true;
+					setSourceMode(true);
+				}
 				if (update.docChanged) {
 					const fromForm = update.transactions.some((tr) => tr.annotation(formEdit));
 					if (!fromForm) {
@@ -219,6 +227,7 @@ export function Editor({
 							!sourceModeRef.current &&
 							update.transactions.some((tr) => tr.isUserEvent('input'))
 						) {
+							sourceModeRef.current = true;
 							setSourceMode(true);
 						}
 					}
@@ -264,6 +273,7 @@ export function Editor({
 		const initialHide = loreRef.current && !sourceModeRef.current && formDataRef.current !== undefined;
 		const view = new EditorView({ parent: parent.current!, state: stateFor(tab.anchor, tab.head, initialHide) });
 		ghost.attach(view);
+		callbacks.current.cursor(view.state.selection.main.anchor, view.state.selection.main.head);
 		const instance: EditorHandle = {
 			view,
 			ghost,
@@ -272,7 +282,11 @@ export function Editor({
 			},
 			goTo: (offset) => {
 				const target = Math.max(0, Math.min(offset, view.state.doc.length));
-				view.dispatch({ selection: { anchor: target }, scrollIntoView: true });
+				if (loreRef.current && formDataRef.current && target < formDataRef.current.prefix.length) {
+					sourceModeRef.current = true;
+					setSourceMode(true);
+				}
+				view.dispatch({ selection: { anchor: target }, scrollIntoView: true, annotations: revealHidden.of(true) });
 			},
 			reload: () => {},
 		};
@@ -301,13 +315,17 @@ export function Editor({
 	}, [model]);
 	useEffect(() => {
 		const view = handle.current?.view;
-		if (!view || view.state.field(hideFrontmatter) === formActive) {
+		const nextHide = loreRef.current && !sourceModeRef.current && formDataRef.current !== undefined;
+		if (!view) {
 			return;
 		}
-		view.dispatch({
-			effects: setHideFrontmatter.of(formActive),
-			annotations: Transaction.addToHistory.of(false),
-		});
+		if (view.state.field(hideFrontmatter) !== nextHide) {
+			view.dispatch({
+				effects: setHideFrontmatter.of(nextHide),
+				annotations: Transaction.addToHistory.of(false),
+			});
+		}
+		view.requestMeasure();
 	}, [formActive]);
 	useEffect(() => {
 		handle.current?.ghost.settings(
@@ -413,6 +431,7 @@ export function Editor({
 						}
 					}}
 					showSource={() => {
+						sourceModeRef.current = true;
 						setSourceMode(true);
 						queueMicrotask(() => handle.current?.view.focus());
 					}}
@@ -422,7 +441,10 @@ export function Editor({
 					type="button"
 					className="lore-mode-toggle floating"
 					style={model.conflict !== undefined || model.error ? { top: '44px' } : undefined}
-					onClick={() => setSourceMode(false)}
+					onClick={() => {
+						sourceModeRef.current = false;
+						setSourceMode(false);
+					}}
 				>
 					{zh.loreForm}
 				</button>

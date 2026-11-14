@@ -188,7 +188,7 @@ test('usage and last-request reports render Markdown, support copy, follow theme
 });
 
 test('lore entry frontmatter form uses single full-document representation, preserves undo across mode switches, guards frontmatter, and handles conflicts and CRLF cleanly', async () => {
-	await withReferenceBook(async ({ page, book }) => {
+	await withReferenceBook(async ({ page, book, menu }) => {
 		// Chapters and outlines do not show the lore form.
 		await expect(page.locator('.lore-form')).toHaveCount(0);
 		await page.locator('.sidebar.left .segments').getByRole('button', { name: '大纲', exact: true }).click();
@@ -221,24 +221,29 @@ test('lore entry frontmatter form uses single full-document representation, pres
 		const towerBytesBefore = await readFile(towerPath);
 		const towerStatBefore = await stat(towerPath);
 
+		await page.locator('.sidebar.right .segments').getByRole('button', { name: '助手', exact: true }).click();
 		await page.locator('.sidebar.left .segments').getByRole('button', { name: '设定', exact: true }).click();
 		await expect(page.locator('.sidebar.left .lore-row').filter({ hasText: '守塔人记录' })).toBeVisible();
 		await expect(page.locator('.sidebar.left .lore-row').filter({ hasText: '北角灯塔' })).toBeVisible();
 
-		// Opening a CRLF lore entry without editing causes zero modifications, triggers no save, and keeps disk bytes identical.
+		// Opening a CRLF lore entry without editing or moving the cursor immediately reports the body's real first line number (5 frontmatter lines -> line 6) and causes zero disk modifications.
 		await page.locator('.sidebar.left .lore-row').filter({ hasText: '守塔人记录' }).click();
 		const pane = page.locator('.editor-pane:visible');
 		await expect(pane.locator('.lore-form')).toBeVisible();
+		await expect(page.locator('.assistant-context')).toContainText('守塔人记录');
+		await expect(page.locator('.assistant-context')).toContainText('第 6 行');
 		await expect(pane.locator('.lore-form').getByLabel('类型')).toHaveValue('人物');
 		await expect(pane.locator('.lore-form').getByLabel('别名')).toHaveValue('老周、守塔人');
 		await expect(pane.locator('.editor .cm-content')).toHaveText('北角灯塔最后一任守塔人。\n');
 		await pane.locator('.lore-form').getByLabel('摘要').focus();
 		await pane.locator('.lore-form').getByLabel('别名').focus();
 
-		// Switch to LF lore entry without editing it either, wait past autosave, and verify both files are untouched byte-for-byte.
+		// Switch to LF lore entry without moving the cursor: assistant context immediately shows real body line 9, and disk bytes remain untouched.
 		await page.locator('.sidebar.left .lore-row').filter({ hasText: '北角灯塔' }).click();
 		const form = pane.locator('.lore-form');
 		await expect(form).toBeVisible();
+		await expect(page.locator('.assistant-context')).toContainText('北角灯塔');
+		await expect(page.locator('.assistant-context')).toContainText('第 9 行');
 		await expect(pane.locator('.editor .cm-content')).toHaveText('雾港北角礁石上的白色灯塔，林小满常来。\n');
 		await expect(pane.locator('.editor .cm-content')).not.toContainText('---');
 		await expect(pane.locator('.editor .lore-name').filter({ hasText: '林小满' })).toBeVisible();
@@ -267,11 +272,50 @@ test('lore entry frontmatter form uses single full-document representation, pres
 		expect(Buffer.compare(await readFile(towerPath), towerBytesBefore)).toBe(0);
 		expect((await stat(towerPath)).mtimeMs).toBe(towerStatBefore.mtimeMs);
 
-		// Assistant context line number in form mode matches the full disk file line number (8 frontmatter lines -> body starts at line 9).
-		await page.locator('.sidebar.right .segments').getByRole('button', { name: '助手', exact: true }).click();
-		await pane.locator('.editor .cm-content').click();
-		await page.keyboard.press('Meta+ArrowUp');
-		await expect(page.locator('.assistant-context')).toContainText('第 9 行');
+		// Sending an assistant message without moving the editor cursor carries line 9 (not line 1).
+		await page.getByRole('textbox', { name: '给助手的消息' }).fill('echo');
+		await page.getByRole('button', { name: '发送', exact: true }).click();
+		await expect(page.locator('.assistant-reply').first()).toContainText('光标在第 9 行');
+
+		// In-file find (⌘F) matching frontmatter-only text automatically switches the editor to 源码 mode and selects the match.
+		await menu('find');
+		const findPanel = pane.locator('.cm-search');
+		await expect(findPanel).toBeVisible();
+		await findPanel.locator('input[name="search"]').fill('礁石灯塔');
+		await findPanel.getByRole('button', { name: '下一个', exact: true }).click();
+		await expect(pane.locator('.lore-form')).toHaveCount(0);
+		await expect(pane.getByRole('button', { name: '表单', exact: true })).toBeVisible();
+		await expect(page.locator('.assistant-context')).toContainText('选中 4 字 礁石灯塔');
+		await findPanel.getByRole('button', { name: '关闭', exact: true }).click();
+		await pane.getByRole('button', { name: '表单', exact: true }).click();
+		await expect(form).toBeVisible();
+
+		// Whole-book search (⌘⇧F) jumping to a frontmatter match switches to 源码 mode for both an open form-mode tab and a newly opened lore entry.
+		await menu('searchBook');
+		const searchInput = page.getByRole('textbox', { name: '全书搜索', exact: true });
+		await searchInput.fill('镇上叫法');
+		await expect(page.getByRole('option')).toHaveCount(1);
+		await page.keyboard.press('Enter');
+		await expect(pane.locator('.lore-form')).toHaveCount(0);
+		await expect(pane.getByRole('button', { name: '表单', exact: true })).toBeVisible();
+		await expect(page.locator('.assistant-context')).toContainText('第 4 行');
+		await pane.getByRole('button', { name: '表单', exact: true }).click();
+		await expect(form).toBeVisible();
+
+		await menu('searchBook');
+		await searchInput.fill('type: 人物');
+		const linOption = page.getByRole('group', { name: '人物/林小满.md', exact: true }).getByRole('option');
+		await expect(linOption).toHaveCount(1);
+		await linOption.click();
+		await expect(page.locator('.tabs [aria-selected=true]')).toContainText('林小满');
+		await expect(pane.locator('.lore-form')).toHaveCount(0);
+		await expect(pane.getByRole('button', { name: '表单', exact: true })).toBeVisible();
+		await expect(page.locator('.assistant-context')).toContainText('林小满');
+		await expect(page.locator('.assistant-context')).toContainText('第 2 行');
+
+		// Switch back to 北角灯塔 in form mode for subsequent form editing assertions.
+		await page.getByRole('tab').filter({ hasText: '北角灯塔' }).click();
+		await expect(form).toBeVisible();
 
 		// IME composition does not write to document mid-composition, and writes immediately when composition ends.
 		await eraInput.focus();
@@ -468,7 +512,7 @@ test('lore entry frontmatter form uses single full-document representation, pres
 			.getByRole('textbox', { name: '给助手的消息' })
 			.fill(JSON.stringify(['write', towerRel, assistantRewritten]) + '\nsay 已改好灯塔条目');
 		await page.getByRole('button', { name: '发送', exact: true }).click();
-		await expect(page.locator('.assistant-reply')).toContainText('已改好灯塔条目');
+		await expect(page.locator('.assistant-reply').last()).toContainText('已改好灯塔条目');
 		await expect(typeInput).toHaveValue('遗迹');
 		await expect(aliasesInput).toHaveValue('北角古塔');
 		await expect(alwaysBox).not.toBeChecked();

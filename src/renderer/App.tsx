@@ -63,7 +63,7 @@ export function App() {
 		() => (chapter.current ? docs.documents.current.get(chapter.current)?.text : undefined),
 		setError,
 	);
-	const { session, documents, handles } = docs;
+	const { session, documents } = docs;
 	const actions = commands({
 		documents: docs,
 		newChapter: () => showStructure('chapter'),
@@ -276,13 +276,7 @@ export function App() {
 											settings={initial.settings}
 											limited={initial.usage.state === 'limit'}
 											nextRequestId={docs.nextRequestId}
-											ready={(handle) => {
-												if (handle) {
-													handles.current.set(tab.path, handle);
-												} else {
-													handles.current.delete(tab.path);
-												}
-											}}
+											ready={(handle) => docs.registerHandle(tab.path, handle)}
 											cursor={(anchor, head) => docs.cursor(tab.path, anchor, head)}
 										/>
 									);
