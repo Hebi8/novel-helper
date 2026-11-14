@@ -14,9 +14,10 @@ import { Changes } from '../assistant/Changes';
 import { TranscriptItem } from '../assistant/TranscriptItem';
 import { applyAssistantEvent } from '../assistant/state';
 
+type RevertMode = 'turn' | 'undo' | 'timed';
 type Modal =
 	| { kind: 'history' }
-	| { kind: 'confirm'; record: number; undo: boolean; history: boolean }
+	| { kind: 'confirm'; record: number; mode: RevertMode; history: boolean }
 	| { kind: 'blocked'; files: Blocked[] }
 	| { kind: 'diff'; diff: DiffView; history: boolean };
 
@@ -29,6 +30,7 @@ export function AssistantPanel() {
 	const [resetting, setResetting] = useState(false);
 	const [modal, setModal] = useState<Modal>();
 	const [history, setHistory] = useState<SnapshotRecord[]>([]);
+	const panel = useRef<HTMLElement>(null);
 	const input = useRef<HTMLTextAreaElement>(null);
 	const log = useRef<HTMLDivElement>(null);
 	const composing = useRef(false);
@@ -37,9 +39,22 @@ export function AssistantPanel() {
 	const atBottom = useRef(true);
 	const busy = state.busy || saving || resetting;
 	const { context, refresh: refreshContext } = useEditorContext(workspace);
-	const run = useCallback((operation: Promise<unknown>) => {
-		void operation.catch((error) => setError(errorMessage(error)));
-	}, []);
+	const showError = useCallback(
+		(message: string) => {
+			if (panel.current && !panel.current.offsetParent) {
+				workspace.fail(message);
+			} else {
+				setError(message);
+			}
+		},
+		[workspace],
+	);
+	const run = useCallback(
+		(operation: Promise<unknown>) => {
+			void operation.catch((error) => showError(errorMessage(error)));
+		},
+		[showError],
+	);
 	const openHistory = async () => {
 		setHistory((await window.novel.assistant.history()).reverse());
 		setModal({ kind: 'history' });
@@ -146,27 +161,28 @@ export function AssistantPanel() {
 		setError('');
 		try {
 			if (!(await workspace.saveAll())) {
-				setError(zh.assistantSaveFailed);
+				showError(zh.assistantSaveFailed);
 				setModal(undefined);
 				return;
 			}
 			const result = await window.novel.assistant.revert(record);
 			setModal(result.blocked.length ? { kind: 'blocked', files: result.blocked } : undefined);
 		} catch (error) {
-			setError(errorMessage(error));
+			showError(errorMessage(error));
 			setModal(undefined);
 		} finally {
 			setSaving(false);
 		}
 	};
-	const askRevert = useCallback((record: number, undo: boolean) => {
-		setModal((modal) => ({ kind: 'confirm', record, undo, history: modal?.kind === 'history' }));
+	const askRevert = useCallback((record: number, mode: RevertMode) => {
+		setModal((modal) => ({ kind: 'confirm', record, mode, history: modal?.kind === 'history' }));
 	}, []);
 	const showDiff = useCallback(
 		(record: number, path: string) => {
 			run(
 				window.novel.assistant.diff(record, path).then((value) => {
-					setModal((modal) => ({ kind: 'diff', diff: value, history: modal?.kind === 'history' }));
+					const view: DiffView = value.timed ? { ...value, beforeLabel: zh.snapshotBefore, afterLabel: zh.snapshotAfter } : value;
+					setModal((modal) => ({ kind: 'diff', diff: view, history: modal?.kind === 'history' }));
 				}),
 			);
 		},
@@ -175,7 +191,7 @@ export function AssistantPanel() {
 	const answer = useCallback((id: string, allow: boolean) => run(window.novel.assistant.answer(id, allow)), [run]);
 	return (
 		<>
-			<section className="assistant-panel" aria-label={zh.assistant}>
+			<section className="assistant-panel" aria-label={zh.assistant} ref={panel}>
 				<header className="assistant-heading">
 					<strong>{zh.assistant}</strong>
 					<button disabled={resetting || (saving && !state.busy)} onClick={newSession}>
@@ -294,18 +310,23 @@ export function AssistantPanel() {
 				<Overlay title={zh.assistantSnapshots} close={() => setModal(undefined)}>
 					<div className="assistant-history">
 						{history.length ? (
-							history.map((record) => (
-								<article className="assistant-turn" key={record.id}>
-									<strong>
-										#{record.id} · {record.kind === 'revert' ? zh.assistantUndoRevert : record.title}
-									</strong>
-									<time>{new Date(record.time).toLocaleString('zh-CN')}</time>
-									<Changes changes={record.changes ?? []} record={record.id} diff={showDiff} />
-									<button disabled={busy} onClick={() => askRevert(record.id, record.kind === 'revert')}>
-										{record.kind === 'revert' ? zh.assistantUndoRevert : zh.assistantRevert}
-									</button>
-								</article>
-							))
+							history.map((record) => {
+								const mode: RevertMode = record.kind === 'revert' ? 'undo' : record.kind === 'timed' ? 'timed' : 'turn';
+								return (
+									<article className="assistant-turn" key={record.id}>
+										<strong>
+											{record.kind === 'timed'
+												? `${zh.snapshotTimed} · ${(record.changes ?? []).length} ${zh.assistantFiles}`
+												: `#${record.id} · ${record.kind === 'revert' ? zh.assistantUndoRevert : record.title}`}
+										</strong>
+										<time>{new Date(record.time).toLocaleString('zh-CN')}</time>
+										<Changes changes={record.changes ?? []} record={record.id} diff={showDiff} />
+										<button disabled={busy} onClick={() => askRevert(record.id, mode)}>
+											{mode === 'undo' ? zh.assistantUndoRevert : mode === 'timed' ? zh.snapshotRevert : zh.assistantRevert}
+										</button>
+									</article>
+								);
+							})
 						) : (
 							<p>{zh.assistantNoSnapshots}</p>
 						)}
@@ -314,7 +335,7 @@ export function AssistantPanel() {
 			) : null}
 			{modal?.kind === 'confirm' ? (
 				<Overlay
-					title={modal.undo ? zh.assistantUndoRevert : zh.assistantRevert}
+					title={modal.mode === 'undo' ? zh.assistantUndoRevert : modal.mode === 'timed' ? zh.snapshotRevert : zh.assistantRevert}
 					close={() => {
 						if (!saving) {
 							setModal(modal.history ? { kind: 'history' } : undefined);
@@ -322,7 +343,7 @@ export function AssistantPanel() {
 					}}
 				>
 					<div className="assistant-confirm">
-						<p>{zh.assistantRevertConfirm}</p>
+						<p>{modal.mode === 'timed' ? zh.snapshotRevertConfirm : zh.assistantRevertConfirm}</p>
 						<div className="assistant-actions">
 							<button disabled={saving} onClick={() => setModal(modal.history ? { kind: 'history' } : undefined)}>
 								{zh.cancel}

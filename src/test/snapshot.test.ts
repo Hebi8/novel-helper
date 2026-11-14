@@ -7,7 +7,23 @@ import fsp = require('node:fs/promises');
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, describe, mock, test } from 'node:test';
-import { changeKind, diff, expired, looksBinary, MAX_FILE_BYTES, parseRecord, referenced, restorePlan, skipsFolder, SNAPSHOT_DIR, titleOf } from '../core/snapshot';
+import {
+	afterManifest,
+	changeKind,
+	diff,
+	expired,
+	looksBinary,
+	MAX_FILE_BYTES,
+	parseRecord,
+	referenced,
+	restorePlan,
+	skipsFolder,
+	SNAPSHOT_DIR,
+	type SnapshotRecord,
+	titleOf,
+} from '../core/snapshot';
+import { BookSnapshots } from '../main/assistant/snapshots';
+import { defaults, type Settings } from '../shared/defaults';
 import { SnapshotStore } from '../storage/snapshotStore';
 import { filesIn } from './files';
 
@@ -15,7 +31,7 @@ const made: string[] = [];
 after(() => made.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
 
 /** A story folder with these files, and its store. */
-function story(files: Record<string, string | Buffer>, keep = 50) {
+function story(files: Record<string, string | Buffer>, keep = 50, timedKeep = 100) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-helper-snapshot-'));
 	made.push(dir);
 	const write = (file: string, content: string | Buffer = '') => {
@@ -25,14 +41,27 @@ function story(files: Record<string, string | Buffer>, keep = 50) {
 	Object.entries(files).forEach(([file, content]) => write(file, content));
 	return {
 		dir,
-		store: new SnapshotStore(dir, () => keep),
+		store: new SnapshotStore(
+			dir,
+			() => keep,
+			() => timedKeep,
+		),
 		write,
 		remove: (file: string) => fs.rmSync(path.join(dir, file)),
 		read: (file: string) => fs.readFileSync(path.join(dir, file), 'utf8'),
 		/** The story's own files, the snapshots aside. */
 		files: () => filesIn(dir).filter((file) => !file.startsWith(`${SNAPSHOT_DIR}/`)),
 		objects: () => filesIn(path.join(dir, SNAPSHOT_DIR, 'objects')).length,
+		timedObjects: () => filesIn(path.join(dir, SNAPSHOT_DIR, 'timed-objects')).length,
 	};
+}
+
+/** A temporary copy of `examples` for testing `BookSnapshots`. */
+function exampleCopy() {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-helper-examples-'));
+	made.push(dir);
+	fs.cpSync(path.resolve('examples'), dir, { recursive: true });
+	return dir;
 }
 
 describe('what a snapshot holds', () => {
@@ -76,7 +105,10 @@ describe('what a snapshot holds', () => {
 
 describe('comparing snapshots', () => {
 	test('added, removed and modified files, in reading order', () => {
-		const changes = diff({ '正文/第10章.md': 'a', '正文/第2章.md': 'b', '设定/旧.md': 'c', '大纲/全书.md': 'd' }, { '正文/第10章.md': 'a2', '正文/第2章.md': 'b2', '正文/第3章.md': 'e', '大纲/全书.md': 'd' });
+		const changes = diff(
+			{ '正文/第10章.md': 'a', '正文/第2章.md': 'b', '设定/旧.md': 'c', '大纲/全书.md': 'd' },
+			{ '正文/第10章.md': 'a2', '正文/第2章.md': 'b2', '正文/第3章.md': 'e', '大纲/全书.md': 'd' },
+		);
 		assert.deepEqual(
 			changes.map((change) => `${changeKind(change)} ${change.path}`),
 			['modified 正文/第2章.md', 'added 正文/第3章.md', 'modified 正文/第10章.md', 'removed 设定/旧.md'],
@@ -97,7 +129,18 @@ describe('comparing snapshots', () => {
 		assert.deepEqual(expired([5, 1, 3, 2, 4], 2), [1, 2, 3]);
 		assert.deepEqual(expired([1, 2], 5), []);
 		assert.deepEqual(expired([1, 2], 0), [1]);
-		const hashes = referenced([{ id: 1, time: '', kind: 'turn', files: { a: 'h1' }, changes: [{ path: 'a', before: 'h1', after: 'h2' }, { path: 'b', after: 'h3' }] }]);
+		const hashes = referenced([
+			{
+				id: 1,
+				time: '',
+				kind: 'turn',
+				files: { a: 'h1' },
+				changes: [
+					{ path: 'a', before: 'h1', after: 'h2' },
+					{ path: 'b', after: 'h3' },
+				],
+			},
+		]);
 		assert.deepEqual([...hashes].sort(), ['h1', 'h2', 'h3']);
 	});
 
@@ -171,12 +214,18 @@ describe('turns', () => {
 		assert.equal(one.read('正文/第2章.md'), '二');
 		assert.equal(back?.kind, 'revert');
 		assert.equal(back?.target, first.id);
-		assert.deepEqual(back?.changes?.map((change) => `${changeKind(change)} ${change.path}`), ['modified 正文/第1章.md', 'added 正文/第2章.md', 'removed 正文/第3章.md']);
+		assert.deepEqual(
+			back?.changes?.map((change) => `${changeKind(change)} ${change.path}`),
+			['modified 正文/第1章.md', 'added 正文/第2章.md', 'removed 正文/第3章.md'],
+		);
 
 		await one.store.revert(back!.id);
 		assert.deepEqual(one.files(), ['正文/第1章.md', '正文/第3章.md', '资料/地图.png']);
 		assert.equal(one.read('正文/第1章.md'), '一改，又手改');
-		assert.deepEqual((await one.store.list()).map((record) => record.kind), ['turn', 'turn', 'revert', 'revert']);
+		assert.deepEqual(
+			(await one.store.list()).map((record) => record.kind),
+			['turn', 'turn', 'revert', 'revert'],
+		);
 	});
 
 	test('going back to where the folder already is changes nothing and leaves no record', async () => {
@@ -198,7 +247,10 @@ describe('turns', () => {
 			await one.store.finish(record.id);
 		}
 		const records = await one.store.list();
-		assert.deepEqual(records.map((record) => record.title), ['3', '4']);
+		assert.deepEqual(
+			records.map((record) => record.title),
+			['3', '4'],
+		);
 		// Left: 港, and the chapter as 2, 3 and 4. Its contents 0 and 1 are gone.
 		assert.equal(one.objects(), 4);
 		await one.store.revert(records[0].id);
@@ -271,7 +323,10 @@ describe('turns', () => {
 
 		// The window is opened again; another turn comes and goes, and clears away what nothing refers to.
 		const again = new SnapshotStore(one.dir, () => 50);
-		assert.deepEqual((await again.list()).map((kept) => kept.id), [record.id]);
+		assert.deepEqual(
+			(await again.list()).map((kept) => kept.id),
+			[record.id],
+		);
 		const next = await again.begin({ kind: 'turn', title: '再改' });
 		one.write('正文/第1章.md', '一再改');
 		await again.finish(next.id);
@@ -284,8 +339,14 @@ describe('turns', () => {
 		const one = story({ '正文/第1章.md': '一' });
 		const other = new SnapshotStore(one.dir, () => 50);
 		const records = await Promise.all([one.store.begin({ kind: 'turn', title: '甲' }), other.begin({ kind: 'turn', title: '乙' })]);
-		assert.deepEqual(records.map((record) => record.id).sort(), [1, 2]);
-		assert.deepEqual((await one.store.list()).map((record) => record.title).sort(), ['乙', '甲']);
+		assert.deepEqual(
+			records.map((record) => record.id).sort(),
+			[1, 2],
+		);
+		assert.deepEqual(
+			(await one.store.list()).map((record) => record.title).sort(),
+			['乙', '甲'],
+		);
 	});
 
 	test('what one window has kept for a record it is about to write is not cleared away by another that ends a turn', async () => {
@@ -313,7 +374,10 @@ describe('turns', () => {
 		await other.finish(first.id);
 		const second = await beginning;
 		assert.equal((await one.store.read(second.files['正文/第1章.md'])).toString(), '二');
-		assert.deepEqual((await one.store.list()).map((record) => record.id), [1, 2]);
+		assert.deepEqual(
+			(await one.store.list()).map((record) => record.id),
+			[1, 2],
+		);
 	});
 
 	test('a record left without its end (the window was closed during the turn) can still be gone back to', async () => {
@@ -323,5 +387,253 @@ describe('turns', () => {
 		assert.equal((await one.store.list())[0].changes, undefined);
 		await one.store.revert(record.id);
 		assert.equal(one.read('正文/第1章.md'), '一');
+	});
+});
+
+describe('timed snapshots', () => {
+	const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
+
+	test('saves only once the interval has elapsed since the latest snapshot of any kind, and skips unchanged saves', async () => {
+		const root = exampleCopy();
+		const full = path.join(root, ...chapter.split('/'));
+		const original = fs.readFileSync(full, 'utf8');
+		const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
+		const snapshots = new BookSnapshots(() => current);
+		const t0 = Date.parse('2026-04-01T10:00:00.000Z');
+		await snapshots.open(root, t0);
+
+		// Unchanged save past the interval writes nothing and does not create `.novel-helper/snapshots`.
+		assert.equal(await snapshots.afterSave(root, t0 + 15 * 60_000), undefined);
+		assert.equal(fs.existsSync(path.join(root, SNAPSHOT_DIR)), false);
+
+		// Changed save before the interval elapses does not snapshot yet.
+		fs.writeFileSync(full, original + '\n第一处手写改动。\n');
+		assert.equal(await snapshots.afterSave(root, t0 + 9 * 60_000), undefined);
+
+		// Reaching the 10-minute mark creates a timed snapshot with both before and after contents readable.
+		const first = await snapshots.afterSave(root, t0 + 10 * 60_000);
+		assert.equal(first?.kind, 'timed');
+		assert.deepEqual(
+			first?.changes?.map((change) => `${changeKind(change)} ${change.path}`),
+			[`modified ${chapter}`],
+		);
+		const store = snapshots.store(root);
+		assert.equal((await store.read(first!.changes![0].before!)).toString('utf8'), original);
+		assert.equal((await store.read(first!.changes![0].after!)).toString('utf8'), original + '\n第一处手写改动。\n');
+
+		// Repeating afterSave after another 10 minutes with no further edits writes nothing.
+		assert.equal(await snapshots.afterSave(root, t0 + 25 * 60_000), undefined);
+
+		// An assistant turn updates the latest snapshot clock; a manual save 5 minutes after that turn waits for the full interval.
+		const turnAt = Date.now();
+		const turn = await store.begin({ kind: 'turn', title: '助手润色' });
+		fs.writeFileSync(full, original + '\n助手改过的稿子。\n');
+		await store.finish(turn.id);
+		const turnTime = Date.parse((await store.get(turn.id))!.time);
+		assert.ok(turnTime >= turnAt);
+
+		fs.writeFileSync(full, original + '\n助手之后又手改。\n');
+		assert.equal(await snapshots.afterSave(root, turnTime + 5 * 60_000), undefined);
+		const second = await snapshots.afterSave(root, turnTime + 10 * 60_000);
+		assert.equal(second?.kind, 'timed');
+		assert.equal((await store.read(second!.changes![0].before!)).toString('utf8'), original + '\n助手改过的稿子。\n');
+		assert.equal((await store.read(second!.changes![0].after!)).toString('utf8'), original + '\n助手之后又手改。\n');
+		assert.deepEqual(
+			(await store.list()).map((record) => record.kind),
+			['timed', 'turn', 'timed'],
+		);
+	});
+
+	test('closing a book snapshots unsnapshotted changes immediately, skips unchanged closes, and respects busy turns and interval 0', async () => {
+		const root = exampleCopy();
+		const full = path.join(root, ...chapter.split('/'));
+		const original = fs.readFileSync(full, 'utf8');
+		let busy = false;
+		const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
+		const snapshots = new BookSnapshots(
+			() => current,
+			async () => busy,
+		);
+		const t0 = Date.parse('2026-04-01T12:00:00.000Z');
+		await snapshots.open(root, t0);
+
+		// Closing without changes writes nothing.
+		assert.equal(await snapshots.close(root, t0 + 60_000), undefined);
+
+		// Reopen, edit for 1 minute (< 10 min interval), and close -> saves a timed snapshot.
+		await snapshots.open(root, t0 + 120_000);
+		fs.writeFileSync(full, original + '\n关书前写的。\n');
+		assert.equal(await snapshots.afterSave(root, t0 + 180_000), undefined);
+		const onClose = await snapshots.close(root, t0 + 185_000);
+		assert.equal(onClose?.kind, 'timed');
+
+		// Closing again right after without edits writes nothing.
+		await snapshots.open(root, t0 + 190_000);
+		assert.equal(await snapshots.close(root, t0 + 200_000), undefined);
+
+		// While an assistant turn is busy, neither afterSave nor close writes a timed snapshot, while the assistant turn snapshot still works.
+		await snapshots.open(root, t0 + 210_000);
+		busy = true;
+		const store = snapshots.store(root);
+		const turn = await store.begin({ kind: 'turn', title: '正在改稿' });
+		fs.writeFileSync(full, original + '\n助手进行中。\n');
+		assert.equal(await snapshots.afterSave(root, t0 + 25 * 60_000), undefined);
+		assert.equal(await snapshots.close(root, t0 + 26 * 60_000), undefined);
+		await store.finish(turn.id);
+		busy = false;
+		assert.deepEqual(
+			(await store.list()).map((record) => record.kind),
+			['timed', 'turn'],
+		);
+
+		// Setting `snapshots.intervalMinutes` to 0 disables timed snapshots on both save and close.
+		current['snapshots.intervalMinutes'] = 0;
+		const nextStart = Date.parse((await store.list()).at(-1)!.time) + 60_000;
+		await snapshots.open(root, nextStart);
+		fs.writeFileSync(full, original + '\n关掉定时快照后的改动。\n');
+		assert.equal(await snapshots.afterSave(root, nextStart + 30 * 60_000), undefined);
+		assert.equal(await snapshots.close(root, nextStart + 31 * 60_000), undefined);
+		assert.equal((await store.list()).length, 2);
+	});
+
+	test('retains assistant and timed snapshots under separate limits and deduplicates shared blobs via hard links', async () => {
+		const one = story({ '正文/第1章.md': '初稿', '设定/雾港.md': '长期不变的设定' }, 2, 3);
+		const seed = await one.store.seed();
+
+		one.write('正文/第1章.md', '手写一');
+		await one.store.timed(seed);
+
+		for (const turnText of ['助手一', '助手二', '助手三']) {
+			const turn = await one.store.begin({ kind: 'turn', title: turnText });
+			one.write('正文/第1章.md', turnText);
+			await one.store.finish(turn.id);
+		}
+
+		for (const timedText of ['手写二', '手写三', '手写四']) {
+			one.write('正文/第1章.md', timedText);
+			await one.store.timed();
+		}
+
+		const records = await one.store.list();
+		const turns = records.filter((record) => record.kind === 'turn');
+		const timed = records.filter((record) => record.kind === 'timed');
+		assert.deepEqual(
+			turns.map((record) => record.title),
+			['助手二', '助手三'],
+		);
+		assert.equal(timed.length, 3);
+		assert.deepEqual(
+			await Promise.all(timed.map(async (record) => (await one.store.read(record.files['正文/第1章.md'])).toString('utf8'))),
+			['手写二', '手写三', '手写四'],
+		);
+
+		// Unchanged lore shares the same SHA-256 and the same underlying inode across `objects` and `timed-objects`.
+		const loreHash = timed[0].files['设定/雾港.md'];
+		assert.equal(loreHash, turns[0].files['设定/雾港.md']);
+		const turnStat = fs.statSync(path.join(one.dir, SNAPSHOT_DIR, 'objects', loreHash.slice(0, 2), loreHash.slice(2)));
+		const timedStat = fs.statSync(path.join(one.dir, SNAPSHOT_DIR, 'timed-objects', loreHash.slice(0, 2), loreHash.slice(2)));
+		assert.equal(turnStat.ino, timedStat.ino);
+	});
+
+	test('reverting to a timed snapshot restores the whole book, can be undone, and changes nothing when blocked', async () => {
+		const one = story({ '正文/第1章.md': '一', '正文/第2章.md': '二', '设定/雾港.md': '港' });
+		const seed = await one.store.seed();
+		one.write('正文/第1章.md', '一·定时点');
+		const checkpoint = (await one.store.timed(seed))!;
+		assert.equal(checkpoint.kind, 'timed');
+
+		// Later edits change ch1, remove ch2, and create ch3.
+		one.write('正文/第1章.md', '一·写坏了');
+		one.remove('正文/第2章.md');
+		one.write('正文/第3章.md', '三');
+
+		// Put a binary file in the way of ch2: revert must refuse and leave every file untouched.
+		one.write('正文/第2章.md', Buffer.from([0x89, 0x50, 0x00, 0x01]));
+		assert.deepEqual(await one.store.revert(checkpoint.id), {
+			blocked: [{ path: '正文/第2章.md', why: 'binary' }],
+		});
+		assert.equal(one.read('正文/第1章.md'), '一·写坏了');
+		assert.equal(one.read('正文/第3章.md'), '三');
+
+		// Remove the blocker: revert restores the book to `checkpoint` and creates an undoable `revert` record without `target`.
+		one.remove('正文/第2章.md');
+		const { record: undo, blocked } = await one.store.revert(checkpoint.id);
+		assert.deepEqual(blocked, []);
+		assert.equal(undo?.kind, 'revert');
+		assert.equal(undo?.target, undefined);
+		assert.deepEqual(one.files(), ['正文/第1章.md', '正文/第2章.md', '设定/雾港.md']);
+		assert.equal(one.read('正文/第1章.md'), '一·定时点');
+		assert.equal(one.read('正文/第2章.md'), '二');
+
+		// Undoing that revert puts the book right back to where it was before reverting.
+		const undone = await one.store.revert(undo!.id);
+		assert.deepEqual(undone.blocked, []);
+		assert.deepEqual(one.files(), ['正文/第1章.md', '正文/第3章.md', '设定/雾港.md']);
+		assert.equal(one.read('正文/第1章.md'), '一·写坏了');
+		assert.equal(one.read('正文/第3章.md'), '三');
+	});
+
+	test('remains compatible with VS Code extension 0.4.0 listing, reverting, and pruning', async () => {
+		const one = story({ '正文/第1章.md': '初稿', '设定/雾港.md': '港' });
+		const seed = await one.store.seed();
+
+		one.write('正文/第1章.md', '仅在定时快照里的手写稿');
+		const timedOnly = (await one.store.timed(seed))!;
+
+		const turn1 = await one.store.begin({ kind: 'turn', title: '扩展第一轮' });
+		one.write('正文/第1章.md', '助手第一版');
+		await one.store.finish(turn1.id);
+
+		// Simulate VS Code extension 0.4.0 (`vscode-extension:src/storage/snapshotStore.ts`):
+		// it reads only `turns/*.json` and prunes `objects/*` against `referenced(turns)` with `keep = 1`.
+		const turnsDir = path.join(one.dir, SNAPSHOT_DIR, 'turns');
+		const objectsDir = path.join(one.dir, SNAPSHOT_DIR, 'objects');
+		const extList = (): SnapshotRecord[] =>
+			fs
+				.readdirSync(turnsDir)
+				.filter((name) => name.endsWith('.json'))
+				.map((name) => parseRecord(fs.readFileSync(path.join(turnsDir, name), 'utf8'))!)
+				.filter(Boolean)
+				.sort((a, b) => a.id - b.id);
+
+		// Extension 0.4.0 sees only `turn` / `revert` records in `turns/`, never unknown `timed` records.
+		assert.deepEqual(
+			extList().map((record) => [record.id, record.kind]),
+			[[1, 'turn']],
+		);
+
+		// Extension 0.4.0 runs a second turn with `keep = 1`, expiring turn 1 and pruning `objects/` of anything turn 2 does not reference!
+		const turn2 = await one.store.begin({ kind: 'turn', title: '扩展第二轮' });
+		one.write('正文/第1章.md', '助手第二版');
+		await one.store.finish(turn2.id);
+
+		const survivingTurns = extList();
+		for (const id of expired(
+			survivingTurns.map((record) => record.id),
+			1,
+		)) {
+			fs.rmSync(path.join(turnsDir, `${String(id).padStart(6, '0')}.json`), { force: true });
+		}
+		const extNeeded = referenced(extList());
+		for (const prefix of fs.readdirSync(objectsDir)) {
+			for (const name of fs.readdirSync(path.join(objectsDir, prefix))) {
+				if (!extNeeded.has(prefix + name)) {
+					fs.rmSync(path.join(objectsDir, prefix, name), { force: true });
+				}
+			}
+		}
+
+		// Even after extension 0.4.0 pruned `objects/`, the Mac app still reads both sides of `timedOnly` and reverts to it cleanly.
+		assert.equal(afterManifest(timedOnly)['正文/第1章.md'], timedOnly.files['正文/第1章.md']);
+		assert.equal((await one.store.read(timedOnly.changes![0].before!)).toString('utf8'), '初稿');
+		assert.equal((await one.store.read(timedOnly.changes![0].after!)).toString('utf8'), '仅在定时快照里的手写稿');
+		const reverted = await one.store.revert(timedOnly.id);
+		assert.deepEqual(reverted.blocked, []);
+		assert.equal(one.read('正文/第1章.md'), '仅在定时快照里的手写稿');
+		// And the revert record written by the Mac app in `turns/` is valid for extension 0.4.0 too.
+		assert.deepEqual(
+			extList().map((record) => record.kind),
+			['turn', 'revert'],
+		);
 	});
 });

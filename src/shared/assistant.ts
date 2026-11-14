@@ -27,6 +27,7 @@ export interface AssistantDiff {
 	before: string;
 	after: string;
 	canOpen: boolean;
+	timed?: boolean;
 }
 export interface AssistantAPI {
 	state(): Promise<AssistantState>;

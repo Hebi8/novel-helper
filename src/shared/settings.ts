@@ -53,6 +53,7 @@ export const settingGroups: { name: string; keys: SettingKey[] }[] = [
 	},
 	{ name: zh.settingsUsage, keys: ['usage.dailyLimitUsd', 'usage.prices'] },
 	{ name: zh.assistant, keys: ['assistant.agent', 'assistant.command', 'assistant.args', 'assistant.snapshots.keep'] },
+	{ name: zh.assistantSnapshots, keys: ['snapshots.intervalMinutes', 'snapshots.keep'] },
 	{ name: zh.settingsFiles, keys: ['files.lore', 'files.chapters', 'files.outlines', 'files.summaries', 'files.bookNames'] },
 	{
 		name: zh.settingsContext,

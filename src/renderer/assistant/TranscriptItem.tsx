@@ -14,7 +14,7 @@ export const TranscriptItem = memo(function TranscriptItem({
 	item: Item;
 	busy: boolean;
 	diff(record: number, path: string): void;
-	revert(record: number, undo: boolean): void;
+	revert(record: number, mode: 'turn' | 'undo'): void;
 	answer(id: string, allow: boolean): void;
 }) {
 	switch (item.kind) {
@@ -88,7 +88,9 @@ export const TranscriptItem = memo(function TranscriptItem({
 					{item.stop !== 'end_turn' ? (
 						<div className="assistant-turn-status">
 							{item.stop === 'reverted'
-								? `${zh.assistantReverted} #${item.target}`
+								? item.target !== undefined
+									? `${zh.assistantReverted} #${item.target}`
+									: zh.snapshotReverted
 								: (zh.assistantStopReasons[item.stop as keyof typeof zh.assistantStopReasons] ?? item.stop)}
 						</div>
 					) : null}
@@ -97,7 +99,7 @@ export const TranscriptItem = memo(function TranscriptItem({
 					</strong>
 					<Changes changes={item.changes} record={item.record} diff={diff} />
 					{item.record !== undefined && item.changes.length ? (
-						<button disabled={busy} onClick={() => revert(item.record!, item.stop === 'reverted')}>
+						<button disabled={busy} onClick={() => revert(item.record!, item.stop === 'reverted' ? 'undo' : 'turn')}>
 							{item.stop === 'reverted' ? zh.assistantUndoRevert : zh.assistantRevert}
 						</button>
 					) : null}

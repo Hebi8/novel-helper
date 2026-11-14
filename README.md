@@ -131,7 +131,7 @@ Requests include always-on lore, the book and ancestor outlines, previous chapte
 
 ## Settings
 
-**⌘,** opens grouped rows for continuation, providers and models, request parameters, context budgets, folder rules, usage, writing preferences and the assistant. Numbers and text edit in place. Arrays and objects use JSON in a small dialog; invalid JSON is not saved. Defaults are listed in [`src/shared/defaults.ts`](src/shared/defaults.ts). There is no `files.storyFolder` setting: the selected folder is the book root.
+**⌘,** opens grouped rows for continuation, providers and models, request parameters, context budgets, folder rules, usage, writing preferences, snapshots and the assistant. Numbers and text edit in place. Arrays and objects use JSON in a small dialog; invalid JSON is not saved. Defaults are listed in [`src/shared/defaults.ts`](src/shared/defaults.ts). There is no `files.storyFolder` setting: the selected folder is the book root.
 
 Providers include Anthropic, OpenAI, DeepSeek, Gemini and OpenAI-compatible endpoints. Each provider's API key is entered separately and never displayed. Custom endpoints use `openaiCompatible.baseUrl` and `openaiCompatible.model`; extra request fields use `extraRequestBody`.
 
@@ -145,12 +145,14 @@ Install and log in to Claude Code locally. Node.js 22+ and `npx` must be availab
 
 The assistant receives the open file, cursor and selection. When the agent reports model or thought-level options through ACP, dropdowns next to the send button switch them and remember the choice per agent. Permissions beyond permitted book operations appear as **允许这一次** or **不允许**. The preset adapter also loads the book's `.claude` settings: its allow rules and hooks do not pass through the app's permission cards. Inspect that directory before using someone else's book.
 
-Every assistant turn has before/after snapshots, a file list, diffs and a way to revert the entire turn. Reverting saves the current state first and can itself be undone. Snapshot retention defaults to 50. These are assistant-turn snapshots; ordinary typing has no periodic snapshots. Custom ACP agents can be configured with `assistant.agent`, `assistant.command` and JSON `assistant.args`. Agent changes apply at its next start.
+Every assistant turn has before/after snapshots, a file list, diffs and a way to revert the entire turn. Reverting saves the current state first and can itself be undone. Assistant snapshot retention defaults to 50. Custom ACP agents can be configured with `assistant.agent`, `assistant.command` and JSON `assistant.args`. Agent changes apply at its next start.
+
+Manual edits also have timed snapshots under `.novel-helper/snapshots`: a whole-book checkpoint is saved after a file save once the configured interval (`snapshots.intervalMinutes`, default `10`, `0` disables) has elapsed since the book's last snapshot of any kind, and when closing the book, closing the window or quitting if files changed since the last snapshot (skipped while an assistant turn is running). Retention defaults to `100` (`snapshots.keep`), counted separately from assistant snapshots, with unchanged files deduplicated by content hash. **快照** in the top bar lists both kinds chronologically with per-file diffs and undoable point-in-time revert, while keeping `.novel-helper/snapshots` compatible with VS Code extension 0.4.0.
 
 ## Data and logs
 
 - Manuscripts, lore and outlines stay in the selected book folder.
-- `.novel-helper/project.json` marks the book; buoys, templates and assistant snapshots also live under `.novel-helper/`.
+- `.novel-helper/project.json` marks the book; buoys, templates and snapshots also live under `.novel-helper/`.
 - Application settings, window state, shared usage records and per-book assistant conversations live under Electron's application data directory in `~/Library/Application Support/` (`Novel Helper` by default).
 - API keys remain encrypted using macOS safe storage backed by the system keychain, in the application data directory.
 - Logs are in the application's `logs/` directory. **帮助 → 打开日志** reveals it in Finder.

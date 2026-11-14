@@ -1,5 +1,6 @@
 import { BookOpenings } from './window/opening';
-import { prepareBookRename } from './assistant/ipc';
+import { isAssistantBusy, prepareBookRename } from './assistant/ipc';
+import { BookSnapshots } from './assistant/snapshots';
 import { prepareOpen } from './scaffold/initialize';
 import { resolveBookRoot, restoreBooks } from './window/reopen';
 import { CloseGate } from './window/closeGate';
@@ -43,6 +44,7 @@ if (!app.requestSingleInstanceLock()) {
 		await usage.load();
 		const completion = new CompletionService(settings, usage, (provider) => secrets.get(provider));
 		const windows = new WindowStore(directory);
+		const snapshots = new BookSnapshots(() => settings.get(), isAssistantBusy);
 		const bookClosed = new Set<(root: string) => void | Promise<void>>();
 		const books = new Map<number, BookIndex>();
 		const openings = new BookOpenings();
@@ -67,6 +69,7 @@ if (!app.requestSingleInstanceLock()) {
 				index.onFileChanged((file) => window.webContents.send(channels.fileChanged, file));
 				index.start();
 				windows.opened(index.root);
+				void snapshots.open(index.root);
 			}
 			const senderId = window.webContents.id;
 			const closeGate = new CloseGate();
@@ -130,6 +133,7 @@ if (!app.requestSingleInstanceLock()) {
 			secrets,
 			completion,
 			windows,
+			snapshots,
 			onBookClosed: (cleanup) => {
 				bookClosed.add(cleanup);
 			},

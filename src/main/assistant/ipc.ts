@@ -12,6 +12,9 @@ import { assistantReverted, assistantTurnEnded } from './events';
 import { AssistantRegistry } from './registry';
 
 const services = new AssistantRegistry();
+export function isAssistantBusy(root: string): Promise<boolean> {
+	return services.busy(root);
+}
 export async function prepareBookRename(root: string): Promise<void> {
 	if (await services.busy(root)) {
 		throw new Error(zh.renameBusy);
@@ -22,6 +25,7 @@ export function notifyAssistantSettingsChanged(): void {
 }
 export function registerAssistant(ctx: MainContext): void {
 	const userData = app.getPath('userData');
+	const closingBooks = new Set<Promise<void>>();
 	void prepareAgentEnvironment().catch((error: Error) =>
 		appendFileSync(join(app.getPath('logs'), 'assistant-startup.log'), `${error.message}\n`),
 	);
@@ -32,6 +36,8 @@ export function registerAssistant(ctx: MainContext): void {
 				root: book.root,
 				userData,
 				settings: () => ctx.settings.get(),
+				store: ctx.snapshots.store(book.root),
+				beforeHistory: () => ctx.snapshots.flush(book.root),
 				assistantOptions: (agent) => ctx.settings.assistantOptions(agent),
 				setAssistantOptions: (agent, value) => ctx.settings.setAssistantOptions(agent, value),
 				names: async () => bookNames(book),
@@ -47,14 +53,28 @@ export function registerAssistant(ctx: MainContext): void {
 			return assistant;
 		});
 	};
-	ctx.onBookClosed((root) => services.close(root));
+	ctx.onBookClosed((root) => {
+		const task = (async () => {
+			const busy = await services.busy(root);
+			await services.close(root);
+			if (busy) {
+				await ctx.snapshots.discard(root);
+			} else {
+				await ctx.snapshots.close(root);
+			}
+		})().finally(() => {
+			closingBooks.delete(task);
+		});
+		closingBooks.add(task);
+		return task;
+	});
 	let drained = false;
 	app.on('will-quit', (event) => {
 		if (drained) {
 			return;
 		}
 		event.preventDefault();
-		void services.closeAll().finally(() => {
+		void Promise.all([...closingBooks, services.closeAll(), ctx.snapshots.drain()]).finally(() => {
 			drained = true;
 			// With nothing left to close this settles while the first quit is still unwinding, and a quit requested then is dropped.
 			setImmediate(() => app.quit());

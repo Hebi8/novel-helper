@@ -28,6 +28,8 @@ export interface AssistantOptions {
 	root: string;
 	userData: string;
 	settings(): Settings;
+	store?: SnapshotStore;
+	beforeHistory?(): Promise<void>;
 	assistantOptions?(agent: string): StoredAgentOptions | undefined;
 	setAssistantOptions?(agent: string, value: StoredAgentOptions): void;
 	names(): Promise<StoryNames>;
@@ -79,7 +81,13 @@ export class AssistantService {
 		const id = createHash('sha256').update(options.root).digest('hex');
 		this.file = join(options.userData, 'assistant', `${id}.json`);
 		this.logFile = join(options.userData, 'logs', `assistant-${id}.log`);
-		this.store = new SnapshotStore(options.root, () => options.settings()['assistant.snapshots.keep']);
+		this.store =
+			options.store ??
+			new SnapshotStore(
+				options.root,
+				() => options.settings()['assistant.snapshots.keep'],
+				() => options.settings()['snapshots.keep'],
+			);
 	}
 	async load(): Promise<void> {
 		await mkdir(dirname(this.file), { recursive: true });
@@ -595,7 +603,8 @@ export class AssistantService {
 			this.resetting = false;
 		}
 	}
-	history(): Promise<SnapshotRecord[]> {
+	async history(): Promise<SnapshotRecord[]> {
+		await this.options.beforeHistory?.();
 		return this.store.list();
 	}
 	private validRecord(id: number): void {
@@ -606,7 +615,8 @@ export class AssistantService {
 	async diff(id: number, path: string): Promise<AssistantDiff> {
 		this.validRecord(id);
 		bookPath(path);
-		const change = (await this.store.get(id))?.changes?.find((change) => change.path === path);
+		const record = await this.store.get(id);
+		const change = record?.changes?.find((change) => change.path === path);
 		if (!change) {
 			throw new Error(m.expired);
 		}
@@ -615,27 +625,40 @@ export class AssistantService {
 			change.after !== undefined &&
 			(await whereIs(this.options.root, path)) !== 'outside' &&
 			(await this.store.hashOf(path)) === change.after;
-		return { path, before: await text(change.before), after: await text(change.after), canOpen };
+		return {
+			path,
+			before: await text(change.before),
+			after: await text(change.after),
+			canOpen,
+			...(record?.kind === 'timed' && { timed: true }),
+		};
 	}
 	async revert(id: number): Promise<{ blocked: Blocked[] }> {
 		this.validRecord(id);
 		return (
 			(await this.exclusive(async () => {
 				this.setStatus(m.reverting);
-				const plan = await this.store.preview(id);
-				if (!plan) {
+				const target = await this.store.get(id);
+				const plan = target ? await this.store.preview(id) : undefined;
+				if (!target || !plan) {
 					throw new Error(m.expired);
 				}
 				if (plan.blocked.length) {
 					return { blocked: plan.blocked };
 				}
 				if (!plan.write.length && !plan.remove.length) {
-					this.notice('info', m.noRevert);
+					this.notice('info', target.kind === 'timed' ? m.noSnapshotRevert : m.noRevert);
 					return { blocked: [] };
 				}
 				const { record, blocked } = await this.store.revert(id);
 				if (record?.changes && !blocked.length) {
-					this.transcript.push({ kind: 'turn', record: record.id, stop: 'reverted', target: id, changes: record.changes });
+					this.transcript.push({
+						kind: 'turn',
+						record: record.id,
+						stop: 'reverted',
+						...(target.kind !== 'timed' && { target: id }),
+						changes: record.changes,
+					});
 					this.notes.push(
 						revertNote(
 							record.changes.map((change) => change.path),

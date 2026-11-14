@@ -24,6 +24,7 @@ export interface Workspace {
 	report(kind: ReportKind): Promise<void>;
 	showOutline(): void;
 	saveAll(): Promise<boolean>;
+	fail(message: string): void;
 }
 export const WorkspaceContext = createContext<Workspace | undefined>(undefined);
 export function useWorkspace(): Workspace {

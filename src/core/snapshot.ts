@@ -1,7 +1,7 @@
-// The versions of a story folder that are kept around the assistant's turns:
-// what a snapshot holds, what changed between two of them, what going back
-// to one takes, and which of them can be thrown away. Nothing here touches
-// the disk; storage/snapshotStore.ts does.
+// The versions of a story folder that are kept around the assistant's turns
+// and timed checkpoints: what a snapshot holds, what changed between two of
+// them, what going back to one takes, and which of them can be thrown away.
+// Nothing here touches the disk; storage/snapshotStore.ts does.
 
 import { comparePaths } from './naturalSort';
 import { leadsOut } from './story';
@@ -49,14 +49,16 @@ export function diff(before: Manifest, after: Manifest): Change[] {
 }
 
 /**
- * What is kept of one turn of the assistant, or of one going back: the
- * story folder as it was right before, and, once it is over, what it changed.
+ * What is kept of one turn of the assistant, one going back, or one timed
+ * checkpoint: for a turn or going back, the story folder right before and what
+ * it changed; for a timed checkpoint, the story folder at that moment and what
+ * changed since the previous snapshot.
  */
 export interface SnapshotRecord {
 	id: number;
 	/** ISO time of the snapshot. */
 	time: string;
-	kind: 'turn' | 'revert';
+	kind: 'turn' | 'revert' | 'timed';
 	/** Of a turn: how the writer's message starts. */
 	title?: string;
 	/** Of going back: the record whose `files` were restored. */
@@ -64,6 +66,22 @@ export interface SnapshotRecord {
 	files: Manifest;
 	/** Missing while the turn is running, or when the window was closed during it. */
 	changes?: Change[];
+}
+
+/** The files of the story folder as they were once a snapshot finished. */
+export function afterManifest(record: SnapshotRecord): Manifest {
+	if (record.kind === 'timed' || !record.changes) {
+		return { ...record.files };
+	}
+	const files = { ...record.files };
+	for (const change of record.changes) {
+		if (change.after === undefined) {
+			delete files[change.path];
+		} else {
+			files[change.path] = change.after;
+		}
+	}
+	return files;
 }
 
 /** The start of a message, as the title of its turn. */

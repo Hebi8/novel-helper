@@ -68,6 +68,8 @@ export const zh = {
 		'assistant.command': '自定义命令',
 		'assistant.args': '命令参数',
 		'assistant.snapshots.keep': '快照保留份数',
+		'snapshots.intervalMinutes': '定时快照间隔（分钟，0 为关）',
+		'snapshots.keep': '定时快照保留份数',
 		'files.lore': '设定目录规则',
 		'files.chapters': '正文目录规则',
 		'files.outlines': '大纲目录规则',
@@ -123,7 +125,14 @@ export const zh = {
 		'这一轮开始后改过的文件都会恢复，之后新建的文件会移除，包括你后来手改的内容。退回前会保存现在的样子，可以撤销这次退回。',
 	assistantSaveFailed: '有文件未保存或冲突尚未解决，请处理后重试。',
 	assistantSnapshots: '快照',
-	assistantNoSnapshots: '助手每改一次文件留一份',
+	assistantNoSnapshots: '还没有快照',
+	snapshotTimed: '定时',
+	snapshotBefore: '上一份快照',
+	snapshotAfter: '这份快照',
+	snapshotRevert: '退回到这个时间点',
+	snapshotReverted: '已退回到这个时间点',
+	snapshotRevertConfirm:
+		'整本书会恢复成这份快照的样子，之后新建的文件会移除，包括后来改过的内容。退回前会保存现在的样子，可以撤销这次退回。',
 	assistantBlocked: '无法退回',
 	assistantBlockedDetail: '以下文件挡住了退回。这次没有改动任何文件。',
 	assistantBlockReasons: {
@@ -303,6 +312,7 @@ export const assistantMessages = {
 	failure: (message: string) => `助手遇到错误：${message}`,
 	expired: '这份快照已不再保留。',
 	noRevert: '文件已经是这一轮之前的样子。',
+	noSnapshotRevert: '文件已经是这个时间点的样子。',
 	invalidRecord: '快照编号无效。',
 	context: (path: string, line?: number, selected = 0) =>
 		`${path}${line ? ` · 第 ${line} 行` : ''}${selected ? ` · 已选中 ${selected} 字` : ''}`,

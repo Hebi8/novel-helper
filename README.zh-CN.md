@@ -134,7 +134,7 @@ summary: 十七岁，雾港邮局的送信员。
 
 ## 设置
 
-**⌘,** 打开分组的设置行：续写、模型与请求、上下文、目录规则、用量、写作面板、助手。数字和文字行内编辑；数组和对象在小弹层里编辑 JSON，解析失败不保存。默认值见 [`src/shared/defaults.ts`](src/shared/defaults.ts)。应用没有 `files.storyFolder` 这一层，所选文件夹就是书的根。
+**⌘,** 打开分组的设置行：续写、模型与请求、上下文、目录规则、用量、写作面板、快照、助手。数字和文字行内编辑；数组和对象在小弹层里编辑 JSON，解析失败不保存。默认值见 [`src/shared/defaults.ts`](src/shared/defaults.ts)。应用没有 `files.storyFolder` 这一层，所选文件夹就是书的根。
 
 支持 Anthropic、OpenAI、DeepSeek、Gemini 和 OpenAI 兼容接口。每个服务商单独设置 API key，只显示是否已设置。兼容接口地址和模型为 `openaiCompatible.baseUrl`、`openaiCompatible.model`，额外请求字段为 `extraRequestBody`。
 
@@ -148,12 +148,14 @@ summary: 十七岁，雾港邮局的送信员。
 
 消息带上当前文件、光标和选区。agent 通过 ACP 报出模型或思考档位选项时，发送按钮旁的下拉可以直接切换，并按 agent 记住选择。超出可直接放行的书内操作时，面板只给 **允许这一次** 和 **不允许**。预设适配器会使用书目录里的 `.claude` 配置，其中的放行规则和钩子不经过应用许可卡片；使用他人的书前先检查这个目录。
 
-助手每轮前后留快照，列出改动文件，可以看差异、整轮退回；退回前先保存现状，因此退回也能撤销。默认保留 50 份。普通手打内容没有定时快照。自定义 ACP agent 用 `assistant.agent`、`assistant.command` 和 JSON 数组 `assistant.args` 配置，改动对下一次启动助手生效。
+助手每轮前后留快照，列出改动文件，可以看差异、整轮退回；退回前先保存现状，因此退回也能撤销。助手快照默认保留 50 份。自定义 ACP agent 用 `assistant.agent`、`assistant.command` 和 JSON 数组 `assistant.args` 配置，改动对下一次启动助手生效。
+
+手打内容也存定时快照：书里有文件保存且距上一份快照（不论定时还是助手快照）达到设定间隔（`snapshots.intervalMinutes`，默认 `10` 分钟，填 `0` 关闭）时保存一份整本书的快照；关书、关窗、退出时若上一份快照后有改动也存一份（助手一轮运行期间不存定时快照）。定时快照默认保留 `100` 份（`snapshots.keep`），与助手快照分开计数，未变文件按内容哈希去重。顶栏 **快照** 将两种快照按时间合并列出，可查看差异并退回到对应时间点，退回本身同样可撤销，且与扩展 0.4.0 的快照存储保持兼容。
 
 ## 数据存在哪
 
 - 正文、设定、大纲、摘要留在所选书目录。
-- `.novel-helper/project.json` 是标记；浮标、模板、助手快照也在书内的 `.novel-helper/`。
+- `.novel-helper/project.json` 是标记；浮标、模板、快照也在书内的 `.novel-helper/`。
 - 设置、窗口状态、所有窗口共用的用量、按书分开的助手对话，在 `~/Library/Application Support/` 下 Electron 的应用数据目录（默认 `Novel Helper`）。
 - API key 沿用 macOS safe storage，由系统钥匙串保管的钥匙加密，存进应用数据目录。
 - 日志放在应用数据目录的 `logs/`，**帮助 → 打开日志** 在访达里显示这个目录。

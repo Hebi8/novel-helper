@@ -148,6 +148,7 @@ export function App() {
 				showOutline: actions['right:0'],
 				open: docs.open,
 				saveAll: docs.saveAll,
+				fail: setError,
 			}}
 		>
 			<div className={`app ${focus ? 'focus-mode' : ''}`}>

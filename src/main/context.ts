@@ -4,6 +4,7 @@ import type { SecretStore } from './secrets/store';
 import type { CompletionService } from './completion/service';
 import type { BookIndex } from './book/indexer';
 import type { WindowStore } from './window/state';
+import type { BookSnapshots } from './assistant/snapshots';
 import type { OpenResult } from '../shared/api';
 export interface MainContext {
 	reindexBooks(): Promise<void>;
@@ -12,6 +13,7 @@ export interface MainContext {
 	secrets: SecretStore;
 	completion: CompletionService;
 	windows: WindowStore;
+	snapshots: BookSnapshots;
 	bookFor(event: IpcMainInvokeEvent): BookIndex | undefined;
 	onBookClosed(cleanup: (root: string) => void | Promise<void>): void;
 	windowFor(event: Pick<IpcMainInvokeEvent, 'sender'>): BrowserWindow;
