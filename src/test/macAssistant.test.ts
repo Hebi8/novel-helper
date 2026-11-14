@@ -599,11 +599,13 @@ test('registry reopening waits for the old window final transcript while another
 	});
 	let reloaded = false;
 	try {
+		assert.equal(registry.busy(book), true);
 		const closing = registry.close(book);
 		const opening = registry.get(book, async () => {
 			reloaded = true;
 			return open();
 		});
+		assert.equal(registry.busy(book), false);
 		const other = await registry.get(otherBook, () => open(otherBook));
 		await other.send('say 另一本书不必等待');
 		assert.equal(said(other), '另一本书不必等待');

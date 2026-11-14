@@ -19,7 +19,7 @@ export class BookSnapshots {
 
 	constructor(
 		private readonly settings: () => Settings,
-		private readonly busy: (root: string) => Promise<boolean> = async () => false,
+		private readonly busy: (root: string) => boolean | Promise<boolean> = () => false,
 		private readonly onError?: (root: string, message: string) => void,
 	) {}
 

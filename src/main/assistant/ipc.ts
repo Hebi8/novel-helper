@@ -12,11 +12,11 @@ import { assistantReverted, assistantTurnEnded } from './events';
 import { AssistantRegistry } from './registry';
 
 const services = new AssistantRegistry();
-export function isAssistantBusy(root: string): Promise<boolean> {
+export function isAssistantBusy(root: string): boolean {
 	return services.busy(root);
 }
 export async function prepareBookRename(root: string): Promise<void> {
-	if (await services.busy(root)) {
+	if (services.busy(root)) {
 		throw new Error(zh.renameBusy);
 	}
 }
@@ -57,7 +57,7 @@ export function registerAssistant(ctx: MainContext): void {
 	};
 	ctx.onBookClosed((root) => {
 		const settled = (async () => {
-			const busy = await services.busy(root);
+			const busy = services.busy(root);
 			await services.close(root);
 			return busy;
 		})();
