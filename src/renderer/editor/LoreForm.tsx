@@ -1,41 +1,34 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type MutableRefObject } from 'react';
+import { useEffect, useId, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent } from 'react';
 import type { LoreFormData } from '../../core/loreForm';
 import { zh } from '../strings';
-
-export interface LoreFormHandle {
-	flush(): void;
-}
 
 interface Props {
 	data: LoreFormData;
 	types: readonly string[];
-	commit(key: string, value: string | boolean): void;
+	syncVersion: number;
+	commit(key: string, value: string | boolean, discrete?: boolean): void;
+	compositionStart(): void;
+	compositionEnd(): void;
 	undo(): void;
 	redo(): void;
 	showSource(): void;
-	handleRef: MutableRefObject<LoreFormHandle | undefined>;
 }
 
-function handleHistoryKey(event: KeyboardEvent<HTMLElement>, hasDraft: boolean, undo: () => void, redo: () => void): boolean {
+function handleHistoryKey(event: KeyboardEvent<HTMLElement>, undo: () => void, redo: () => void): boolean {
 	if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 'z' && !event.nativeEvent.isComposing) {
+		event.preventDefault();
 		event.stopPropagation();
-		if (!hasDraft) {
-			event.preventDefault();
-			if (event.shiftKey) {
-				redo();
-			} else {
-				undo();
-			}
+		if (event.shiftKey) {
+			redo();
+		} else {
+			undo();
 		}
 		return true;
 	}
 	return false;
 }
 
-function handleHistoryBeforeInput(event: FormEvent<HTMLElement>, hasDraft: boolean, undo: () => void, redo: () => void): void {
-	if (hasDraft) {
-		return;
-	}
+function handleHistoryBeforeInput(event: FormEvent<HTMLElement>, undo: () => void, redo: () => void): void {
 	const inputType = (event.nativeEvent as InputEvent).inputType;
 	if (inputType === 'historyUndo' || inputType === 'historyRedo') {
 		event.preventDefault();
@@ -50,28 +43,43 @@ function handleHistoryBeforeInput(event: FormEvent<HTMLElement>, hasDraft: boole
 function TypeField({
 	value,
 	types,
+	syncVersion,
 	commit,
+	compositionStart,
+	compositionEnd,
 	undo,
 	redo,
-	setPending,
 }: {
 	value: string;
 	types: readonly string[];
-	commit(value: string): void;
+	syncVersion: number;
+	commit(value: string, discrete?: boolean): void;
+	compositionStart(): void;
+	compositionEnd(): void;
 	undo(): void;
 	redo(): void;
-	setPending(fn: (() => void) | undefined): void;
 }) {
-	const [editing, setEditing] = useState<string>();
+	const [rawText, setRawText] = useState<string>();
 	const [open, setOpen] = useState(false);
 	const [activeIndex, setActiveIndex] = useState(-1);
 	const composing = useRef(false);
+	const finishComposition = useRef(compositionEnd);
+	finishComposition.current = compositionEnd;
 	const boxRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const id = useId();
 	useEffect(() => {
-		setEditing(undefined);
-	}, [value]);
+		setRawText(undefined);
+	}, [syncVersion]);
+	useEffect(
+		() => () => {
+			if (composing.current) {
+				composing.current = false;
+				finishComposition.current();
+			}
+		},
+		[],
+	);
 	useEffect(() => {
 		if (!open) {
 			return;
@@ -85,14 +93,13 @@ function TypeField({
 		window.addEventListener('mousedown', onMouseDown);
 		return () => window.removeEventListener('mousedown', onMouseDown);
 	}, [open]);
-	const finish = (next: string) => {
-		setPending(undefined);
-		setEditing(undefined);
+	const choose = (option: string) => {
+		setRawText(undefined);
 		setOpen(false);
 		setActiveIndex(-1);
-		commit(next);
+		commit(option, true);
 	};
-	const current = editing ?? value;
+	const current = rawText ?? value;
 	return (
 		<div className="lore-field lore-field-type">
 			<label htmlFor={id}>{zh.loreType}</label>
@@ -107,40 +114,47 @@ function TypeField({
 							setOpen(true);
 						}
 					}}
-					onCompositionStart={() => {
+					onCompositionStart={(event) => {
 						composing.current = true;
+						setRawText(event.currentTarget.value);
+						compositionStart();
 					}}
-					onCompositionEnd={() => {
+					onCompositionEnd={(event) => {
+						if (!composing.current) {
+							return;
+						}
 						composing.current = false;
+						const next = event.currentTarget.value;
+						setRawText(next);
+						commit(next, false);
+						compositionEnd();
 					}}
-					onBeforeInput={(event) => handleHistoryBeforeInput(event, editing !== undefined, undo, redo)}
+					onBeforeInput={(event) => {
+						if (!composing.current) {
+							handleHistoryBeforeInput(event, undo, redo);
+						}
+					}}
 					onChange={(event) => {
 						const next = event.target.value;
-						setEditing(next);
+						setRawText(next);
 						setActiveIndex(-1);
-						setPending(() => {
-							if (!composing.current) {
-								setPending(undefined);
-								setEditing(undefined);
-								commit(next);
-							}
-						});
+						if (!composing.current) {
+							commit(next, false);
+						}
 					}}
 					onBlur={() => {
 						if (composing.current) {
 							return;
 						}
+						setRawText(undefined);
 						setOpen(false);
 						setActiveIndex(-1);
-						if (editing !== undefined) {
-							finish(editing);
-						}
 					}}
 					onKeyDown={(event) => {
 						if (event.nativeEvent.isComposing || composing.current) {
 							return;
 						}
-						if (handleHistoryKey(event, editing !== undefined, undo, redo)) {
+						if (handleHistoryKey(event, undo, redo)) {
 							return;
 						}
 						if (event.key === 'ArrowDown' && types.length > 0) {
@@ -168,9 +182,10 @@ function TypeField({
 						if (event.key === 'Enter') {
 							event.preventDefault();
 							if (open && activeIndex >= 0 && activeIndex < types.length) {
-								finish(types[activeIndex]);
+								choose(types[activeIndex]);
 							} else {
-								finish(current);
+								setOpen(false);
+								setActiveIndex(-1);
 							}
 						}
 					}}
@@ -200,7 +215,7 @@ function TypeField({
 								role="option"
 								aria-selected={index === activeIndex || (activeIndex === -1 && option === current)}
 								onMouseDown={(event) => event.preventDefault()}
-								onClick={() => finish(option)}
+								onClick={() => choose(option)}
 							>
 								<span>{option}</span>
 								{option === value ? <span aria-hidden="true">✓</span> : null}
@@ -217,68 +232,112 @@ function TextField({
 	label,
 	value,
 	multiline = false,
+	keepRawWhileFocused = false,
+	syncVersion,
 	className,
 	commit,
+	compositionStart,
+	compositionEnd,
 	undo,
 	redo,
-	setPending,
 }: {
 	label: string;
 	value: string;
 	multiline?: boolean;
+	keepRawWhileFocused?: boolean;
+	syncVersion: number;
 	className?: string;
 	commit(value: string): void;
+	compositionStart(): void;
+	compositionEnd(): void;
 	undo(): void;
 	redo(): void;
-	setPending(fn: (() => void) | undefined): void;
 }) {
-	const [editing, setEditing] = useState<string>();
+	const [rawText, setRawText] = useState<string>();
 	const composing = useRef(false);
+	const finishComposition = useRef(compositionEnd);
+	finishComposition.current = compositionEnd;
 	useEffect(() => {
-		setEditing(undefined);
-	}, [value]);
-	const finish = (next: string) => {
-		setPending(undefined);
-		setEditing(undefined);
-		commit(next);
-	};
-	const current = editing ?? value;
+		setRawText(undefined);
+	}, [syncVersion]);
+	useEffect(
+		() => () => {
+			if (composing.current) {
+				composing.current = false;
+				finishComposition.current();
+			}
+		},
+		[],
+	);
 	const shared = {
-		value: current,
-		onCompositionStart: () => {
+		value: rawText ?? value,
+		onCompositionStart: (event: FormEvent<HTMLInputElement | HTMLTextAreaElement>) => {
 			composing.current = true;
+			setRawText(event.currentTarget.value);
+			compositionStart();
 		},
-		onCompositionEnd: () => {
+		onCompositionEnd: (event: FormEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+			if (!composing.current) {
+				return;
+			}
 			composing.current = false;
+			const next = event.currentTarget.value.replace(/(?:\r\n|\r|\n)+/g, ' ');
+			setRawText(keepRawWhileFocused ? next : undefined);
+			commit(next);
+			compositionEnd();
 		},
-		onBeforeInput: (event: FormEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-			handleHistoryBeforeInput(event, editing !== undefined, undo, redo),
-		onChange: (event: { target: { value: string } }) => {
-			const next = event.target.value;
-			setEditing(next);
-			setPending(() => {
-				if (!composing.current) {
-					setPending(undefined);
-					setEditing(undefined);
-					commit(next);
+		onBeforeInput: (event: FormEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+			if (!composing.current) {
+				handleHistoryBeforeInput(event, undo, redo);
+			}
+		},
+		onPaste: (event: ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+			const pasted = event.clipboardData.getData('text/plain');
+			if (!/[\r\n]/.test(pasted)) {
+				return;
+			}
+			event.preventDefault();
+			const target = event.currentTarget;
+			const clean = pasted.replace(/(?:\r\n|\r|\n)+/g, ' ');
+			const start = target.selectionStart ?? target.value.length;
+			const end = target.selectionEnd ?? start;
+			const next = target.value.slice(0, start) + clean + target.value.slice(end);
+			if (keepRawWhileFocused) {
+				setRawText(next);
+			}
+			commit(next);
+			const caret = start + clean.length;
+			requestAnimationFrame(() => {
+				if (document.activeElement === target) {
+					target.setSelectionRange(caret, caret);
 				}
 			});
 		},
+		onChange: (event: { target: { value: string } }) => {
+			if (composing.current) {
+				setRawText(event.target.value);
+				return;
+			}
+			const next = event.target.value.replace(/(?:\r\n|\r|\n)+/g, ' ');
+			if (keepRawWhileFocused) {
+				setRawText(next);
+			}
+			commit(next);
+		},
 		onBlur: () => {
-			if (!composing.current && editing !== undefined) {
-				finish(editing);
+			if (!composing.current) {
+				setRawText(undefined);
 			}
 		},
 		onKeyDown: (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
 			if (event.nativeEvent.isComposing || composing.current) {
 				return;
 			}
-			if (handleHistoryKey(event, editing !== undefined, undo, redo)) {
+			if (handleHistoryKey(event, undo, redo)) {
 				return;
 			}
 			if (event.key === 'Enter') {
 				event.preventDefault();
-				finish(current);
 			}
 		},
 	};
@@ -290,26 +349,12 @@ function TextField({
 	);
 }
 
-export function LoreForm({ data, types, commit, undo, redo, showSource, handleRef }: Props) {
-	const pending = useRef<(() => void) | undefined>(undefined);
-	const setPending = (fn: (() => void) | undefined) => {
-		pending.current = fn;
-	};
-	handleRef.current = {
-		flush: () => {
-			pending.current?.();
-		},
-	};
-	useEffect(() => {
-		return () => {
-			handleRef.current = undefined;
-		};
-	}, [handleRef]);
+export function LoreForm({ data, types, syncVersion, commit, compositionStart, compositionEnd, undo, redo, showSource }: Props) {
 	return (
 		<div
 			className="lore-form"
 			onKeyDown={(event) => {
-				handleHistoryKey(event, false, undo, redo);
+				handleHistoryKey(event, undo, redo);
 			}}
 		>
 			<div className="lore-form-inner">
@@ -317,22 +362,27 @@ export function LoreForm({ data, types, commit, undo, redo, showSource, handleRe
 					<TypeField
 						value={data.type}
 						types={types}
-						commit={(value) => commit('type', value)}
+						syncVersion={syncVersion}
+						commit={(value, discrete) => commit('type', value, discrete)}
+						compositionStart={compositionStart}
+						compositionEnd={compositionEnd}
 						undo={undo}
 						redo={redo}
-						setPending={setPending}
 					/>
 					<TextField
 						label={zh.aliases}
 						value={data.aliases.join('、')}
+						keepRawWhileFocused
+						syncVersion={syncVersion}
 						className="lore-field lore-field-aliases"
 						commit={(value) => commit('aliases', value)}
+						compositionStart={compositionStart}
+						compositionEnd={compositionEnd}
 						undo={undo}
 						redo={redo}
-						setPending={setPending}
 					/>
 					<label className="lore-field lore-field-check">
-						<input type="checkbox" checked={data.always} onChange={(event) => commit('always', event.target.checked)} />
+						<input type="checkbox" checked={data.always} onChange={(event) => commit('always', event.target.checked, true)} />
 						<span>{zh.always}</span>
 					</label>
 					<button type="button" className="lore-mode-toggle" onClick={showSource}>
@@ -343,18 +393,24 @@ export function LoreForm({ data, types, commit, undo, redo, showSource, handleRe
 					label={zh.summary}
 					value={data.summary}
 					multiline
+					syncVersion={syncVersion}
 					className="lore-field lore-field-summary"
 					commit={(value) => commit('summary', value)}
+					compositionStart={compositionStart}
+					compositionEnd={compositionEnd}
 					undo={undo}
 					redo={redo}
-					setPending={setPending}
 				/>
 				{data.extras.length > 0 ? (
 					<div className="lore-form-extras">
 						{data.extras.map((extra) =>
 							extra.kind === 'boolean' ? (
 								<label key={extra.key} className="lore-field lore-field-extra lore-field-check">
-									<input type="checkbox" checked={extra.value as boolean} onChange={(event) => commit(extra.key, event.target.checked)} />
+									<input
+										type="checkbox"
+										checked={extra.value as boolean}
+										onChange={(event) => commit(extra.key, event.target.checked, true)}
+									/>
 									<span>{extra.key}</span>
 								</label>
 							) : (
@@ -362,11 +418,14 @@ export function LoreForm({ data, types, commit, undo, redo, showSource, handleRe
 									key={extra.key}
 									label={extra.key}
 									value={extra.kind === 'list' ? (extra.value as string[]).join(', ') : (extra.value as string)}
+									keepRawWhileFocused={extra.kind === 'list'}
+									syncVersion={syncVersion}
 									className="lore-field lore-field-extra"
 									commit={(value) => commit(extra.key, value)}
+									compositionStart={compositionStart}
+									compositionEnd={compositionEnd}
 									undo={undo}
 									redo={redo}
-									setPending={setPending}
 								/>
 							),
 						)}

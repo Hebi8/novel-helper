@@ -61,6 +61,7 @@ export class AssistantService {
 	private transcript = new Transcript();
 	private session?: Saved['session'];
 	private client?: AgentClient;
+	private clientAgent?: string;
 	private briefPending = false;
 	private notes: string[] = [];
 	private busy = false;
@@ -153,6 +154,10 @@ export class AssistantService {
 		};
 	}
 	refreshOptions(): void {
+		const agent = this.currentAgent();
+		if (!this.busy && this.connecting && this.connecting.agent !== agent) {
+			this.connecting.controller.abort();
+		}
 		this.emitOptions();
 	}
 	private beforeTurn<T>(work: () => Promise<T>): Promise<T> {
@@ -243,7 +248,7 @@ export class AssistantService {
 		this.syncStoredOptions(this.session.agent, extractOptions(this.client.configOptions));
 		this.emitOptions();
 	}
-	private async applyStoredOptions(agent: string, client: AgentClient): Promise<void> {
+	private async restoreStoredOptions(agent: string, client: AgentClient): Promise<void> {
 		for (const category of categories) {
 			for (const option of extractOptions(client.configOptions)) {
 				if (option.category !== category) {
@@ -255,8 +260,6 @@ export class AssistantService {
 				}
 			}
 		}
-		this.syncStoredOptions(agent, extractOptions(client.configOptions));
-		this.emitOptions();
 	}
 	async probe(): Promise<boolean> {
 		await this.configuring;
@@ -278,19 +281,26 @@ export class AssistantService {
 		) {
 			return false;
 		}
-		this.probedAgents.add(agent);
 		this.setProbing(true);
-		const { promise } = this.connectShared(command);
+		const { controller, promise } = this.connectShared(command);
 		const task = promise
 			.then(
-				() => (this.getStored(agent)?.options.length ?? 0) > 0,
-				() => false,
+				() => {
+					this.probedAgents.add(agent);
+					return (this.getStored(agent)?.options.length ?? 0) > 0;
+				},
+				() => {
+					if (!controller.signal.aborted) {
+						this.probedAgents.add(agent);
+					}
+					return false;
+				},
 			)
 			.finally(() => {
 				if (this.probingTask === task) {
 					this.probingTask = undefined;
+					this.setProbing(false);
 				}
-				this.setProbing(false);
 			});
 		this.probingTask = task;
 		return task;
@@ -485,17 +495,22 @@ export class AssistantService {
 		promise: Promise<{ client: AgentClient; names: StoryNames }>;
 	} {
 		const agent = JSON.stringify(command);
-		if (this.connecting) {
-			if (this.connecting.agent === agent && !this.connecting.controller.signal.aborted) {
-				return { controller: this.connecting.controller, promise: this.connecting.promise };
+		const previous = this.connecting;
+		if (previous) {
+			if (previous.agent === agent && !previous.controller.signal.aborted) {
+				return { controller: previous.controller, promise: previous.promise };
 			}
-			this.connecting.controller.abort();
+			previous.controller.abort();
 		}
 		const controller = new AbortController();
 		const entry = {
 			agent,
 			controller,
 			promise: (async () => {
+				await previous?.promise.catch(() => undefined);
+				if (controller.signal.aborted) {
+					throw new Error(m.denied);
+				}
 				const names = await this.options.names();
 				if (controller.signal.aborted) {
 					throw new Error(m.denied);
@@ -514,14 +529,22 @@ export class AssistantService {
 	private async connect(command: AgentCommand, names: StoryNames, signal: AbortSignal): Promise<AgentClient> {
 		const agent = JSON.stringify(command);
 		if (this.session && this.session.agent !== agent) {
-			this.client?.stop();
+			const old = this.client;
 			this.client = undefined;
+			this.clientAgent = undefined;
 			this.session = undefined;
 			this.notes = [];
 			this.transcript = new Transcript();
 			this.changed();
+			await old?.stop();
+		} else if (this.client && this.clientAgent !== agent) {
+			const old = this.client;
+			this.client = undefined;
+			this.clientAgent = undefined;
+			await old.stop();
 		}
-		if (!this.client) {
+		let client = this.client;
+		if (!client) {
 			await (this.options.environment ?? prepareAgentEnvironment)();
 			if (signal.aborted) {
 				throw new Error(m.denied);
@@ -535,6 +558,7 @@ export class AssistantService {
 					closed: (failure) => {
 						if (started && this.client === started) {
 							this.client = undefined;
+							this.clientAgent = undefined;
 							this.emitOptions();
 							if (!this.busy && !this.disposed) {
 								this.explain(failure, command, 'turn');
@@ -545,20 +569,33 @@ export class AssistantService {
 				},
 				signal,
 			);
-			this.client = started;
+			client = started;
 		}
-		const client = this.client;
 		if (client.sessionId === undefined) {
+			const abort = () => {
+				void client.stop();
+			};
+			signal.addEventListener('abort', abort, { once: true });
 			try {
+				if (signal.aborted) {
+					throw new Error(m.denied);
+				}
 				const previous = this.session?.id;
 				const { resumed, briefed } = await client.open(this.options.root, workspaceBrief(names), previous);
 				if (signal.aborted) {
 					throw new Error(m.denied);
 				}
+				await this.restoreStoredOptions(agent, client);
+				if (signal.aborted) {
+					throw new Error(m.denied);
+				}
+				this.client = client;
+				this.clientAgent = agent;
 				this.briefPending = !briefed;
 				this.session = { agent, id: client.sessionId };
 				this.probedAgents.add(agent);
-				await this.applyStoredOptions(agent, client);
+				this.syncStoredOptions(agent, extractOptions(client.configOptions));
+				this.emitOptions();
 				await this.save();
 				if (previous !== undefined && !resumed) {
 					this.notice('info', m.newConversation);
@@ -566,9 +603,12 @@ export class AssistantService {
 			} catch (error) {
 				if (this.client === client) {
 					this.client = undefined;
+					this.clientAgent = undefined;
 				}
-				client.stop();
+				await client.stop();
 				throw error;
+			} finally {
+				signal.removeEventListener('abort', abort);
 			}
 		}
 		return client;
@@ -614,7 +654,8 @@ export class AssistantService {
 			this.notice('error', m.noCommand);
 			return false;
 		}
-		this.setStatus(this.client ? m.working : settings['assistant.agent'] === 'custom' ? m.starting : m.firstStart);
+		const sameAgent = this.client && this.clientAgent === JSON.stringify(command);
+		this.setStatus(sameAgent ? m.working : settings['assistant.agent'] === 'custom' ? m.starting : m.firstStart);
 		const connection = this.connectShared(command);
 		this.starting = connection.controller;
 		const signal = connection.controller.signal;
@@ -685,8 +726,9 @@ export class AssistantService {
 		}
 		if (this.starting) {
 			this.starting.abort();
-			this.client?.stop();
+			void this.client?.stop();
 			this.client = undefined;
+			this.clientAgent = undefined;
 			this.emitOptions();
 		} else if (this.busy) {
 			void this.client?.cancel();
@@ -793,8 +835,10 @@ export class AssistantService {
 		this.disposed = true;
 		this.stop();
 		this.connecting?.controller.abort();
-		this.client?.stop();
+		const old = this.client;
 		this.client = undefined;
+		this.clientAgent = undefined;
+		await old?.stop();
 		await this.probingTask;
 		await this.running;
 		await this.configuring;

@@ -1151,3 +1151,45 @@ test('probe fetches uncached options with descriptions without sending messages,
 	assert.equal(existsSync(pidFile), true);
 	assert.equal(said(reopened), 'model=opus effort=max');
 });
+
+test('switching from agent A to agent B while A is opening its session stops A and binds B to its own client and session', async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), 'novel-switch-probe-'));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+	const pidFileA = join(dir, 'a.pid');
+	const openingA = join(dir, 'a.opening');
+	const pidFileB = join(dir, 'b.pid');
+
+	const { service, settings } = await fixture(t, [
+		'--options',
+		'--close',
+		`--pid=${pidFileA}`,
+		`--opening=${openingA}`,
+		'--open-delay=250',
+		'--models=sonnet:AgentA',
+	]);
+
+	const probingA = service.probe();
+	await until(() => existsSync(openingA) && readFileSync(openingA, 'utf8').trim().length > 0, 'agent A inside session/new');
+	const pidA = Number(readFileSync(openingA, 'utf8').trim());
+	assert.equal(Number.isInteger(pidA) && pidA > 0, true);
+
+	settings.set('assistant.args', [fakeAgent, '--options', '--close', `--pid=${pidFileB}`, '--models=opus:AgentB']);
+	service.refreshOptions();
+	const probingB = service.probe();
+
+	assert.equal(await probingB, true);
+	assert.equal(await probingA, false);
+	await new Promise((resolve) => setTimeout(resolve, 300));
+
+	const pidB = Number(readFileSync(pidFileB, 'utf8').trim());
+	assert.notEqual(pidB, pidA);
+	assert.throws(() => process.kill(pidA, 0));
+	process.kill(pidB, 0);
+
+	assert.equal(service.state().probing, undefined);
+	assert.equal(service.state().options[0].value, 'opus');
+	assert.equal(service.state().options[0].values[0].name, 'AgentB');
+
+	await service.send('session');
+	assert.match(said(service), new RegExp(`^fake-${pidB}-1\\b`));
+});

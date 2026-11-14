@@ -1,4 +1,4 @@
-import { Annotation, Prec, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state';
+import { Annotation, Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, keymap, type DecorationSet } from '@codemirror/view';
 import { isolateHistory } from '@codemirror/commands';
 import { initialGhost, transition, type GhostEvent, type GhostState, type Position } from './machine';
@@ -57,7 +57,6 @@ export class GhostController {
 		private debounceMs: number,
 		private readonly nextRequestId: () => number,
 		private readonly composition: { start(): void; end(text: string): void },
-		private readonly prefix: (state: EditorState) => string = () => '',
 	) {
 		this.state = initialGhost({ text: '', offset: 0, empty: true, chapter, prose: /\.(md|txt)$/.test(path) });
 	}
@@ -115,22 +114,20 @@ export class GhostController {
 					});
 					break;
 				}
-				case 'request': {
-					const head = this.view ? this.prefix(this.view.state) : '';
+				case 'request':
 					this.wireIds.set(action.id, this.nextRequestId());
 					void this.api.completion
 						.request({
 							id: this.wireIds.get(action.id)!,
 							path: this.path,
-							text: head + action.position.text,
-							offset: head.length + action.position.offset,
+							text: action.position.text,
+							offset: action.position.offset,
 							manual: action.manual,
 						})
 						.then((result) => {
 							this.send(result.status === 'ok' ? { type: 'answer', id: action.id, text: result.text } : { type: 'failure', id: action.id });
 						});
 					break;
-				}
 			}
 		}
 		return actions.some(
@@ -158,7 +155,7 @@ export class GhostController {
 				compositionend: () => {
 					this.compositionTimer = setTimeout(() => {
 						if (!this.disposed) {
-							this.composition.end(this.prefix(this.view!.state) + this.view!.state.doc.toString());
+							this.composition.end(this.view!.state.doc.toString());
 							this.send({ type: 'compositionEnd', position: this.position() });
 						}
 					});

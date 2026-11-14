@@ -1,6 +1,6 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { cp, mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -262,7 +262,7 @@ test('stopping during agent startup restores the unsent draft without adding a u
 	);
 });
 
-test('assistant model and effort popover fetches options on first show, switches via popover, and stays lazy when cached', async () => {
+test('assistant model and effort popover fetches options on first show, lays out six efforts on one equal-width row, switches via popover, and stays lazy when cached', async () => {
 	await withBook(
 		async ({ page, data, pidFile, closeApp }) => {
 			// Hidden assistant panel does not start the agent.
@@ -297,8 +297,28 @@ test('assistant model and effort popover fetches options on first show, switches
 			await expect(popover.locator('.assistant-model-item[aria-pressed="true"]')).toContainText('Default (recommended)');
 			await expect(popover.locator('.assistant-model-item[aria-pressed="true"] .assistant-model-check')).toHaveText('✓');
 
-			// Changing effort updates immediately and keeps the popover open.
+			// Effort label sits above the row, and all six effort levels fit equal-width on a single horizontal line in the 280px right sidebar.
+			const effortLabel = popover.locator('.assistant-effort-label');
 			const effortGroup = popover.getByRole('group', { name: '强度', exact: true });
+			const labelBox = (await effortLabel.boundingBox())!;
+			const groupBox = (await effortGroup.boundingBox())!;
+			expect(labelBox.y + labelBox.height).toBeLessThanOrEqual(groupBox.y + 1);
+			const effortButtons = effortGroup.locator('button');
+			await expect(effortButtons).toHaveCount(6);
+			const boxes = await Promise.all(
+				Array.from({ length: 6 }, (_, index) =>
+					effortButtons
+						.nth(index)
+						.boundingBox()
+						.then((box) => box!),
+				),
+			);
+			for (const box of boxes) {
+				expect(Math.abs(box.y - boxes[0].y)).toBeLessThanOrEqual(1);
+				expect(Math.abs(box.width - boxes[0].width)).toBeLessThanOrEqual(1.5);
+			}
+
+			// Changing effort updates immediately and keeps the popover open.
 			await expect(effortGroup.getByRole('button', { name: 'Medium', exact: true })).toHaveAttribute('aria-pressed', 'true');
 			await effortGroup.getByRole('button', { name: 'High', exact: true }).click();
 			await expect(popover).toBeVisible();
@@ -384,8 +404,53 @@ test('assistant model and effort popover fetches options on first show, switches
 			'--options',
 			'--slow-open',
 			'--models=default:Default (recommended),fable[1m]:Fable 5.2:Balanced writing model,opus:Opus 5.5:Deep reasoning',
-			'--efforts=default:Default,low:Low,medium:Medium,high:High,xhigh:XHigh,max:Max',
+			'--efforts=default:Default,low:Low,medium:Medium,high:High,xhigh:Xhigh,max:Max',
 		],
 		{ openAssistant: false },
 	);
+});
+
+test('switching from agent A to uncached agent B while A is opening its session stops A and leaves only B running', async () => {
+	const switchDir = await mkdtemp(join(tmpdir(), 'novel-e2e-agent-switch-'));
+	const openingA = join(switchDir, 'a.opening');
+	const pidFileB = join(switchDir, 'b.pid');
+	try {
+		await withBook(
+			async ({ page }) => {
+				const trigger = page.locator('.assistant-composer .assistant-option-trigger');
+				await page.getByRole('button', { name: '助手', exact: true }).click();
+				await expect(trigger).toBeDisabled();
+
+				await expect.poll(() => existsSync(openingA) && readFileSync(openingA, 'utf8').trim().length > 0).toBe(true);
+				const pidA = Number(readFileSync(openingA, 'utf8').trim());
+
+				const nextArgs = [
+					'--experimental-strip-types',
+					resolve('src/test/fakeAgent.ts'),
+					'--options',
+					'--close',
+					`--pid=${pidFileB}`,
+					'--models=opus:AgentB Opus',
+				];
+				await page.evaluate((args) => window.novel.settings.set('assistant.args', args), nextArgs);
+
+				await expect(trigger).toBeEnabled();
+				await expect(trigger).toHaveText('AgentB Opus Medium');
+				await page.waitForTimeout(350);
+
+				const pidB = Number(readFileSync(pidFileB, 'utf8').trim());
+				expect(pidB).not.toBe(pidA);
+				expect(() => process.kill(pidA, 0)).toThrow();
+				expect(() => process.kill(pidB, 0)).not.toThrow();
+
+				await send(page, 'session');
+				await expect(page.locator('.assistant-reply').last()).toContainText(`fake-${pidB}-1`);
+				await idle(page);
+			},
+			['--options', `--opening=${openingA}`, '--open-delay=300', '--models=sonnet:AgentA Sonnet'],
+			{ openAssistant: false },
+		);
+	} finally {
+		await rm(switchDir, { recursive: true, force: true });
+	}
 });

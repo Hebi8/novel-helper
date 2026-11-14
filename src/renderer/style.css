@@ -695,35 +695,38 @@ select:focus-visible {
 }
 .assistant-effort-row {
 	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 7px 10px;
+	flex-direction: column;
+	gap: 5px;
+	padding: 7px 8px 8px;
 	border-top: 1px solid var(--line);
 }
 .assistant-effort-row:first-child {
 	border-top: 0;
 }
 .assistant-effort-label {
-	flex-shrink: 0;
+	padding: 0 2px;
 	font-size: 11px;
 	color: var(--soft);
 }
 .assistant-effort-segments {
-	display: flex;
-	flex: 1;
-	min-width: 0;
-	flex-wrap: wrap;
-	gap: 2px;
+	display: grid;
+	grid-auto-flow: column;
+	grid-auto-columns: minmax(0, 1fr);
+	gap: 1px;
+	width: 100%;
 	padding: 2px;
 	border-radius: 6px;
 	background: var(--panel);
 }
 .assistant-effort-segments button {
-	flex: 1;
-	padding: 2px 5px;
+	min-width: 0;
+	padding: 3px 1px;
 	font-size: 11px;
 	color: var(--soft);
 	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	text-align: center;
 	border-radius: 4px;
 }
 .assistant-effort-segments button[aria-pressed='true'] {

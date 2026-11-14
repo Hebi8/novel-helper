@@ -127,7 +127,9 @@ export class AgentClient {
 		// On Windows npx is a .cmd file, which only a shell can run.
 		const child = spawn(command.command, command.args, { cwd, shell: process.platform === 'win32' });
 		const client = new AgentClient(child, command, handlers);
-		const giveUp = () => client.stop();
+		const giveUp = () => {
+			void client.stop();
+		};
 		signal?.addEventListener('abort', giveUp);
 		if (signal?.aborted) {
 			giveUp();
@@ -177,9 +179,9 @@ export class AgentClient {
 					clientInfo: { name: 'novel-helper', version: '1' },
 				}),
 			)
-			.catch((error: unknown) => {
+			.catch(async (error: unknown) => {
 				// The caller gets no client to stop: a process that answered with an error and lives on is ended here.
-				client.stop();
+				await client.stop();
 				throw error;
 			})
 			.finally(() => signal?.removeEventListener('abort', giveUp));
@@ -294,9 +296,10 @@ export class AgentClient {
 	}
 
 	/** Ends the process. Closing its stdin first: an agent started through npx may not get the signal, but it does see its input end. */
-	stop(): void {
+	stop(): Promise<void> {
 		this.stopped = true;
 		this.child.stdin.end();
 		this.child.kill();
+		return this.exited.then(() => undefined);
 	}
 }

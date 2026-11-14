@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { type FieldValue, FrontmatterError, setField } from '../core/frontmatter';
 import { parseLoreEntry } from '../core/library';
-import { commitLoreField, inspectLoreForm } from '../core/loreForm';
+import { commitLoreField, diffFrontmatterPrefix, inspectLoreForm } from '../core/loreForm';
 
 const FILE = `---
 # 主角
@@ -201,6 +201,9 @@ describe('loreForm', () => {
 		const clearedSummary = commitLoreField(FILE, inspectLoreForm(FILE)!, 'summary', '')!;
 		assert.equal(clearedSummary, FILE.replace('十七岁，雾港邮局的送信员。', '""'));
 
+		const pastedNewlines = commitLoreField(FILE, inspectLoreForm(FILE)!, 'summary', '第一行\n第二行\r\n第三行')!;
+		assert.equal(pastedNewlines, FILE.replace('十七岁，雾港邮局的送信员。', '第一行 第二行 第三行'));
+
 		const withExtras = '---\ntype: 人物\nfaction: 邮局\nretired: false\ntags: [送信, 海边]\n---\n正文\n';
 		const extraData = inspectLoreForm(withExtras)!;
 		assert.equal(commitLoreField(withExtras, extraData, 'faction', '邮局'), undefined);
@@ -210,10 +213,20 @@ describe('loreForm', () => {
 			commitLoreField(withExtras, extraData, 'tags', '雾港，旧信, 铜纽扣'),
 			withExtras.replace('tags: [送信, 海边]', 'tags: [雾港, 旧信, 铜纽扣]'),
 		);
+
+		const beforeForm = inspectLoreForm(FILE)!;
+		const afterForm = inspectLoreForm(withAlways)!;
+		const diff = diffFrontmatterPrefix(beforeForm.prefix, afterForm.prefix);
+		assert.equal(FILE.slice(0, diff.from) + diff.insert + FILE.slice(diff.to), withAlways);
+		assert.equal(diff.insert, 'tru');
 	});
 
-	test('falls back to undefined for invalid, unclosed, nested, multiline, or non-lossless frontmatter', () => {
+	test('falls back to undefined for missing trailing newline after closing delimiter or non-lossless frontmatter', () => {
 		const unsafe = [
+			'---\ntype: 人物\n---',
+			'---\r\ntype: 人物\r\n---',
+			'---\ntype: 人物\n...',
+			'---\n---',
 			'---\naliases: [小满\n---\n正文',
 			'---\ntype: 人物\n未闭合的正文',
 			'---\n{type: 人物, always: false}\n---\n正文',

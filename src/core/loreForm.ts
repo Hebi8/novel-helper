@@ -74,6 +74,9 @@ export function inspectLoreForm(content: string): LoreFormData | undefined {
 		body = content.slice(prefix.length);
 	} else {
 		prefix = content.slice(0, head);
+		if (!prefix.endsWith('\n')) {
+			return undefined;
+		}
 		body = content.slice(head);
 		const yaml = BLOCK.exec(prefix)?.[2];
 		if (yaml !== undefined) {
@@ -117,7 +120,12 @@ export function inspectLoreForm(content: string): LoreFormData | undefined {
 				if (key === 'type') {
 					if (empty) {
 						type = '';
-					} else if (isScalar(pair.value) && typeof pair.value.value === 'string' && !/[\r\n]/.test(pair.value.value) && pair.value.value.trim() === pair.value.value) {
+					} else if (
+						isScalar(pair.value) &&
+						typeof pair.value.value === 'string' &&
+						!/[\r\n]/.test(pair.value.value) &&
+						pair.value.value.trim() === pair.value.value
+					) {
 						type = pair.value.value;
 					} else {
 						return undefined;
@@ -234,4 +242,20 @@ export function commitLoreField(content: string, data: LoreFormData, key: string
 	}
 	const next = String(raw).replace(/\r?\n+/g, ' ');
 	return next === extra.value ? undefined : setField(content, key, next);
+}
+
+/** Minimal single-slice change turning `beforePrefix` into `afterPrefix`. */
+export function diffFrontmatterPrefix(beforePrefix: string, afterPrefix: string): { from: number; to: number; insert: string } {
+	let from = 0;
+	const limit = Math.min(beforePrefix.length, afterPrefix.length);
+	while (from < limit && beforePrefix.charCodeAt(from) === afterPrefix.charCodeAt(from)) {
+		from++;
+	}
+	let to = beforePrefix.length;
+	let afterEnd = afterPrefix.length;
+	while (to > from && afterEnd > from && beforePrefix.charCodeAt(to - 1) === afterPrefix.charCodeAt(afterEnd - 1)) {
+		to--;
+		afterEnd--;
+	}
+	return { from, to, insert: afterPrefix.slice(from, afterEnd) };
 }

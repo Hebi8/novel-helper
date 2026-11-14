@@ -22,10 +22,10 @@
 // `default` (and --mode-fails refuses to change it), --options reports model
 // and effort configOptions alongside ignored options (customizable with
 // --models=id:Name[:Description],..., --efforts=id:Name,..., --opus-high,
-// --slow-open, --slow-set-model and --no-effort), --auth makes it ask for
-// a login. --init-fails answers the first request with an error and lives
-// on; --init-hangs does not answer it at all. --pid=FILE writes the
-// process id to FILE on start.
+// --slow-open, --open-delay=MS, --opening=FILE, --slow-set-model and --no-effort),
+// --auth makes it ask for a login. --init-fails answers the first request with
+// an error and lives on; --init-hangs does not answer it at all. --pid=FILE
+// writes the process id to FILE on start.
 // --exit-on-start writes to stderr and exits before initialization.
 
 import * as fs from 'node:fs';
@@ -37,6 +37,8 @@ async function main(): Promise<void> {
 	const acp = await import('@agentclientprotocol/sdk');
 	const flags = new Set(process.argv.slice(2));
 	const pidFile = process.argv.find((flag) => flag.startsWith('--pid='))?.slice('--pid='.length);
+	const openingFile = process.argv.find((flag) => flag.startsWith('--opening='))?.slice('--opening='.length);
+	const openDelayArg = process.argv.find((flag) => flag.startsWith('--open-delay='))?.slice('--open-delay='.length);
 	const modelsArg = process.argv.find((flag) => flag.startsWith('--models='))?.slice('--models='.length);
 	const effortsArg = process.argv.find((flag) => flag.startsWith('--efforts='))?.slice('--efforts='.length);
 	if (pidFile) {
@@ -194,11 +196,15 @@ async function main(): Promise<void> {
 			};
 		})
 		.onRequest(acp.methods.agent.session.new, async ({ params }) => {
+			if (openingFile) {
+				fs.writeFileSync(openingFile, String(process.pid));
+			}
 			if (flags.has('--auth')) {
 				throw acp.RequestError.authRequired();
 			}
-			if (flags.has('--slow-open')) {
-				await new Promise((resolve) => setTimeout(resolve, 120));
+			const delay = openDelayArg ? Number(openDelayArg) : flags.has('--slow-open') ? 120 : 0;
+			if (delay > 0) {
+				await new Promise((resolve) => setTimeout(resolve, delay));
 			}
 			open(params, true);
 			return { sessionId: `fake-${process.pid}-${++sessions}`, ...sessionMeta() };

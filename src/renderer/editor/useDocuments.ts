@@ -69,7 +69,6 @@ export function useDocuments() {
 		}
 		const old = sessionRef.current.active;
 		if (old) {
-			handles.current.get(old)?.flush();
 			void documents.current.get(old)?.save();
 		}
 		persist({ ...sessionRef.current, active: path });
@@ -84,7 +83,6 @@ export function useDocuments() {
 		setError('');
 		const current = sessionRef.current;
 		if (current.active) {
-			handles.current.get(current.active)?.flush();
 			await documents.current.get(current.active)?.save();
 		}
 		if (options.beside && current.active && current.active !== path) {
@@ -113,7 +111,6 @@ export function useDocuments() {
 		});
 	};
 	const close = async (path: string) => {
-		handles.current.get(path)?.flush();
 		const model = documents.current.get(path)!;
 		await model.save();
 		if (model.blocksClose) {
@@ -132,7 +129,6 @@ export function useDocuments() {
 	};
 	const saveAll = async () => {
 		flushSession();
-		handles.current.forEach((handle) => handle.flush());
 		await Promise.all([...documents.current.values()].map((model) => model.save()));
 		const blocked = [...documents.current.values()].find((model) => model.blocksClose);
 		if (blocked) {
@@ -178,7 +174,6 @@ export function useDocuments() {
 	const blur = () => {
 		flushSession();
 		handles.current.forEach((handle) => {
-			handle.flush();
 			handle.ghost.send({ type: 'blur' });
 		});
 		documents.current.forEach((model) => {
