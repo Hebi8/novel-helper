@@ -89,6 +89,13 @@ export function registerAssistant(ctx: MainContext): void {
 		});
 	});
 	ipcMain.handle(c.assistantState, async (event) => (await service(event)).state());
+	ipcMain.handle(c.assistantProbe, async (event) => {
+		const probed = await (await service(event)).probe();
+		if (probed) {
+			notifyAssistantSettingsChanged();
+		}
+		return probed;
+	});
 	ipcMain.handle(c.assistantSend, async (event, text: string, context?: Partial<EditorContext>) =>
 		(await service(event)).send(text, context),
 	);

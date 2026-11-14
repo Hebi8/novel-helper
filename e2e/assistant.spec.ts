@@ -7,8 +7,18 @@ import { tmpdir } from 'node:os';
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 const command = (...parts: string[]) => JSON.stringify(parts);
 async function withBook(
-	run: (fixture: { app: ElectronApplication; page: Page; book: string; root: string; original: string; pidFile: string }) => Promise<void>,
+	run: (fixture: {
+		app: ElectronApplication;
+		page: Page;
+		book: string;
+		data: string;
+		root: string;
+		original: string;
+		pidFile: string;
+		closeApp: () => Promise<void>;
+	}) => Promise<void>,
 	flags: string[] = [],
+	options: { openAssistant?: boolean } = {},
 ) {
 	const root = await mkdtemp(join(tmpdir(), 'novel-assistant-e2e-'));
 	const book = join(root, 'book');
@@ -39,6 +49,17 @@ async function withBook(
 	);
 	let app: ElectronApplication | undefined;
 	let exited: Promise<void> | undefined;
+	const closeApp = async () => {
+		if (!app) {
+			return;
+		}
+		const current = app;
+		const currentExited = exited;
+		app = undefined;
+		exited = undefined;
+		await current.close();
+		await currentExited;
+	};
 	try {
 		app = await electron.launch({ env: launchEnv, args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`] });
 		exited = new Promise((resolve) => app!.process().once('exit', () => resolve()));
@@ -53,13 +74,12 @@ async function withBook(
 			.getByRole('button', { name: /第2章 灯塔/ })
 			.click();
 		await expect(page.locator('.writing .cm-content')).toContainText('林小满');
-		await page.getByRole('button', { name: '助手', exact: true }).click();
-		await run({ app, page, book, root, original, pidFile });
-	} finally {
-		if (app) {
-			await app.close();
-			await exited;
+		if (options.openAssistant !== false) {
+			await page.getByRole('button', { name: '助手', exact: true }).click();
 		}
+		await run({ app, page, book, data, root, original, pidFile, closeApp });
+	} finally {
+		await closeApp();
 		await rm(root, { recursive: true, force: true });
 	}
 }
@@ -78,7 +98,7 @@ test('assistant changes the open chapter, shows its diff, restores and undoes, d
 		await send(page, command('write', chapter, revised) + '\nsay 已改好灯塔');
 		await expect(page.locator('.assistant-reply')).toContainText('已改好灯塔');
 		await expect(page.locator('.assistant-turn').first()).toContainText(chapter);
-		await expect(page.locator('.writing .cm-content')).toContainText('灯塔的新正文。');
+		await expect(page.locator('.assistant-writing, .writing .cm-content').first()).toContainText('灯塔的新正文。');
 		await expect.poll(() => readFile(join(book, chapter), 'utf8')).toBe(revised);
 		await idle(page);
 		await page
@@ -242,26 +262,130 @@ test('stopping during agent startup restores the unsent draft without adding a u
 	);
 });
 
-test('assistant model and thought-level dropdowns appear, switch options, and apply to subsequent messages', async () => {
+test('assistant model and effort popover fetches options on first show, switches via popover, and stays lazy when cached', async () => {
 	await withBook(
-		async ({ page }) => {
+		async ({ page, data, pidFile, closeApp }) => {
+			// Hidden assistant panel does not start the agent.
+			expect(existsSync(pidFile)).toBe(false);
+
 			const composer = page.locator('.assistant-composer');
+			const trigger = composer.locator('.assistant-option-trigger');
+			const input = page.getByRole('textbox', { name: '给助手的消息' });
+
+			await page.getByRole('button', { name: '助手', exact: true }).click();
+			// Disabled empty placeholder while fetching options in background, with no loading text and no dropdowns.
+			await expect(trigger).toBeVisible();
+			await expect(trigger).toBeDisabled();
+			await expect(trigger).toHaveText('');
 			await expect(composer.getByRole('combobox')).toHaveCount(0);
+
+			// Once session/new finishes (without sending any message), button shows model name + effort name.
+			await expect(trigger).toBeEnabled();
+			await expect(trigger).toHaveText('Default (recommended) Medium');
+			await expect(page.locator('.assistant-user')).toHaveCount(0);
+			expect(existsSync(pidFile)).toBe(true);
+
+			// Open popover: upper model list with descriptions & checkmark, lower segmented effort buttons; ignored categories hidden.
+			await trigger.click();
+			const popover = composer.getByRole('dialog', { name: '模型', exact: true });
+			await expect(popover).toBeVisible();
+			await expect(popover).not.toContainText('Ultracode');
+			await expect(popover).not.toContainText('Plan');
+			await expect(popover.locator('.assistant-model-item').filter({ hasText: 'Fable 5.2' }).locator('small')).toHaveText(
+				'Balanced writing model',
+			);
+			await expect(popover.locator('.assistant-model-item[aria-pressed="true"]')).toContainText('Default (recommended)');
+			await expect(popover.locator('.assistant-model-item[aria-pressed="true"] .assistant-model-check')).toHaveText('✓');
+
+			// Changing effort updates immediately and keeps the popover open.
+			const effortGroup = popover.getByRole('group', { name: '强度', exact: true });
+			await expect(effortGroup.getByRole('button', { name: 'Medium', exact: true })).toHaveAttribute('aria-pressed', 'true');
+			await effortGroup.getByRole('button', { name: 'High', exact: true }).click();
+			await expect(popover).toBeVisible();
+			await expect(trigger).toHaveText('Default (recommended) High');
+			await expect(effortGroup.getByRole('button', { name: 'High', exact: true })).toHaveAttribute('aria-pressed', 'true');
+
+			// Selecting a model updates, closes the popover, and returns focus to the input.
+			await popover.locator('.assistant-model-item').filter({ hasText: 'Fable 5.2' }).click();
+			await expect(popover).toHaveCount(0);
+			await expect(trigger).toHaveText('Fable 5.2 High');
+			await expect(input).toBeFocused();
+
+			// Escape closes the popover and returns focus to the input.
+			await trigger.click();
+			await expect(popover).toBeVisible();
+			await expect(popover.locator('.assistant-model-item[aria-pressed="true"]')).toContainText('Fable 5.2');
+			await page.keyboard.press('Escape');
+			await expect(popover).toHaveCount(0);
+			await expect(input).toBeFocused();
+
+			// Clicking outside closes the popover and returns focus to the input.
+			await trigger.click();
+			await expect(popover).toBeVisible();
+			await page.locator('.assistant-heading strong').click();
+			await expect(popover).toHaveCount(0);
+			await expect(input).toBeFocused();
+
 			await send(page, 'config');
-			await expect(page.locator('.assistant-reply').last()).toHaveText('model=sonnet effort=medium');
+			await expect(page.locator('.assistant-reply').last()).toHaveText('model=fable[1m] effort=high');
 			await idle(page);
-			const model = composer.getByRole('combobox', { name: '模型', exact: true });
-			const effort = composer.getByRole('combobox', { name: '思考', exact: true });
-			await expect(model).toHaveValue('sonnet');
-			await expect(effort).toHaveValue('medium');
-			await model.selectOption('opus');
-			await effort.selectOption('high');
-			await expect(model).toHaveValue('opus');
-			await expect(effort).toHaveValue('high');
-			await send(page, 'config');
-			await expect(page.locator('.assistant-reply').last()).toHaveText('model=opus effort=high');
+
+			// Disabled while a turn is running.
+			await send(page, 'say 处理中\nwait');
+			await expect(page.locator('.assistant-reply').last()).toHaveText('处理中');
+			await expect(trigger).toBeDisabled();
+			await page.getByRole('button', { name: '停止', exact: true }).click();
 			await idle(page);
+			await expect(trigger).toBeEnabled();
+
+			// Relaunch with cached options: showing the assistant panel does NOT start the agent until a message is sent.
+			await closeApp();
+			await rm(pidFile, { force: true });
+
+			const launchEnv = Object.fromEntries(
+				Object.entries(process.env).filter(
+					(entry): entry is [string, string] => entry[1] !== undefined && entry[0] !== 'ELECTRON_RUN_AS_NODE',
+				),
+			);
+			const secondApp = await electron.launch({
+				env: launchEnv,
+				args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`],
+			});
+			const secondExited = new Promise<void>((resolveExit) => secondApp.process().once('exit', () => resolveExit()));
+			try {
+				const secondPage = await secondApp.firstWindow();
+				await secondPage.waitForLoadState('domcontentloaded');
+				await secondPage.getByRole('button', { name: '助手', exact: true }).click();
+				const secondTrigger = secondPage.locator('.assistant-composer .assistant-option-trigger');
+				await expect(secondTrigger).toHaveText('Fable 5.2 High');
+				await secondPage.waitForTimeout(150);
+				expect(existsSync(pidFile)).toBe(false);
+
+				await secondTrigger.click();
+				await secondPage
+					.locator('.assistant-composer')
+					.getByRole('group', { name: '强度', exact: true })
+					.getByRole('button', { name: 'Max', exact: true })
+					.click();
+				await secondPage.keyboard.press('Escape');
+				await expect(secondTrigger).toHaveText('Fable 5.2 Max');
+				expect(existsSync(pidFile)).toBe(false);
+
+				await send(secondPage, 'config');
+				await expect(secondPage.locator('.assistant-reply').last()).toHaveText('model=fable[1m] effort=max');
+				expect(existsSync(pidFile)).toBe(true);
+				await idle(secondPage);
+			} finally {
+				await secondApp.close();
+				await secondExited;
+			}
 		},
-		['--options'],
+		[
+			'--options',
+			'--slow-open',
+			'--models=default:Default (recommended),fable[1m]:Fable 5.2:Balanced writing model,opus:Opus 5.5:Deep reasoning',
+			'--efforts=default:Default,low:Low,medium:Medium,high:High,xhigh:XHigh,max:Max',
+		],
+		{ openAssistant: false },
 	);
 });

@@ -18,12 +18,14 @@ type RevertMode = 'turn' | 'undo' | 'timed';
 type Modal =
 	| { kind: 'history' }
 	| { kind: 'confirm'; record: number; mode: RevertMode; history: boolean }
-	| { kind: 'blocked'; files: Blocked[] }
-	| { kind: 'diff'; diff: DiffView; history: boolean };
+	| { kind: 'diff'; diff: DiffView; history: boolean }
+	| { kind: 'blocked'; files: Blocked[] };
 
-export function AssistantPanel() {
+export function AssistantPanel({ visible = true }: { visible?: boolean }) {
 	const workspace = useWorkspace();
 	const [state, setState] = useState<AssistantState>({ items: [], busy: false, status: '', options: [] });
+	const [hydrated, setHydrated] = useState(false);
+	const [pickerOpen, setPickerOpen] = useState(false);
 	const [draft, setDraft] = useState('');
 	const [error, setError] = useState('');
 	const [saving, setSaving] = useState(false);
@@ -32,6 +34,8 @@ export function AssistantPanel() {
 	const [history, setHistory] = useState<SnapshotRecord[]>([]);
 	const panel = useRef<HTMLElement>(null);
 	const input = useRef<HTMLTextAreaElement>(null);
+	const trigger = useRef<HTMLButtonElement>(null);
+	const popover = useRef<HTMLDivElement>(null);
 	const log = useRef<HTMLDivElement>(null);
 	const composing = useRef(false);
 	const sendGeneration = useRef(0);
@@ -55,6 +59,10 @@ export function AssistantPanel() {
 		},
 		[showError],
 	);
+	const closePicker = useCallback(() => {
+		setPickerOpen(false);
+		setTimeout(() => input.current?.focus(), 0);
+	}, []);
 	const openHistory = async () => {
 		setHistory((await window.novel.assistant.history()).reverse());
 		setModal({ kind: 'history' });
@@ -89,6 +97,7 @@ export function AssistantPanel() {
 				if (alive) {
 					setState(pending.reduce(applyAssistantEvent, next));
 					ready = true;
+					setHydrated(true);
 				}
 			})
 			.catch((error) => {
@@ -118,6 +127,47 @@ export function AssistantPanel() {
 			window.removeEventListener(assistantEvents.diff, diff);
 		};
 	}, []);
+	useEffect(() => {
+		if (hydrated && visible && !state.options.length && !state.probing && !busy) {
+			run(window.novel.assistant.probe());
+		}
+	}, [hydrated, visible, state.options.length, state.probing, busy, run]);
+	useEffect(() => {
+		if (!hydrated || !visible) {
+			return;
+		}
+		return window.novel.settings.onChanged(() => {
+			run(window.novel.assistant.probe());
+		});
+	}, [hydrated, visible, run]);
+	useEffect(() => {
+		if (!pickerOpen) {
+			return;
+		}
+		if (busy || !state.options.length || !visible) {
+			setPickerOpen(false);
+			return;
+		}
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				event.stopPropagation();
+				closePicker();
+			}
+		};
+		const onMouseDown = (event: MouseEvent) => {
+			const target = event.target as Node | null;
+			if (target && !popover.current?.contains(target) && !trigger.current?.contains(target)) {
+				closePicker();
+			}
+		};
+		window.addEventListener('keydown', onKeyDown, true);
+		window.addEventListener('mousedown', onMouseDown, true);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown, true);
+			window.removeEventListener('mousedown', onMouseDown, true);
+		};
+	}, [pickerOpen, busy, state.options.length, visible, closePicker]);
 	useEffect(() => {
 		if (atBottom.current && log.current) {
 			log.current.scrollTop = log.current.scrollHeight;
@@ -189,6 +239,11 @@ export function AssistantPanel() {
 		[run],
 	);
 	const answer = useCallback((id: string, allow: boolean) => run(window.novel.assistant.answer(id, allow)), [run]);
+	const modelOption = state.options.find((option) => option.category === 'model');
+	const effortOption = state.options.find((option) => option.category === 'thought_level');
+	const optionLabel = [modelOption, effortOption]
+		.flatMap((option) => (option ? [option.values.find((entry) => entry.value === option.value)?.name ?? option.value] : []))
+		.join(' ');
 	return (
 		<>
 			<section className="assistant-panel" aria-label={zh.assistant} ref={panel}>
@@ -226,6 +281,58 @@ export function AssistantPanel() {
 					</div>
 				) : null}
 				<div className="assistant-composer">
+					{pickerOpen && state.options.length > 0 && !busy ? (
+						<div className="assistant-option-popover" ref={popover} role="dialog" aria-label={zh.model}>
+							{modelOption ? (
+								<div className="assistant-model-list">
+									{modelOption.values.map((entry) => {
+										const selected = entry.value === modelOption.value;
+										return (
+											<button
+												type="button"
+												key={entry.value}
+												className="assistant-model-item"
+												aria-pressed={selected}
+												onClick={() => {
+													run(window.novel.assistant.setOption(modelOption.id, entry.value));
+													closePicker();
+												}}
+											>
+												<span className="assistant-model-text">
+													<span>{entry.name}</span>
+													{entry.description ? <small>{entry.description}</small> : null}
+												</span>
+												{selected ? (
+													<span className="assistant-model-check" aria-hidden="true">
+														✓
+													</span>
+												) : null}
+											</button>
+										);
+									})}
+								</div>
+							) : null}
+							{effortOption ? (
+								<div className="assistant-effort-row">
+									<span className="assistant-effort-label">{zh.assistantEffort}</span>
+									<div className="assistant-effort-segments" role="group" aria-label={zh.assistantEffort}>
+										{effortOption.values.map((entry) => (
+											<button
+												type="button"
+												key={entry.value}
+												aria-pressed={entry.value === effortOption.value}
+												onClick={() => {
+													run(window.novel.assistant.setOption(effortOption.id, entry.value));
+												}}
+											>
+												{entry.name}
+											</button>
+										))}
+									</div>
+								</div>
+							) : null}
+						</div>
+					) : null}
 					{context ? (
 						<div className="assistant-context" title={context.path}>
 							{zh.assistantContext}：{context.path.split('/').at(-1)} · {zh.assistantLine(context.line)}
@@ -262,23 +369,21 @@ export function AssistantPanel() {
 						}}
 					/>
 					<div className="assistant-actions">
-						{state.options.map((option) => (
-							<select
-								key={option.id}
-								aria-label={option.category === 'model' ? zh.model : zh.assistantThought}
-								value={option.value}
+						{state.options.length > 0 ? (
+							<button
+								type="button"
+								ref={trigger}
+								className="assistant-option-trigger"
+								aria-haspopup="dialog"
+								aria-expanded={pickerOpen}
 								disabled={busy}
-								onChange={(event) => {
-									run(window.novel.assistant.setOption(option.id, event.target.value));
-								}}
+								onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
 							>
-								{option.values.map((entry) => (
-									<option key={entry.value} value={entry.value}>
-										{entry.name}
-									</option>
-								))}
-							</select>
-						))}
+								{optionLabel}
+							</button>
+						) : state.probing ? (
+							<button type="button" className="assistant-option-trigger placeholder" disabled />
+						) : null}
 						{busy ? (
 							<button disabled={resetting} onClick={stop}>
 								{zh.assistantStop}

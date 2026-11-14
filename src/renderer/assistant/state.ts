@@ -8,6 +8,10 @@ export function applyAssistantEvent(state: AssistantState, event: AssistantEvent
 			return { ...state, busy: event.busy, status: event.status };
 		case 'options':
 			return { ...state, options: event.options };
+		case 'probing': {
+			const { probing: _previous, ...rest } = state;
+			return event.probing ? { ...rest, probing: true } : rest;
+		}
 		case 'item': {
 			const items = state.items.slice();
 			items[event.index] = event.item;

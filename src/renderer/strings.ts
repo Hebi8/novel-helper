@@ -103,6 +103,7 @@ export const zh = {
 	assistantStop: '停止',
 	assistantClose: '关闭',
 	assistantThought: '思考',
+	assistantEffort: '强度',
 	assistantPlan: '计划',
 	assistantPermission: '许可请求',
 	assistantAllow: '允许这一次',

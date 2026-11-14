@@ -17,6 +17,7 @@ const api: AppAPI = {
 	search: { find: (query) => ipcRenderer.invoke(c.bookSearch, query) },
 	assistant: {
 		state: () => ipcRenderer.invoke(c.assistantState),
+		probe: () => ipcRenderer.invoke(c.assistantProbe),
 		send: (text, context) => ipcRenderer.invoke(c.assistantSend, text, context),
 		setOption: (id, value) => ipcRenderer.invoke(c.assistantSetOption, id, value),
 		stop: () => ipcRenderer.invoke(c.assistantStop),

@@ -1081,3 +1081,73 @@ test('applyStoredOptions leaves concurrent selections untouched and preserves re
 	await restored.send('config');
 	assert.equal(said(restored), 'model=opus effort=high');
 });
+
+test('probe fetches uncached options with descriptions without sending messages, and skips starting when cached', async (t) => {
+	const pidFile = join(tmpdir(), `novel-probe-${process.pid}-${Date.now()}.pid`);
+	t.after(() => rm(pidFile, { force: true }));
+	const flags = [
+		'--options',
+		'--slow-open',
+		`--pid=${pidFile}`,
+		'--models=fable[1m]:Fable 5.2:Balanced model,opus:Opus 5.5',
+		'--efforts=default:Default,medium:Medium,max:Max',
+	];
+	const { service, userData, book, index, open } = await fixture(t, flags);
+	let rendered = service.state();
+	const events: AssistantEvent[] = [];
+	const off = service.onChanged((event) => {
+		events.push(event);
+		rendered = applyAssistantEvent(rendered, event);
+	});
+
+	assert.equal(existsSync(pidFile), false);
+	const probing = service.probe();
+	await until(() => rendered.probing === true, 'probing flag');
+	assert.equal(service.state().probing, true);
+	assert.equal(service.state().busy, false);
+	assert.equal(await probing, true);
+	assert.equal(existsSync(pidFile), true);
+	assert.equal(rendered.probing, undefined);
+	assert.deepEqual(rendered, service.state());
+	assert.deepEqual(service.state().items, []);
+	assert.deepEqual(service.state().options, [
+		{
+			id: 'model',
+			name: 'Model',
+			category: 'model',
+			value: 'fable[1m]',
+			values: [
+				{ value: 'fable[1m]', name: 'Fable 5.2', description: 'Balanced model' },
+				{ value: 'opus', name: 'Opus 5.5' },
+			],
+		},
+		{
+			id: 'effort',
+			name: 'Effort',
+			category: 'thought_level',
+			value: 'medium',
+			values: [
+				{ value: 'default', name: 'Default' },
+				{ value: 'medium', name: 'Medium' },
+				{ value: 'max', name: 'Max' },
+			],
+		},
+	]);
+
+	assert.equal(await service.setOption('model', 'opus'), true);
+	assert.equal(await service.setOption('effort', 'max'), true);
+	off();
+	await service.dispose();
+	await rm(pidFile, { force: true });
+
+	// Reopening with cached options does not start the agent during probe().
+	const reloadedSettings = new SettingsStore(userData);
+	const reopened = await open(book, async () => bookNames(index), reloadedSettings);
+	assert.equal(reopened.state().options[0].value, 'opus');
+	assert.equal(reopened.state().options[0].values[0].description, 'Balanced model');
+	assert.equal(await reopened.probe(), false);
+	assert.equal(existsSync(pidFile), false);
+	await reopened.send('config');
+	assert.equal(existsSync(pidFile), true);
+	assert.equal(said(reopened), 'model=opus effort=max');
+});

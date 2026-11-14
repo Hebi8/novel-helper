@@ -20,8 +20,9 @@
 // Flags: --resume, --system-prompt and --close declare those capabilities,
 // --modes starts sessions in a mode called `auto` next to one called
 // `default` (and --mode-fails refuses to change it), --options reports model
-// and effort configOptions (customizable with --models=id:Name,..., --opus-high,
-// --slow-set-model and --no-effort), --auth makes it ask for
+// and effort configOptions alongside ignored options (customizable with
+// --models=id:Name[:Description],..., --efforts=id:Name,..., --opus-high,
+// --slow-open, --slow-set-model and --no-effort), --auth makes it ask for
 // a login. --init-fails answers the first request with an error and lives
 // on; --init-hangs does not answer it at all. --pid=FILE writes the
 // process id to FILE on start.
@@ -37,6 +38,7 @@ async function main(): Promise<void> {
 	const flags = new Set(process.argv.slice(2));
 	const pidFile = process.argv.find((flag) => flag.startsWith('--pid='))?.slice('--pid='.length);
 	const modelsArg = process.argv.find((flag) => flag.startsWith('--models='))?.slice('--models='.length);
+	const effortsArg = process.argv.find((flag) => flag.startsWith('--efforts='))?.slice('--efforts='.length);
 	if (pidFile) {
 		fs.writeFileSync(pidFile, String(process.pid));
 	}
@@ -46,18 +48,24 @@ async function main(): Promise<void> {
 	}
 	const modelChoices = modelsArg
 		? modelsArg.split(',').map((item) => {
-				const [value, name = value] = item.split(':');
-				return { value, name };
+				const [value, name = value, description] = item.split(':');
+				return { value, name, ...(description ? { description } : {}) };
 			})
 		: [
 				{ value: 'sonnet', name: 'Sonnet' },
 				{ value: 'opus', name: 'Opus' },
 			];
-	const allEffortChoices = [
-		{ value: 'low', name: 'Low' },
-		{ value: 'medium', name: 'Medium' },
-		{ value: 'high', name: 'High' },
-	];
+	const allEffortChoices = effortsArg
+		? effortsArg.split(',').map((item) => {
+				const [value, name = value] = item.split(':');
+				return { value, name };
+			})
+		: [
+				{ value: 'low', name: 'Low' },
+				{ value: 'medium', name: 'Medium' },
+				{ value: 'high', name: 'High' },
+			];
+	const defaultEffort = allEffortChoices.find((choice) => choice.value === 'medium')?.value ?? allEffortChoices[0].value;
 	const cancels = new Map<string, () => void>();
 	let cwd = process.cwd();
 	let system = '(none)';
@@ -65,7 +73,7 @@ async function main(): Promise<void> {
 	let calls = 0;
 	let mode = 'auto';
 	let model = modelChoices[0].value;
-	let effort = 'medium';
+	let effort = defaultEffort;
 	const closed: string[] = [];
 	const effortChoices = () =>
 		flags.has('--opus-high') && model !== 'opus' ? allEffortChoices.filter((choice) => choice.value !== 'high') : allEffortChoices;
@@ -74,6 +82,17 @@ async function main(): Promise<void> {
 			return [];
 		}
 		return [
+			{
+				id: 'mode',
+				name: 'Mode',
+				category: 'mode',
+				type: 'select',
+				currentValue: 'default',
+				options: [
+					{ value: 'default', name: 'Default' },
+					{ value: 'plan', name: 'Plan' },
+				],
+			},
 			{
 				id: 'model',
 				name: 'Model',
@@ -94,6 +113,26 @@ async function main(): Promise<void> {
 							options: effortChoices(),
 						},
 					]),
+			{
+				id: 'fast',
+				name: 'Fast',
+				type: 'boolean',
+				currentValue: false,
+			},
+			{
+				id: 'ultracode',
+				name: 'Ultracode',
+				type: 'boolean',
+				currentValue: false,
+			},
+			{
+				id: 'agent',
+				name: 'Agent',
+				category: 'agent',
+				type: 'select',
+				currentValue: 'general',
+				options: [{ value: 'general', name: 'General' }],
+			},
 		];
 	};
 	const sessionMeta = () => ({
@@ -112,7 +151,7 @@ async function main(): Promise<void> {
 		if (configId === 'model' && modelChoices.some((choice) => choice.value === value)) {
 			model = value;
 			if (!effortChoices().some((choice) => choice.value === effort)) {
-				effort = 'medium';
+				effort = defaultEffort;
 			}
 			return;
 		}
@@ -130,7 +169,7 @@ async function main(): Promise<void> {
 		system = params.systemPrompt?.content.map((block) => block.text).join('') ?? '(none)';
 		if (resetDefaults) {
 			model = modelChoices[0].value;
-			effort = 'medium';
+			effort = defaultEffort;
 		}
 	};
 
@@ -154,9 +193,12 @@ async function main(): Promise<void> {
 				},
 			};
 		})
-		.onRequest(acp.methods.agent.session.new, ({ params }) => {
+		.onRequest(acp.methods.agent.session.new, async ({ params }) => {
 			if (flags.has('--auth')) {
 				throw acp.RequestError.authRequired();
+			}
+			if (flags.has('--slow-open')) {
+				await new Promise((resolve) => setTimeout(resolve, 120));
 			}
 			open(params, true);
 			return { sessionId: `fake-${process.pid}-${++sessions}`, ...sessionMeta() };

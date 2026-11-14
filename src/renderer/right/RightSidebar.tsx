@@ -19,7 +19,7 @@ export function RightSidebar({ section, select, hidden }: { section: number; sel
 				<LorePanel />
 			</div>
 			<div className="sidebar-panel" hidden={section !== 2}>
-				<AssistantPanel />
+				<AssistantPanel visible={!hidden && section === 2} />
 			</div>
 		</aside>
 	);
