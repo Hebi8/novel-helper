@@ -737,6 +737,152 @@ describe('timed snapshots', () => {
 		);
 	});
 
+	test('rename and assistant turn snapshot wait for an in-progress timed snapshot scan so chapters remain complete', async () => {
+		const root = exampleCopy();
+		const index = new BookIndex(root);
+		await index.load();
+		try {
+			const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
+			const snapshots = new BookSnapshots(() => current);
+			const store = snapshots.store(root);
+			const t0 = Date.parse('2026-04-01T18:00:00.000Z');
+			await snapshots.open(root, t0);
+
+			const full = path.join(root, ...chapter.split('/'));
+			const initial = await index.read(chapter);
+			const updatedText = initial.text + '改名前刚存的正文。\n';
+			const plan = await renamePlan(index, chapter, '新灯塔');
+
+			const readFile = fsp.readFile;
+			let listedAndReading!: () => void;
+			let releaseScan!: () => void;
+			const reachedScan = new Promise<void>((resolve) => (listedAndReading = resolve));
+			const scanGate = new Promise<void>((resolve) => (releaseScan = resolve));
+			let armScanHold = false;
+			const holdRead = mock.method(fsp, 'readFile', async (...args: Parameters<typeof fsp.readFile>) => {
+				if (armScanHold && String(args[0]) === full) {
+					holdRead.mock.restore();
+					listedAndReading();
+					await scanGate;
+				}
+				return readFile(...args);
+			});
+
+			const saved = await snapshots.write(
+				root,
+				async () => {
+					const result = await index.save(chapter, updatedText, initial.text);
+					armScanHold = true;
+					return result;
+				},
+				(result) => result.saved,
+				t0 + 15 * 60_000,
+			);
+			assert.deepEqual(saved, { saved: true });
+			await reachedScan;
+
+			let renamedNow = false;
+			const renaming = snapshots.write(
+				root,
+				() =>
+					index.exclusive(async () => {
+						renamedNow = true;
+						return renameBook(index, plan);
+					}),
+				() => true,
+				t0 + 16 * 60_000,
+			);
+			let turnStarted = false;
+			const startingTurn = snapshots.beforeWrite(root, async () => {
+				turnStarted = true;
+				return store.begin({ kind: 'turn', title: '开轮快照' });
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 25));
+			assert.equal(renamedNow, false);
+			assert.equal(turnStarted, false);
+			assert.equal(fs.existsSync(full), true);
+
+			releaseScan();
+			const [renamed, turnRecord] = await Promise.all([renaming, startingTurn]);
+			await snapshots.drain();
+			await store.finish(turnRecord.id);
+
+			assert.equal(renamed.renames.length > 0, true);
+			assert.equal(fs.existsSync(full), false);
+			const [timedRecord] = await store.list();
+			assert.equal(timedRecord.kind, 'timed');
+			assert.equal(chapter in timedRecord.files, true);
+			assert.equal((await store.read(timedRecord.files[chapter])).toString('utf8'), updatedText);
+		} finally {
+			index.dispose();
+		}
+	});
+
+	test('failed initial baseline notifies once without failing saves and rebuilds before the next write once readable', async () => {
+		const root = exampleCopy();
+		const index = new BookIndex(root);
+		await index.load();
+		try {
+			const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
+			const notices: string[] = [];
+			const snapshots = new BookSnapshots(
+				() => current,
+				async () => false,
+				(_bookRoot, message) => notices.push(message),
+			);
+			const store = snapshots.store(root);
+			const loreFull = path.join(root, '设定', '雾港.md');
+			const readFile = fsp.readFile;
+			let unreadable = true;
+			const failRead = mock.method(fsp, 'readFile', async (...args: Parameters<typeof fsp.readFile>) => {
+				if (unreadable && String(args[0]) === loreFull) {
+					throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+				}
+				return readFile(...args);
+			});
+
+			const t0 = Date.parse('2026-04-01T19:00:00.000Z');
+			await snapshots.open(root, t0);
+			assert.equal(notices.length, 1);
+			assert.match(notices[0], /^定时快照没存上：.*permission denied/);
+
+			const initial = await index.read(chapter);
+			const v1 = initial.text + '基线失败期间的保存。\n';
+			const savedWhileBroken = await snapshots.write(
+				root,
+				() => index.save(chapter, v1, initial.text),
+				(result) => result.saved,
+				t0 + 15 * 60_000,
+			);
+			assert.deepEqual(savedWhileBroken, { saved: true });
+			await snapshots.drain();
+			assert.equal(notices.length, 1);
+			assert.equal((await store.list()).length, 0);
+
+			unreadable = false;
+			failRead.mock.restore();
+			const v2 = v1 + '恢复可读后的保存。\n';
+			const savedAfterRecovery = await snapshots.write(
+				root,
+				() => index.save(chapter, v2, v1),
+				(result) => result.saved,
+				t0 + 20 * 60_000,
+			);
+			assert.deepEqual(savedAfterRecovery, { saved: true });
+			await snapshots.drain();
+
+			const records = await store.list();
+			assert.equal(records.length, 1);
+			assert.equal(records[0].kind, 'timed');
+			assert.equal((await store.read(records[0].changes![0].before!)).toString('utf8'), v1);
+			assert.equal((await store.read(records[0].changes![0].after!)).toString('utf8'), v2);
+			assert.equal(notices.length, 1);
+		} finally {
+			index.dispose();
+		}
+	});
+
 	test('retains assistant and timed snapshots under separate limits and deduplicates shared blobs via hard links', async () => {
 		const one = story({ '正文/第1章.md': '初稿', '设定/雾港.md': '长期不变的设定' }, 2, 3);
 		const seed = await one.store.seed();

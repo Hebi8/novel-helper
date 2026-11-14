@@ -17,7 +17,7 @@ export class CompletionService {
 	private runs = new Map<string, RunRecord>();
 	onPositionChanged: (root: string) => void = () => {};
 	onReportChanged: () => void = () => {};
-	beforeWrite: (root: string) => Promise<void> = async () => {};
+	beforeWrite: <T>(root: string, work: () => Promise<T>) => Promise<T> = (_root, work) => work();
 	private running = new Map<string, AbortController>();
 	private lastShown = new Map<string, { key: string; text: string }>();
 	private active = 0;
@@ -30,7 +30,7 @@ export class CompletionService {
 		let service = this.positions.get(index.root);
 		if (!service) {
 			service = new Buoys(index, this.settings, this.usage, this.getKey);
-			service.beforeWrite = () => this.beforeWrite(index.root);
+			service.beforeWrite = (work) => this.beforeWrite(index.root, work);
 			service.onChanged = () => this.onPositionChanged(index.root);
 			service.onError = (error) => {
 				this.problem = String(error);

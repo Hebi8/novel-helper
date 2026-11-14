@@ -44,17 +44,8 @@ export class SettingsStore {
 		this.agentOptions[agent] = { options: nextOptions, selected: { ...current?.selected, [id]: value } };
 		this.write();
 	}
-	syncAssistantOptions(agent: string, options: AssistantOption[], pruneInvalid = false): void {
-		const current = this.agentOptions[agent];
-		const selected = { ...current?.selected };
-		if (pruneInvalid) {
-			for (const [id, value] of Object.entries(selected)) {
-				const option = options.find((item) => item.id === id);
-				if (!option || !option.values.some((entry) => entry.value === value)) {
-					delete selected[id];
-				}
-			}
-		}
+	syncAssistantOptions(agent: string, options: AssistantOption[]): void {
+		const selected = { ...this.agentOptions[agent]?.selected };
 		if (!options.length && !Object.keys(selected).length) {
 			delete this.agentOptions[agent];
 		} else {

@@ -56,7 +56,7 @@ if (!app.requestSingleInstanceLock()) {
 				}
 			},
 		);
-		completion.beforeWrite = (root) => snapshots.beforeWrite(root);
+		completion.beforeWrite = (root, work) => snapshots.beforeWrite(root, work);
 		const bookClosed = new Set<(root: string) => void | Promise<void>>();
 		const openings = new BookOpenings();
 		const initialResults = new Map<number, OpenResult>();

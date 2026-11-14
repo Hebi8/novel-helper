@@ -7,8 +7,8 @@ import { SnapshotStore, type SnapshotSeed } from '../../storage/snapshotStore';
 interface OpenBook {
 	generation: number;
 	openedAt?: number;
+	ready: boolean;
 	seed?: SnapshotSeed;
-	baseline?: Promise<void>;
 }
 
 export class BookSnapshots {
@@ -59,84 +59,94 @@ export class BookSnapshots {
 		}
 	}
 
-	private startBaseline(root: string, entry: OpenBook, now: number): Promise<void> {
-		const generation = ++entry.generation;
-		const task = this.enqueue(root, async () => {
-			if (entry.generation !== generation || this.settings()['snapshots.intervalMinutes'] <= 0) {
-				return;
-			}
+	private async buildBaseline(root: string, entry: OpenBook, generation: number): Promise<void> {
+		if (
+			this.openBooks.get(root) !== entry ||
+			entry.generation !== generation ||
+			entry.ready ||
+			this.settings()['snapshots.intervalMinutes'] <= 0
+		) {
+			return;
+		}
+		try {
 			const store = this.store(root);
 			const records = await store.list();
 			const seed = records.length ? undefined : await store.seed();
-			if (entry.generation !== generation || this.settings()['snapshots.intervalMinutes'] <= 0) {
+			if (this.openBooks.get(root) !== entry || entry.generation !== generation || this.settings()['snapshots.intervalMinutes'] <= 0) {
 				return;
 			}
-			entry.openedAt = now;
 			entry.seed = seed;
-		});
-		const baseline = task.then(
-			() => undefined,
-			(error) => {
-				this.fail(root, error);
-			},
-		);
-		entry.baseline = baseline;
-		void baseline.finally(() => {
-			if (entry.baseline === baseline) {
-				entry.baseline = undefined;
-			}
-		});
-		return baseline;
+			entry.ready = true;
+			this.warned.delete(root);
+		} catch (error) {
+			this.fail(root, error);
+		}
 	}
 
 	open(root: string, now = Date.now()): Promise<void> {
 		this.warned.delete(root);
-		const entry: OpenBook = { generation: 0 };
+		const enabled = this.settings()['snapshots.intervalMinutes'] > 0;
+		const entry: OpenBook = { generation: 1, openedAt: enabled ? now : undefined, ready: false };
 		this.openBooks.set(root, entry);
-		return this.startBaseline(root, entry, now);
+		return enabled ? this.enqueue(root, () => this.buildBaseline(root, entry, entry.generation)) : Promise.resolve();
 	}
 
 	async reconfigure(now = Date.now()): Promise<void> {
 		if (this.settings()['snapshots.intervalMinutes'] <= 0) {
+			this.warned.clear();
 			for (const entry of this.openBooks.values()) {
 				entry.generation++;
 				entry.openedAt = undefined;
+				entry.ready = false;
 				entry.seed = undefined;
-				entry.baseline = undefined;
 			}
 			return;
 		}
 		const tasks: Promise<void>[] = [];
 		for (const [root, entry] of this.openBooks) {
-			if (entry.openedAt === undefined && !entry.baseline) {
-				tasks.push(this.startBaseline(root, entry, now));
+			if (!entry.ready) {
+				entry.openedAt ??= now;
+				const generation = entry.generation;
+				tasks.push(this.enqueue(root, () => this.buildBaseline(root, entry, generation)));
 			}
 		}
 		await Promise.all(tasks);
 	}
 
-	async beforeWrite(root: string): Promise<void> {
-		await this.openBooks.get(root)?.baseline;
+	beforeWrite<T = void>(root: string, work: () => Promise<T> = async () => undefined as T, now = Date.now()): Promise<T> {
+		return this.enqueue(root, async () => {
+			const entry = this.openBooks.get(root);
+			if (entry && !entry.ready && this.settings()['snapshots.intervalMinutes'] > 0) {
+				entry.openedAt ??= now;
+				await this.buildBaseline(root, entry, entry.generation);
+			}
+			return work();
+		});
 	}
 
 	schedule(root: string, now = Date.now()): void {
 		void this.afterSave(root, now).catch((error) => this.fail(root, error));
 	}
 
-	async write<T>(root: string, work: () => Promise<T>, shouldSchedule: (result: T) => boolean = () => true, now?: number): Promise<T> {
-		await this.beforeWrite(root);
-		const result = await work();
-		if (shouldSchedule(result)) {
-			this.schedule(root, now);
-		}
-		return result;
+	write<T>(root: string, work: () => Promise<T>, shouldSchedule: (result: T) => boolean = () => true, now = Date.now()): Promise<T> {
+		return this.beforeWrite(
+			root,
+			async () => {
+				const result = await work();
+				if (shouldSchedule(result)) {
+					this.schedule(root, now);
+				}
+				return result;
+			},
+			now,
+		);
 	}
 
 	afterSave(root: string, now = Date.now()): Promise<SnapshotRecord | undefined> {
 		const entry = this.openBooks.get(root);
 		return this.enqueue(root, async () => {
 			const interval = this.settings()['snapshots.intervalMinutes'];
-			if (!entry || entry.openedAt === undefined || interval <= 0 || (await this.busy(root))) {
+			if (!entry || !entry.ready || entry.openedAt === undefined || interval <= 0 || (await this.busy(root))) {
 				return undefined;
 			}
 			const store = this.store(root);
@@ -163,7 +173,7 @@ export class BookSnapshots {
 		return this.enqueue(root, async () => {
 			const interval = this.settings()['snapshots.intervalMinutes'];
 			const busy = await (skip ?? this.busy(root));
-			if (!entry || entry.openedAt === undefined || interval <= 0 || busy) {
+			if (!entry || !entry.ready || interval <= 0 || busy) {
 				return undefined;
 			}
 			const store = this.store(root);

@@ -37,11 +37,11 @@ export function registerAssistant(ctx: MainContext): void {
 				userData,
 				settings: () => ctx.settings.get(),
 				store: ctx.snapshots.store(book.root),
-				beforeTurn: () => ctx.snapshots.beforeWrite(book.root),
+				beforeTurn: (work) => ctx.snapshots.beforeWrite(book.root, work),
 				beforeHistory: () => ctx.snapshots.flush(book.root),
 				assistantOptions: (agent) => ctx.settings.assistantOptions(agent),
 				selectAssistantOption: (agent, id, value, options) => ctx.settings.setAssistantSelection(agent, id, value, options),
-				syncAssistantOptions: (agent, options, pruneInvalid) => ctx.settings.syncAssistantOptions(agent, options, pruneInvalid),
+				syncAssistantOptions: (agent, options) => ctx.settings.syncAssistantOptions(agent, options),
 				names: async () => bookNames(book),
 			});
 			await assistant.load();

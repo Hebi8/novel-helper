@@ -64,7 +64,7 @@ async function fixture(t: TestContext, flags: string[] = []) {
 			settings: () => store.get(),
 			assistantOptions: (agent) => store.assistantOptions(agent),
 			selectAssistantOption: (agent, id, value, options) => store.setAssistantSelection(agent, id, value, options),
-			syncAssistantOptions: (agent, options, pruneInvalid) => store.syncAssistantOptions(agent, options, pruneInvalid),
+			syncAssistantOptions: (agent, options) => store.syncAssistantOptions(agent, options),
 			names,
 			environment: async () => {},
 		});
@@ -971,14 +971,12 @@ test('applyStoredOptions restores model before thought level when only the chose
 		['low', 'medium'],
 	);
 
-	assert.equal(await service.setOption('model', 'opus'), true);
 	const cached = service.state().options;
 	const agent = JSON.stringify({
 		command: process.execPath,
 		args: [fakeAgent, '--options', '--opus-high', '--close'],
 	});
 	// Write `effort` before `model` in insertion order so object iteration visits `effort` first.
-	settings.syncAssistantOptions(agent, [], true);
 	settings.setAssistantSelection(agent, 'effort', 'high', cached);
 	settings.setAssistantSelection(agent, 'model', 'opus', cached);
 	assert.deepEqual(Object.keys(settings.assistantOptions(agent)!.selected), ['effort', 'model']);
@@ -988,4 +986,96 @@ test('applyStoredOptions restores model before thought level when only the chose
 	assert.equal(said(service), 'model=opus effort=high');
 	assert.equal(service.state().options[0].value, 'opus');
 	assert.equal(service.state().options[1].value, 'high');
+});
+
+test('applyStoredOptions leaves concurrent selections untouched and preserves remembered values absent from the current list', async (t) => {
+	const flags = ['--options', '--opus-high', '--close', '--models=sonnet:Sonnet,haiku:Haiku,opus:Opus'];
+	const { service: windowA, settings, root, open } = await fixture(t, flags);
+	const otherBook = join(root, 'other-book');
+	const thirdBook = join(root, 'third-book');
+	await cp(resolve('examples'), otherBook, { recursive: true });
+	await cp(resolve('examples'), thirdBook, { recursive: true });
+	const windowB = await open(otherBook);
+	const agent = JSON.stringify({ command: process.execPath, args: [fakeAgent, ...flags] });
+
+	await windowB.send('config');
+	assert.equal(await windowB.setOption('model', 'haiku'), true);
+
+	const realSetConfig = AgentClient.prototype.setConfigOption;
+	let enteredRestore!: () => void;
+	let releaseRestore!: () => void;
+	const reachedRestore = new Promise<void>((resolve) => (enteredRestore = resolve));
+	const restoreGate = new Promise<void>((resolve) => (releaseRestore = resolve));
+	const holdRestore = t.mock.method(
+		AgentClient.prototype,
+		'setConfigOption',
+		async function (this: AgentClient, id: string, value: string) {
+			if (id === 'model' && value === 'haiku') {
+				holdRestore.mock.restore();
+				enteredRestore();
+				await restoreGate;
+			}
+			return realSetConfig.call(this, id, value);
+		},
+	);
+
+	// Window A begins restoring `haiku`; meanwhile Window B switches to `opus` and its exclusive `high` effort.
+	const sendingA = windowA.send('config');
+	await reachedRestore;
+	assert.equal(await windowB.setOption('model', 'opus'), true);
+	assert.equal(await windowB.setOption('effort', 'high'), true);
+	releaseRestore();
+	await sendingA;
+
+	assert.equal(said(windowA), 'model=haiku effort=medium');
+	assert.deepEqual(settings.assistantOptions(agent)?.selected, { model: 'opus', effort: 'high' });
+
+	const windowC = await open(thirdBook);
+	await windowC.send('config');
+	assert.equal(said(windowC), 'model=opus effort=high');
+
+	// When an agent session omits remembered values, UI shows the agent's current values while remembered selections stay intact.
+	settings.set('assistant.agent', 'claude');
+	const claudeAgent = JSON.stringify({ command: 'npx', args: ['-y', CLAUDE_ADAPTER], mode: 'default' });
+	let claudeModels = '--models=sonnet:Sonnet,opus:Opus';
+	const start = AgentClient.start;
+	t.mock.method(
+		AgentClient,
+		'start',
+		(
+			chosen: Parameters<typeof start>[0],
+			cwd: Parameters<typeof start>[1],
+			handlers: Parameters<typeof start>[2],
+			signal: Parameters<typeof start>[3],
+		) =>
+			start(
+				{ command: process.execPath, args: [fakeAgent, '--options', '--opus-high', '--close', claudeModels], mode: chosen.mode },
+				cwd,
+				handlers,
+				signal,
+			),
+	);
+	await windowC.newSession();
+	await windowC.send('config');
+	assert.equal(await windowC.setOption('model', 'opus'), true);
+	assert.equal(await windowC.setOption('effort', 'high'), true);
+	assert.deepEqual(settings.assistantOptions(claudeAgent)?.selected, { model: 'opus', effort: 'high' });
+
+	await windowC.dispose();
+	claudeModels = '--models=sonnet:Sonnet,haiku:Haiku';
+	const upgraded = await open(thirdBook);
+	await upgraded.newSession();
+	await upgraded.send('config');
+	assert.equal(said(upgraded), 'model=sonnet effort=medium');
+	assert.equal(upgraded.state().options[0].value, 'sonnet');
+	assert.equal(upgraded.state().options[1].value, 'medium');
+	assert.deepEqual(settings.assistantOptions(claudeAgent)?.selected, { model: 'opus', effort: 'high' });
+
+	// Once the agent reports `opus` again, the preserved selection applies automatically.
+	await upgraded.dispose();
+	claudeModels = '--models=sonnet:Sonnet,opus:Opus';
+	const restored = await open(thirdBook);
+	await restored.newSession();
+	await restored.send('config');
+	assert.equal(said(restored), 'model=opus effort=high');
 });
