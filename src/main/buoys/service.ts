@@ -60,6 +60,7 @@ export class Buoys {
 	private disposed = false;
 	onChanged: () => void = () => {};
 	onError: (error: unknown) => void = () => {};
+	beforeWrite: () => Promise<void> = async () => {};
 	constructor(
 		readonly index: BookIndex,
 		private settings: SettingsStore,
@@ -73,6 +74,7 @@ export class Buoys {
 		return done;
 	}
 	private async write(chapter: string, file: BuoyFile): Promise<void> {
+		await this.beforeWrite();
 		const full = join(this.index.root, buoyPath(bookPath(chapter)));
 		await mkdir(dirname(full), { recursive: true });
 		await atomicWrite(full, serializeBuoyFile({ ...file, chapter }));

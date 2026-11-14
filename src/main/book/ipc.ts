@@ -14,12 +14,12 @@ export function registerBook(ctx: MainContext): void {
 		return selected ? ctx.open(selected, window, chosen) : { kind: 'cancelled' };
 	});
 	ipcMain.handle(channels.bookRead, (event, path: string) => ctx.bookFor(event)!.read(bookPath(path)));
-	ipcMain.handle(channels.bookSave, async (event, path: string, text: string, base: string, force?: boolean) => {
+	ipcMain.handle(channels.bookSave, (event, path: string, text: string, base: string, force?: boolean) => {
 		const book = ctx.bookFor(event)!;
-		const result = await book.save(bookPath(path), text, base, force);
-		if (result.saved) {
-			await ctx.snapshots.afterSave(book.root);
-		}
-		return result;
+		return ctx.snapshots.write(
+			book.root,
+			() => book.save(bookPath(path), text, base, force),
+			(result) => result.saved,
+		);
 	});
 }

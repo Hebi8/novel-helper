@@ -20,8 +20,8 @@
 // Flags: --resume, --system-prompt and --close declare those capabilities,
 // --modes starts sessions in a mode called `auto` next to one called
 // `default` (and --mode-fails refuses to change it), --options reports model
-// and effort configOptions (customizable with --models=id:Name,... and
-// --no-effort), --auth makes it ask for
+// and effort configOptions (customizable with --models=id:Name,..., --opus-high,
+// --slow-set-model and --no-effort), --auth makes it ask for
 // a login. --init-fails answers the first request with an error and lives
 // on; --init-hangs does not answer it at all. --pid=FILE writes the
 // process id to FILE on start.
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
 				{ value: 'sonnet', name: 'Sonnet' },
 				{ value: 'opus', name: 'Opus' },
 			];
-	const effortChoices = [
+	const allEffortChoices = [
 		{ value: 'low', name: 'Low' },
 		{ value: 'medium', name: 'Medium' },
 		{ value: 'high', name: 'High' },
@@ -67,6 +67,8 @@ async function main(): Promise<void> {
 	let model = modelChoices[0].value;
 	let effort = 'medium';
 	const closed: string[] = [];
+	const effortChoices = () =>
+		flags.has('--opus-high') && model !== 'opus' ? allEffortChoices.filter((choice) => choice.value !== 'high') : allEffortChoices;
 	const configOptions = (): SessionConfigOption[] => {
 		if (!flags.has('--options')) {
 			return [];
@@ -89,7 +91,7 @@ async function main(): Promise<void> {
 							category: 'thought_level' as const,
 							type: 'select' as const,
 							currentValue: effort,
-							options: effortChoices,
+							options: effortChoices(),
 						},
 					]),
 		];
@@ -109,9 +111,12 @@ async function main(): Promise<void> {
 	const applyConfig = (configId: string, value: string) => {
 		if (configId === 'model' && modelChoices.some((choice) => choice.value === value)) {
 			model = value;
+			if (!effortChoices().some((choice) => choice.value === effort)) {
+				effort = 'medium';
+			}
 			return;
 		}
-		if (configId === 'effort' && !flags.has('--no-effort') && effortChoices.some((choice) => choice.value === value)) {
+		if (configId === 'effort' && !flags.has('--no-effort') && effortChoices().some((choice) => choice.value === value)) {
 			effort = value;
 			return;
 		}
@@ -163,9 +168,12 @@ async function main(): Promise<void> {
 			mode = params.modeId;
 			return {};
 		})
-		.onRequest(acp.methods.agent.session.setConfigOption, ({ params }) => {
+		.onRequest(acp.methods.agent.session.setConfigOption, async ({ params }) => {
 			if ('type' in params) {
 				throw acp.RequestError.invalidParams(undefined, 'only select options supported');
+			}
+			if (flags.has('--slow-set-model') && params.configId === 'model') {
+				await new Promise((resolve) => setTimeout(resolve, 80));
 			}
 			applyConfig(params.configId, params.value);
 			return { configOptions: configOptions() };

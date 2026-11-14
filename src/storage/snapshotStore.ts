@@ -451,7 +451,10 @@ export class SnapshotStore {
 			for (const { path: file, hash } of plan.write) {
 				const full = path.join(this.story, ...file.split('/'));
 				await fs.mkdir(path.dirname(full), { recursive: true });
-				await fs.writeFile(full, await this.read(hash));
+				const content = await this.read(hash);
+				const temporary = `${full}.${randomUUID()}.tmp`;
+				await fs.writeFile(temporary, content);
+				await fs.rename(temporary, full);
 			}
 			for (const file of plan.remove) {
 				await fs.rm(path.join(this.story, ...file.split('/')), { force: true });

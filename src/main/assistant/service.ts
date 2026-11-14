@@ -29,9 +29,11 @@ export interface AssistantOptions {
 	userData: string;
 	settings(): Settings;
 	store?: SnapshotStore;
+	beforeTurn?(): Promise<void>;
 	beforeHistory?(): Promise<void>;
 	assistantOptions?(agent: string): StoredAgentOptions | undefined;
-	setAssistantOptions?(agent: string, value: StoredAgentOptions): void;
+	selectAssistantOption?(agent: string, id: string, value: string, options?: AssistantOption[]): void;
+	syncAssistantOptions?(agent: string, options: AssistantOption[], pruneInvalid?: boolean): void;
 	names(): Promise<StoryNames>;
 	environment?(): Promise<void>;
 }
@@ -69,6 +71,7 @@ export class AssistantService {
 	private lastOptions = '[]';
 	private askCount = 0;
 	private seenFiles = new Map<string, string>();
+	private readonly liveValues = new Map<string, string>();
 	private readonly localAgentOptions = new Map<string, StoredAgentOptions>();
 	private readonly asks = new Map<string, (allow?: boolean) => void>();
 	private readonly listeners = new Set<(event: AssistantEvent) => void>();
@@ -142,15 +145,40 @@ export class AssistantService {
 		const stored = this.localAgentOptions.get(agent);
 		return stored ? structuredClone(stored) : undefined;
 	}
-	private setStored(agent: string, value: StoredAgentOptions): void {
-		if (this.options.setAssistantOptions) {
-			this.options.setAssistantOptions(agent, value);
+	private selectStored(agent: string, id: string, value: string, options?: AssistantOption[]): void {
+		if (this.options.selectAssistantOption) {
+			this.options.selectAssistantOption(agent, id, value, options);
 			return;
 		}
-		if (!value.options.length && !Object.keys(value.selected).length) {
+		const current = this.localAgentOptions.get(agent);
+		const nextOptions = options ? structuredClone(options) : (current?.options ?? []);
+		this.localAgentOptions.set(agent, { options: nextOptions, selected: { ...current?.selected, [id]: value } });
+	}
+	private syncStoredOptions(agent: string, options: AssistantOption[], pruneInvalid = false): void {
+		if (this.options.syncAssistantOptions) {
+			this.options.syncAssistantOptions(agent, options, pruneInvalid);
+			return;
+		}
+		const current = this.localAgentOptions.get(agent);
+		const selected = { ...current?.selected };
+		if (pruneInvalid) {
+			for (const [id, value] of Object.entries(selected)) {
+				const option = options.find((item) => item.id === id);
+				if (!option || !option.values.some((entry) => entry.value === value)) {
+					delete selected[id];
+				}
+			}
+		}
+		if (!options.length && !Object.keys(selected).length) {
 			this.localAgentOptions.delete(agent);
 		} else {
-			this.localAgentOptions.set(agent, structuredClone(value));
+			this.localAgentOptions.set(agent, { options: structuredClone(options), selected });
+		}
+	}
+	private recordLiveValues(options: readonly AssistantOption[]): void {
+		this.liveValues.clear();
+		for (const option of options) {
+			this.liveValues.set(option.id, option.value);
 		}
 	}
 	private currentAgent(): string | undefined {
@@ -180,17 +208,6 @@ export class AssistantService {
 			return { ...option, value, values: option.values.map((entry) => ({ ...entry })) };
 		});
 	}
-	private pruneSelected(options: AssistantOption[], selected: Record<string, string>, syncLive = false): Record<string, string> {
-		for (const [id, value] of Object.entries(selected)) {
-			const current = options.find((option) => option.id === id);
-			if (!current || !current.values.some((entry) => entry.value === value)) {
-				delete selected[id];
-			} else if (syncLive) {
-				selected[id] = current.value;
-			}
-		}
-		return selected;
-	}
 	private emitOptions(): void {
 		if (this.disposed) {
 			return;
@@ -208,25 +225,38 @@ export class AssistantService {
 		}
 		const agent = this.session.agent;
 		const options = extractOptions(this.client.configOptions);
-		const selected = this.pruneSelected(options, { ...this.getStored(agent)?.selected }, true);
-		this.setStored(agent, { options, selected });
+		let updated = false;
+		for (const option of options) {
+			const previous = this.liveValues.get(option.id);
+			if (previous !== undefined && previous !== option.value) {
+				this.selectStored(agent, option.id, option.value, options);
+				updated = true;
+			}
+		}
+		if (!updated) {
+			this.syncStoredOptions(agent, options, false);
+		}
+		if (this.liveValues.size) {
+			this.recordLiveValues(options);
+		}
 		this.emitOptions();
 	}
 	private async applyStoredOptions(agent: string, client: AgentClient): Promise<void> {
-		const stored = this.getStored(agent);
-		const selected = { ...stored?.selected };
-		for (const [id, value] of Object.entries(selected)) {
-			const current = extractOptions(client.configOptions).find((option) => option.id === id);
-			if (!current || !current.values.some((entry) => entry.value === value)) {
-				delete selected[id];
-				continue;
-			}
-			if (current.value !== value) {
-				await client.setConfigOption(id, value);
+		this.liveValues.clear();
+		for (const category of categories) {
+			for (const option of extractOptions(client.configOptions)) {
+				if (option.category !== category) {
+					continue;
+				}
+				const wanted = this.getStored(agent)?.selected[option.id];
+				if (wanted !== undefined && option.values.some((entry) => entry.value === wanted) && option.value !== wanted) {
+					await client.setConfigOption(option.id, wanted);
+				}
 			}
 		}
 		const options = extractOptions(client.configOptions);
-		this.setStored(agent, { options, selected: this.pruneSelected(options, selected, true) });
+		this.recordLiveValues(options);
+		this.syncStoredOptions(agent, options, true);
 		this.emitOptions();
 	}
 	async setOption(id: string, value: string): Promise<boolean> {
@@ -245,15 +275,14 @@ export class AssistantService {
 			if (!current || !current.values.some((entry) => entry.value === value)) {
 				return false;
 			}
-			const stored = this.getStored(agent) ?? { options: [], selected: {} };
 			if (this.client?.sessionId !== undefined && this.session?.agent === agent) {
 				await this.client.setConfigOption(id, value);
 				const options = extractOptions(this.client.configOptions);
+				this.recordLiveValues(options);
 				const actual = options.find((option) => option.id === id)?.value ?? value;
-				const selected = this.pruneSelected(options, { ...stored.selected, [id]: actual }, true);
-				this.setStored(agent, { options, selected });
+				this.selectStored(agent, id, actual, options);
 			} else {
-				this.setStored(agent, { options: stored.options, selected: { ...stored.selected, [id]: value } });
+				this.selectStored(agent, id, value);
 			}
 			this.emitOptions();
 			return true;
@@ -421,6 +450,7 @@ export class AssistantService {
 		if (this.session && this.session.agent !== agent) {
 			this.client?.stop();
 			this.client = undefined;
+			this.liveValues.clear();
 			this.session = undefined;
 			this.notes = [];
 			this.transcript = new Transcript();
@@ -440,6 +470,7 @@ export class AssistantService {
 					closed: (failure) => {
 						if (started && this.client === started) {
 							this.client = undefined;
+							this.liveValues.clear();
 							this.emitOptions();
 							if (!this.busy && !this.disposed) {
 								this.explain(failure, command, 'turn');
@@ -530,6 +561,7 @@ export class AssistantService {
 		if (this.stopped || this.disposed) {
 			return false;
 		}
+		await this.options.beforeTurn?.();
 		const record = await this.store.begin({ kind: 'turn', title: titleOf(text) });
 		const root = await realpath(this.options.root);
 		this.seenFiles = new Map(Object.entries(record.files).map(([path, hash]) => [resolve(root, path), hash]));
@@ -579,6 +611,7 @@ export class AssistantService {
 			this.starting.abort();
 			this.client?.stop();
 			this.client = undefined;
+			this.liveValues.clear();
 			this.emitOptions();
 		} else if (this.busy) {
 			void this.client?.cancel();
@@ -594,6 +627,7 @@ export class AssistantService {
 			await this.running;
 			await this.configuring;
 			await this.client?.close();
+			this.liveValues.clear();
 			this.session = undefined;
 			this.notes = [];
 			this.transcript = new Transcript();
@@ -677,6 +711,7 @@ export class AssistantService {
 		this.stop();
 		this.client?.stop();
 		this.client = undefined;
+		this.liveValues.clear();
 		await this.running;
 		await this.configuring;
 		await this.save();

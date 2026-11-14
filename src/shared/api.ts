@@ -117,6 +117,7 @@ export interface AppAPI {
 		flushed(): void;
 		close(): void;
 		onCommand(listener: (command: MenuCommand) => void): () => void;
+		onNotice(listener: (message: string) => void): () => void;
 	};
 }
 export const channels = {
@@ -168,6 +169,7 @@ export const channels = {
 	bootstrap: 'window:bootstrap',
 	session: 'window:session',
 	command: 'window:command',
+	notice: 'window:notice',
 	flushed: 'window:flushed',
 	close: 'window:close',
 } as const;

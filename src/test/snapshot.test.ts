@@ -23,6 +23,8 @@ import {
 	titleOf,
 } from '../core/snapshot';
 import { BookSnapshots } from '../main/assistant/snapshots';
+import { BookIndex } from '../main/book/indexer';
+import { renameBook, renamePlan } from '../main/scaffold/rename';
 import { defaults, type Settings } from '../shared/defaults';
 import { SnapshotStore } from '../storage/snapshotStore';
 import { filesIn } from './files';
@@ -226,6 +228,55 @@ describe('turns', () => {
 			(await one.store.list()).map((record) => record.kind),
 			['turn', 'turn', 'revert', 'revert'],
 		);
+	});
+
+	test('revert and undo-revert write manuscript files through a same-directory temporary file and rename', async () => {
+		const one = story({ '正文/第1章.md': '初稿完整内容' });
+		const turn = await one.store.begin({ kind: 'turn', title: '改写' });
+		one.write('正文/第1章.md', '改后完整内容');
+		await one.store.finish(turn.id);
+
+		const chapterDir = path.join(one.dir, '正文');
+		const writeFile = fsp.writeFile;
+		let tempWritten = '';
+		const failFirst = mock.method(fsp, 'writeFile', async (...args: Parameters<typeof fsp.writeFile>) => {
+			const target = String(args[0]);
+			if (target.startsWith(chapterDir)) {
+				failFirst.mock.restore();
+				tempWritten = target;
+				await writeFile(target, '半截');
+				throw new Error('ENOSPC');
+			}
+			return writeFile(...args);
+		});
+		await assert.rejects(one.store.revert(turn.id), /ENOSPC/);
+		assert.equal(path.dirname(tempWritten), chapterDir);
+		assert.ok(tempWritten.endsWith('.tmp'));
+		assert.equal(one.read('正文/第1章.md'), '改后完整内容');
+		fs.rmSync(tempWritten, { force: true });
+
+		const { record: undo } = await one.store.revert(turn.id);
+		assert.equal(one.read('正文/第1章.md'), '初稿完整内容');
+
+		let undoTemp = '';
+		const failUndo = mock.method(fsp, 'writeFile', async (...args: Parameters<typeof fsp.writeFile>) => {
+			const target = String(args[0]);
+			if (target.startsWith(chapterDir)) {
+				failUndo.mock.restore();
+				undoTemp = target;
+				await writeFile(target, '半截');
+				throw new Error('ENOSPC');
+			}
+			return writeFile(...args);
+		});
+		await assert.rejects(one.store.revert(undo!.id), /ENOSPC/);
+		assert.equal(path.dirname(undoTemp), chapterDir);
+		assert.ok(undoTemp.endsWith('.tmp'));
+		assert.equal(one.read('正文/第1章.md'), '初稿完整内容');
+		fs.rmSync(undoTemp, { force: true });
+
+		await one.store.revert(undo!.id);
+		assert.equal(one.read('正文/第1章.md'), '改后完整内容');
 	});
 
 	test('going back to where the folder already is changes nothing and leaves no record', async () => {
@@ -494,6 +545,196 @@ describe('timed snapshots', () => {
 		assert.equal(await snapshots.afterSave(root, nextStart + 30 * 60_000), undefined);
 		assert.equal(await snapshots.close(root, nextStart + 31 * 60_000), undefined);
 		assert.equal((await store.list()).length, 2);
+	});
+
+	test('reopening and closing again while a previous close snapshot is still running finishes drain without deadlock', async () => {
+		const root = exampleCopy();
+		const full = path.join(root, ...chapter.split('/'));
+		const original = fs.readFileSync(full, 'utf8');
+		const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
+		const snapshots = new BookSnapshots(() => current);
+		const t0 = Date.parse('2026-04-01T14:00:00.000Z');
+		await snapshots.open(root, t0);
+		fs.writeFileSync(full, original + '\n第一次关书前改动。\n');
+
+		const store = snapshots.store(root);
+		const realTimed = store.timed.bind(store);
+		let started!: () => void;
+		let release!: () => void;
+		const reached = new Promise<void>((resolve) => (started = resolve));
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const hold = mock.method(store, 'timed', async (...args: Parameters<typeof store.timed>) => {
+			hold.mock.restore();
+			started();
+			await gate;
+			return realTimed(...args);
+		});
+
+		const firstClose = snapshots.close(root, t0 + 60_000);
+		await reached;
+		const reopened = snapshots.open(root, t0 + 70_000);
+		const secondClose = snapshots.close(root, t0 + 80_000);
+		release();
+
+		const [firstRecord, , secondRecord] = await Promise.all([firstClose, reopened, secondClose, snapshots.drain()]);
+		assert.equal(firstRecord?.kind, 'timed');
+		assert.equal(secondRecord, undefined);
+	});
+
+	test('write returns save and rename results without waiting for timed snapshots, tracks them in drain, and reports snapshot errors once', async () => {
+		const root = exampleCopy();
+		const index = new BookIndex(root);
+		await index.load();
+		try {
+			const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
+			const notices: string[] = [];
+			const snapshots = new BookSnapshots(
+				() => current,
+				async () => false,
+				(_bookRoot, message) => notices.push(message),
+			);
+			const t0 = Date.parse('2026-04-01T15:00:00.000Z');
+			await snapshots.open(root, t0);
+			const store = snapshots.store(root);
+
+			// Background snapshot still running: save returns immediately while `drain()` waits for the snapshot to finish.
+			const realTimed = store.timed.bind(store);
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			let snapshotDone = false;
+			const slow = mock.method(store, 'timed', async (...args: Parameters<typeof store.timed>) => {
+				slow.mock.restore();
+				await gate;
+				const record = await realTimed(...args);
+				snapshotDone = true;
+				return record;
+			});
+
+			const initial = await index.read(chapter);
+			const saved = await snapshots.write(
+				root,
+				() => index.save(chapter, initial.text + '后台快照保存。\n', initial.text),
+				(result) => result.saved,
+				t0 + 15 * 60_000,
+			);
+			assert.deepEqual(saved, { saved: true });
+			assert.equal(snapshotDone, false);
+			release();
+			await snapshots.drain();
+			assert.equal(snapshotDone, true);
+			assert.equal((await store.list()).length, 1);
+
+			// Timed snapshot throws on both save and rename: both operations still succeed and notice is emitted once.
+			const broken = mock.method(store, 'timed', async () => {
+				throw new Error('磁盘已满');
+			});
+			const afterFirst = await index.read(chapter);
+			const savedAgain = await snapshots.write(
+				root,
+				() => index.save(chapter, afterFirst.text + '快照失败但保存成功。\n', afterFirst.text),
+				(result) => result.saved,
+				t0 + 30 * 60_000,
+			);
+			assert.deepEqual(savedAgain, { saved: true });
+			await snapshots.drain();
+
+			const plan = await renamePlan(index, chapter, '新灯塔');
+			const renamed = await snapshots.write(
+				root,
+				() => index.exclusive(() => renameBook(index, plan)),
+				() => true,
+				t0 + 45 * 60_000,
+			);
+			assert.equal(renamed.renames.length > 0, true);
+			await snapshots.drain();
+			broken.mock.restore();
+
+			assert.equal(notices.length, 1);
+			assert.match(notices[0], /^定时快照没存上：.*磁盘已满/);
+		} finally {
+			index.dispose();
+		}
+	});
+
+	test('saves while initial baseline is scanning wait for the baseline, and interval 0 skips baseline until enabled', async () => {
+		const root = exampleCopy();
+		const index = new BookIndex(root);
+		await index.load();
+		try {
+			const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
+			const snapshots = new BookSnapshots(() => current);
+			const store = snapshots.store(root);
+			const realSeed = store.seed.bind(store);
+
+			let started!: () => void;
+			let release!: () => void;
+			const reached = new Promise<void>((resolve) => (started = resolve));
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			const hold = mock.method(store, 'seed', async () => {
+				hold.mock.restore();
+				started();
+				await gate;
+				return realSeed();
+			});
+
+			const t0 = Date.parse('2026-04-01T16:00:00.000Z');
+			const opening = snapshots.open(root, t0);
+			await reached;
+
+			const before = await index.read(chapter);
+			let wrote = false;
+			const saving = snapshots.write(
+				root,
+				async () => {
+					const result = await index.save(chapter, before.text + '基线完成前发起的保存。\n', before.text);
+					wrote = true;
+					return result;
+				},
+				(result) => result.saved,
+				t0 + 1_000,
+			);
+			await new Promise((resolve) => setTimeout(resolve, 25));
+			assert.equal(wrote, false);
+
+			release();
+			await opening;
+			assert.deepEqual(await saving, { saved: true });
+			await snapshots.drain();
+
+			const closed = await snapshots.close(root, t0 + 2_000);
+			assert.equal(closed?.kind, 'timed');
+			assert.equal((await store.read(closed!.changes![0].before!)).toString('utf8'), before.text);
+			assert.equal((await store.read(closed!.changes![0].after!)).toString('utf8'), before.text + '基线完成前发起的保存。\n');
+		} finally {
+			index.dispose();
+		}
+
+		// With `snapshots.intervalMinutes = 0`, opening a fresh book does not scan a baseline until changed to > 0.
+		const zeroRoot = exampleCopy();
+		const zeroFull = path.join(zeroRoot, ...chapter.split('/'));
+		const zeroOriginal = fs.readFileSync(zeroFull, 'utf8');
+		const settings: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 0 };
+		const zeroSnapshots = new BookSnapshots(() => settings);
+		const zeroStore = zeroSnapshots.store(zeroRoot);
+		const spySeed = mock.method(zeroStore, 'seed');
+		const t1 = Date.parse('2026-04-01T17:00:00.000Z');
+		await zeroSnapshots.open(zeroRoot, t1);
+		assert.equal(spySeed.mock.callCount(), 0);
+
+		fs.writeFileSync(zeroFull, zeroOriginal + '\n间隔为0时的改动。\n');
+		settings['snapshots.intervalMinutes'] = 10;
+		await zeroSnapshots.reconfigure(t1 + 60_000);
+		assert.equal(spySeed.mock.callCount(), 1);
+		spySeed.mock.restore();
+
+		fs.writeFileSync(zeroFull, zeroOriginal + '\n间隔为0时的改动。\n开启后新增改动。\n');
+		const afterEnable = await zeroSnapshots.close(zeroRoot, t1 + 120_000);
+		assert.equal(afterEnable?.kind, 'timed');
+		assert.equal((await zeroStore.read(afterEnable!.changes![0].before!)).toString('utf8'), zeroOriginal + '\n间隔为0时的改动。\n');
+		assert.equal(
+			(await zeroStore.read(afterEnable!.changes![0].after!)).toString('utf8'),
+			zeroOriginal + '\n间隔为0时的改动。\n开启后新增改动。\n',
+		);
 	});
 
 	test('retains assistant and timed snapshots under separate limits and deduplicates shared blobs via hard links', async () => {

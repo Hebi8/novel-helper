@@ -133,6 +133,7 @@ export const zh = {
 	snapshotReverted: '已退回到这个时间点',
 	snapshotRevertConfirm:
 		'整本书会恢复成这份快照的样子，之后新建的文件会移除，包括后来改过的内容。退回前会保存现在的样子，可以撤销这次退回。',
+	snapshotFailed: (reason: string) => `定时快照没存上：${reason}`,
 	assistantBlocked: '无法退回',
 	assistantBlockedDetail: '以下文件挡住了退回。这次没有改动任何文件。',
 	assistantBlockReasons: {

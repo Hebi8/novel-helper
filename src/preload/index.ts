@@ -77,6 +77,7 @@ const api: AppAPI = {
 		flushed: () => ipcRenderer.send(c.flushed),
 		close: () => ipcRenderer.send(c.close),
 		onCommand: (listener) => listen(c.command, listener),
+		onNotice: (listener) => listen(c.notice, listener),
 	},
 };
 contextBridge.exposeInMainWorld('novel', api);

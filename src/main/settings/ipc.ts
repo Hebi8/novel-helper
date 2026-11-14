@@ -9,6 +9,9 @@ export function registerSettings(ctx: MainContext): void {
 		if (key.startsWith('files.')) {
 			await ctx.reindexBooks();
 		}
+		if (key === 'snapshots.intervalMinutes') {
+			void ctx.snapshots.reconfigure();
+		}
 		if (key.startsWith('assistant.')) {
 			notifyAssistantSettingsChanged();
 		}

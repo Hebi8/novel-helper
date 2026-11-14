@@ -44,9 +44,20 @@ if (!app.requestSingleInstanceLock()) {
 		await usage.load();
 		const completion = new CompletionService(settings, usage, (provider) => secrets.get(provider));
 		const windows = new WindowStore(directory);
-		const snapshots = new BookSnapshots(() => settings.get(), isAssistantBusy);
-		const bookClosed = new Set<(root: string) => void | Promise<void>>();
 		const books = new Map<number, BookIndex>();
+		const snapshots = new BookSnapshots(
+			() => settings.get(),
+			isAssistantBusy,
+			(root, message) => {
+				for (const [id, book] of books) {
+					if (book.root === root) {
+						webContents.fromId(id)?.send(channels.notice, message);
+					}
+				}
+			},
+		);
+		completion.beforeWrite = (root) => snapshots.beforeWrite(root);
+		const bookClosed = new Set<(root: string) => void | Promise<void>>();
 		const openings = new BookOpenings();
 		const initialResults = new Map<number, OpenResult>();
 		let settingsWindow: BrowserWindow | undefined;

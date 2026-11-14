@@ -37,9 +37,11 @@ export function registerAssistant(ctx: MainContext): void {
 				userData,
 				settings: () => ctx.settings.get(),
 				store: ctx.snapshots.store(book.root),
+				beforeTurn: () => ctx.snapshots.beforeWrite(book.root),
 				beforeHistory: () => ctx.snapshots.flush(book.root),
 				assistantOptions: (agent) => ctx.settings.assistantOptions(agent),
-				setAssistantOptions: (agent, value) => ctx.settings.setAssistantOptions(agent, value),
+				selectAssistantOption: (agent, id, value, options) => ctx.settings.setAssistantSelection(agent, id, value, options),
+				syncAssistantOptions: (agent, options, pruneInvalid) => ctx.settings.syncAssistantOptions(agent, options, pruneInvalid),
 				names: async () => bookNames(book),
 			});
 			await assistant.load();
@@ -54,17 +56,20 @@ export function registerAssistant(ctx: MainContext): void {
 		});
 	};
 	ctx.onBookClosed((root) => {
-		const task = (async () => {
+		const settled = (async () => {
 			const busy = await services.busy(root);
 			await services.close(root);
-			if (busy) {
-				await ctx.snapshots.discard(root);
-			} else {
-				await ctx.snapshots.close(root);
-			}
-		})().finally(() => {
-			closingBooks.delete(task);
-		});
+			return busy;
+		})();
+		const task = ctx.snapshots
+			.close(root, undefined, settled)
+			.then(
+				() => undefined,
+				() => undefined,
+			)
+			.finally(() => {
+				closingBooks.delete(task);
+			});
 		closingBooks.add(task);
 		return task;
 	});
@@ -74,7 +79,10 @@ export function registerAssistant(ctx: MainContext): void {
 			return;
 		}
 		event.preventDefault();
-		void Promise.all([...closingBooks, services.closeAll(), ctx.snapshots.drain()]).finally(() => {
+		void (async () => {
+			await Promise.all([...closingBooks, services.closeAll()]);
+			await ctx.snapshots.drain();
+		})().finally(() => {
 			drained = true;
 			// With nothing left to close this settles while the first quit is still unwinding, and a quit requested then is dropped.
 			setImmediate(() => app.quit());

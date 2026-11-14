@@ -63,7 +63,8 @@ async function fixture(t: TestContext, flags: string[] = []) {
 			userData,
 			settings: () => store.get(),
 			assistantOptions: (agent) => store.assistantOptions(agent),
-			setAssistantOptions: (agent, value) => store.setAssistantOptions(agent, value),
+			selectAssistantOption: (agent, id, value, options) => store.setAssistantSelection(agent, id, value, options),
+			syncAssistantOptions: (agent, options, pruneInvalid) => store.syncAssistantOptions(agent, options, pruneInvalid),
 			names,
 			environment: async () => {},
 		});
@@ -936,4 +937,55 @@ test('remembered selections apply before new or resumed messages, fall back to a
 	afterUpgrade.refreshOptions();
 	assert.equal(afterUpgrade.state().options[0].value, 'opus');
 	assert.equal(afterUpgrade.state().options[1].value, 'low');
+});
+
+test('changing an option in one window while ACP replies does not overwrite another window selection', async (t) => {
+	const { service: windowA, root, open } = await fixture(t, ['--options', '--slow-set-model']);
+	const otherBook = join(root, 'other-book');
+	const thirdBook = join(root, 'third-book');
+	await cp(resolve('examples'), otherBook, { recursive: true });
+	await cp(resolve('examples'), thirdBook, { recursive: true });
+	const windowB = await open(otherBook);
+
+	await windowA.send('config');
+	await windowB.send('config');
+
+	const changingModel = windowA.setOption('model', 'opus');
+	await new Promise((resolve) => setTimeout(resolve, 15));
+	assert.equal(await windowB.setOption('effort', 'high'), true);
+	assert.equal(await changingModel, true);
+
+	const windowC = await open(thirdBook);
+	assert.equal(windowC.state().options[0].value, 'opus');
+	assert.equal(windowC.state().options[1].value, 'high');
+	await windowC.send('config');
+	assert.equal(said(windowC), 'model=opus effort=high');
+});
+
+test('applyStoredOptions restores model before thought level when only the chosen model offers that level', async (t) => {
+	const { service, settings } = await fixture(t, ['--options', '--opus-high', '--close']);
+	await service.send('config');
+	assert.equal(said(service), 'model=sonnet effort=medium');
+	assert.deepEqual(
+		service.state().options[1].values.map((entry) => entry.value),
+		['low', 'medium'],
+	);
+
+	assert.equal(await service.setOption('model', 'opus'), true);
+	const cached = service.state().options;
+	const agent = JSON.stringify({
+		command: process.execPath,
+		args: [fakeAgent, '--options', '--opus-high', '--close'],
+	});
+	// Write `effort` before `model` in insertion order so object iteration visits `effort` first.
+	settings.syncAssistantOptions(agent, [], true);
+	settings.setAssistantSelection(agent, 'effort', 'high', cached);
+	settings.setAssistantSelection(agent, 'model', 'opus', cached);
+	assert.deepEqual(Object.keys(settings.assistantOptions(agent)!.selected), ['effort', 'model']);
+
+	await service.newSession();
+	await service.send('config');
+	assert.equal(said(service), 'model=opus effort=high');
+	assert.equal(service.state().options[0].value, 'opus');
+	assert.equal(service.state().options[1].value, 'high');
 });

@@ -112,6 +112,7 @@ export function App() {
 			window.novel.settings.onChanged((settings) => setInitial((value) => (value ? { ...value, settings } : value))),
 			window.novel.usage.onChanged((usage) => setInitial((value) => (value ? { ...value, usage } : value))),
 			window.novel.window.onCommand((command) => actionRef.current[command]()),
+			window.novel.window.onNotice(setError),
 		];
 		window.addEventListener('blur', docs.blur);
 		return () => {

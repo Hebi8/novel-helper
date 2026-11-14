@@ -21,9 +21,7 @@ export function registerScaffold(ctx: MainContext): void {
 	ipcMain.handle(channels.structureCreate, async (event, input: StructureInput) => {
 		const book = ctx.bookFor(event)!;
 		if (input.action !== 'rename') {
-			const created = { path: await createStructure(book, input) };
-			await ctx.snapshots.afterSave(book.root);
-			return created;
+			return ctx.snapshots.write(book.root, async () => ({ path: await createStructure(book, input) }));
 		}
 		const plan = await renamePlan(book, input.path!, input.name);
 		if (!plan.length) {
@@ -35,8 +33,6 @@ export function registerScaffold(ctx: MainContext): void {
 		await buoys.dispose();
 		ctx.completion.closeBook(book.root);
 		await ctx.completion.drain(String(event.sender.id));
-		const renamed = await book.exclusive(() => renameBook(book, plan));
-		await ctx.snapshots.afterSave(book.root);
-		return renamed;
+		return ctx.snapshots.write(book.root, () => book.exclusive(() => renameBook(book, plan)));
 	});
 }

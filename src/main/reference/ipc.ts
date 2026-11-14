@@ -7,22 +7,17 @@ import { createLore, openCompanion, quickItems, referenceData, setLoreField } fr
 import { onAssistantReverted, onAssistantTurnEnded } from '../assistant/events';
 export function registerReference(ctx: MainContext): void {
 	ipcMain.handle(channels.referenceGet, (event) => referenceData(ctx.bookFor(event)!));
-	ipcMain.handle(channels.loreSet, async (event, path: string, field: 'always' | 'aliases' | 'type', value: FieldValue) => {
+	ipcMain.handle(channels.loreSet, (event, path: string, field: 'always' | 'aliases' | 'type', value: FieldValue) => {
 		const book = ctx.bookFor(event)!;
-		await setLoreField(book, bookPath(path), field, value);
-		await ctx.snapshots.afterSave(book.root);
+		return ctx.snapshots.write(book.root, () => setLoreField(book, bookPath(path), field, value));
 	});
-	ipcMain.handle(channels.loreCreate, async (event, name: string, type: string) => {
+	ipcMain.handle(channels.loreCreate, (event, name: string, type: string) => {
 		const book = ctx.bookFor(event)!;
-		const created = await createLore(book, name, type);
-		await ctx.snapshots.afterSave(book.root);
-		return created;
+		return ctx.snapshots.write(book.root, () => createLore(book, name, type));
 	});
-	ipcMain.handle(channels.companionOpen, async (event, path: string, kind: 'outline' | 'summary') => {
+	ipcMain.handle(channels.companionOpen, (event, path: string, kind: 'outline' | 'summary') => {
 		const book = ctx.bookFor(event)!;
-		const opened = await openCompanion(book, bookPath(path), kind);
-		await ctx.snapshots.afterSave(book.root);
-		return opened;
+		return ctx.snapshots.write(book.root, () => openCompanion(book, bookPath(path), kind));
 	});
 	ipcMain.handle(channels.quickOpen, (event) => quickItems(ctx.bookFor(event)!));
 	ipcMain.handle(channels.buoyGet, (event, chapter: string, text?: string) =>

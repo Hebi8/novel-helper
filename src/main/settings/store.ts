@@ -38,11 +38,27 @@ export class SettingsStore {
 		const stored = this.agentOptions[agent];
 		return stored ? structuredClone(stored) : undefined;
 	}
-	setAssistantOptions(agent: string, value: StoredAgentOptions): void {
-		if (!value.options.length && !Object.keys(value.selected).length) {
+	setAssistantSelection(agent: string, id: string, value: string, options?: AssistantOption[]): void {
+		const current = this.agentOptions[agent];
+		const nextOptions = options ? structuredClone(options) : (current?.options ?? []);
+		this.agentOptions[agent] = { options: nextOptions, selected: { ...current?.selected, [id]: value } };
+		this.write();
+	}
+	syncAssistantOptions(agent: string, options: AssistantOption[], pruneInvalid = false): void {
+		const current = this.agentOptions[agent];
+		const selected = { ...current?.selected };
+		if (pruneInvalid) {
+			for (const [id, value] of Object.entries(selected)) {
+				const option = options.find((item) => item.id === id);
+				if (!option || !option.values.some((entry) => entry.value === value)) {
+					delete selected[id];
+				}
+			}
+		}
+		if (!options.length && !Object.keys(selected).length) {
 			delete this.agentOptions[agent];
 		} else {
-			this.agentOptions[agent] = structuredClone(value);
+			this.agentOptions[agent] = { options: structuredClone(options), selected };
 		}
 		this.write();
 	}

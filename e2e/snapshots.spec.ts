@@ -162,3 +162,28 @@ test('closing a book window saves a timed snapshot when changes exist since the 
 		expect(records[0]?.kind).toBe('timed');
 	});
 });
+
+test('timed snapshot failure surfaces a top notice once without failing save or rename', async () => {
+	await withApp(async ({ page, book, original }) => {
+		await page.evaluate(() => window.novel.settings.set('snapshots.intervalMinutes', 0.01));
+		await mkdir(join(book, '.novel-helper', 'snapshots', 'timed.json'), { recursive: true });
+		await page.waitForTimeout(700);
+
+		const saveResult = await page.evaluate(({ file, text, base }) => window.novel.book.save(file, text, base), {
+			file: chapter,
+			text: original + '快照坏了也能保存。',
+			base: original,
+		});
+		expect(saveResult).toEqual({ saved: true });
+		await expect(page.locator('.notice[role="alert"]').filter({ hasText: '定时快照没存上：' })).toBeVisible();
+
+		await page.locator('.notice[role="alert"] button').click();
+		const renameResult = await page.evaluate(
+			(file) => window.novel.structure.create({ action: 'rename', path: file, name: '新灯塔' }),
+			chapter,
+		);
+		expect(Boolean('renames' in renameResult && renameResult.renames?.length)).toBe(true);
+		await page.waitForTimeout(150);
+		await expect(page.locator('.notice[role="alert"]').filter({ hasText: '定时快照没存上：' })).toHaveCount(0);
+	});
+});
