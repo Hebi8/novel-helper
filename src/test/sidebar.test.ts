@@ -5,7 +5,7 @@ import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { nameProblem, suggestChapterName, suggestLevelName } from '../core/book';
 import { type BookNode, globFolders, Library, parseLoreEntry } from '../core/library';
-import { builtinTemplate, fillTemplate, folderForNew, groupLore, groupOf, parseAliases, templateNames } from '../core/loreGroups';
+import { builtinTemplate, fillTemplate, folderForNew, groupLore, groupOf, parseAliases, planNewLore, templateNames } from '../core/loreGroups';
 import type { Translate } from '../core/report';
 import { leadsOut } from '../core/story';
 import { firstNames, markerOf, scaffold, storyNames } from '../core/scaffold';
@@ -289,6 +289,24 @@ describe('lore groups', () => {
 		assert.equal(folderForNew('势力', entries, ['lore', '人物', '设定']), '人物');
 		assert.equal(folderForNew('势力', [], folders), '设定');
 		assert.equal(folderForNew('势力', [], ['']), '');
+
+		const globs = ['{设定,人物,资料}/**/*.{md,txt}'];
+		assert.deepEqual(planNewLore('', '人物', entries, globs), {
+			folder: '人物',
+			path: '人物/.md',
+			preview: '人物/',
+			valid: false,
+		});
+		assert.deepEqual(planNewLore('沈三娘', '势力', entries, globs), {
+			folder: '设定',
+			path: '设定/沈三娘.md',
+			preview: '设定/沈三娘.md',
+			valid: true,
+		});
+		assert.equal(planNewLore('林小满', '人物', entries, globs).valid, false, 'duplicate name in target folder');
+		assert.equal(planNewLore('a/b', '人物', entries, globs).valid, false, 'path separator');
+		assert.equal(planNewLore('..', '人物', entries, globs).valid, false, 'dot traversal');
+		assert.equal(planNewLore('沈三娘', '   ', entries, globs).valid, false, 'empty type');
 	});
 
 	test('built-in templates: the type, frontmatter to fill in and a few headings', () => {

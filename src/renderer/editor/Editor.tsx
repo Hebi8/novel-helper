@@ -13,7 +13,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { GhostController } from '../ghost/extension';
 import { commitLoreField, diffFrontmatterPrefix, inspectLoreForm } from '../../core/loreForm';
 import { groupLore } from '../../core/loreGroups';
-import { frontmatterLength } from '../../core/text';
+import { frontmatterLength, stem } from '../../core/text';
 import type { Settings, TabState } from '../../shared/api';
 import type { DocumentModel } from './document';
 import { prose } from './prose';
@@ -172,11 +172,12 @@ export function Editor({
 	const [syncVersion, setSyncVersion] = useState(0);
 	const formData = lore ? inspectLoreForm(model.text) : undefined;
 	const formActive = lore && !sourceMode && formData !== undefined;
-	const types = lore
+	const baseTypes = lore
 		? groupLore(workspace.reference.entries)
 				.map((group) => group.type)
 				.filter(Boolean)
 		: [];
+	const types = formData?.type && !baseTypes.includes(formData.type) ? [...baseTypes, formData.type] : baseTypes;
 	const settingsRef = useRef(settings);
 	settingsRef.current = settings;
 	const callbacksOpen = useRef(workspace.open);
@@ -360,7 +361,7 @@ export function Editor({
 			handle.current?.view.requestMeasure();
 		}
 	}, [visible]);
-	const commit = (key: string, raw: string | boolean, discrete = false) => {
+	const commit = (key: string, raw: string | boolean | readonly string[], discrete = false) => {
 		const view = handle.current?.view;
 		if (!view) {
 			return;
@@ -396,9 +397,10 @@ export function Editor({
 			annotations: discrete ? [formEdit.of(true), isolateHistory.of('full')] : formEdit.of(true),
 		});
 	};
+	const title = lore ? stem(model.path) : '';
 	return (
 		<div
-			className={`editor-pane pane-${side}${formActive ? ' has-lore-form' : ''}`}
+			className={`editor-pane pane-${side}${lore ? ' is-lore' : ''}`}
 			onFocus={focused}
 			style={
 				{
@@ -411,6 +413,7 @@ export function Editor({
 			<ConflictBar document={model} reload={() => handle.current?.reload()} />
 			{formActive && formData ? (
 				<LoreForm
+					title={title}
 					data={formData}
 					types={types}
 					syncVersion={syncVersion}
@@ -436,18 +439,26 @@ export function Editor({
 						queueMicrotask(() => handle.current?.view.focus());
 					}}
 				/>
-			) : lore && sourceMode && formData ? (
-				<button
-					type="button"
-					className="lore-mode-toggle floating"
-					style={model.conflict !== undefined || model.error ? { top: '44px' } : undefined}
-					onClick={() => {
-						sourceModeRef.current = false;
-						setSourceMode(false);
-					}}
-				>
-					{zh.loreForm}
-				</button>
+			) : lore ? (
+				<div className="lore-source-head">
+					<div className="lore-title-row">
+						<h2>{title}</h2>
+						{formData ? (
+							<button
+								type="button"
+								className="lore-mode-toggle"
+								onClick={() => {
+									sourceModeRef.current = false;
+									setSourceMode(false);
+									queueMicrotask(() => handle.current?.view.focus());
+								}}
+							>
+								{zh.loreForm}
+							</button>
+						) : null}
+					</div>
+					<hr className="lore-rule" />
+				</div>
 			) : null}
 			<div className={`editor ${settings['editor.centerLine'] ? 'center-line' : ''}`} ref={parent} />
 		</div>

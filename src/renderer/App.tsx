@@ -7,6 +7,7 @@ import { useReferences } from './reference/useReferences';
 import { errorMessage } from './errors';
 import { useEffect, useRef, useState } from 'react';
 import type { Bootstrap, Book, OpenResult } from '../shared/api';
+import { defaults } from '../shared/defaults';
 import { LeftSidebar } from './left/LeftSidebar';
 import { RightSidebar } from './right/RightSidebar';
 import { Tabs } from './tabs/Tabs';
@@ -135,6 +136,7 @@ export function App() {
 		<WorkspaceContext
 			value={{
 				book,
+				settings: initial?.settings ?? defaults,
 				structure: showStructure,
 				searchBook: () => setSearch(true),
 				session,

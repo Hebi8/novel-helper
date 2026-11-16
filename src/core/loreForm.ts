@@ -191,11 +191,40 @@ export function inspectLoreForm(content: string): LoreFormData | undefined {
 	return { prefix, body, type, aliases, always, summary, present, extras };
 }
 
+export function hasLoreListSeparator(input: string, key: string): boolean {
+	return (key === 'aliases' ? /[,，、;；\r\n]/ : /[,，、\r\n]/).test(input);
+}
+
+export function appendLoreListItems(current: readonly string[], input: string, key: string): string[] {
+	const separator = key === 'aliases' ? /[,，、;；\r\n]+/ : /[,，、\r\n]+/;
+	const next = [...current];
+	for (const raw of input.split(separator)) {
+		const item = raw.trim();
+		if (item && !next.includes(item)) {
+			next.push(item);
+		}
+	}
+	return next;
+}
+
+function normalizeList(items: readonly string[], key: string): string[] {
+	let next: string[] = [];
+	for (const item of items) {
+		next = appendLoreListItems(next, item, key);
+	}
+	return next;
+}
+
 /**
  * Applies a single field edit on `content` via `setField`, returning `undefined`
  * when the field value did not change or when an absent fixed field was left empty.
  */
-export function commitLoreField(content: string, data: LoreFormData, key: string, raw: string | boolean): string | undefined {
+export function commitLoreField(
+	content: string,
+	data: LoreFormData,
+	key: string,
+	raw: string | boolean | readonly string[],
+): string | undefined {
 	if (key === 'type') {
 		const next = String(raw).replace(/[\r\n]+/g, ' ').trim();
 		if ((!data.present.type && next === '') || next === data.type) {
@@ -211,7 +240,7 @@ export function commitLoreField(content: string, data: LoreFormData, key: string
 		return setField(content, 'summary', next);
 	}
 	if (key === 'aliases') {
-		const next = parseAliases(String(raw).replace(/[\r\n]+/g, ','));
+		const next = typeof raw === 'object' ? normalizeList(raw, 'aliases') : parseAliases(String(raw).replace(/[\r\n]+/g, ','));
 		if (sameList(next, data.aliases)) {
 			return undefined;
 		}
@@ -233,11 +262,14 @@ export function commitLoreField(content: string, data: LoreFormData, key: string
 		return next === extra.value ? undefined : setField(content, key, next);
 	}
 	if (extra.kind === 'list') {
-		const next = String(raw)
-			.replace(/[\r\n]+/g, ',')
-			.split(/[,，、]/)
-			.map((item) => item.trim())
-			.filter(Boolean);
+		const next =
+			typeof raw === 'object'
+				? normalizeList(raw, key)
+				: String(raw)
+						.replace(/[\r\n]+/g, ',')
+						.split(/[,，、]/)
+						.map((item) => item.trim())
+						.filter(Boolean);
 		return sameList(next, extra.value as string[]) ? undefined : setField(content, key, next);
 	}
 	const next = String(raw).replace(/\r?\n+/g, ' ');

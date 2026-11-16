@@ -81,7 +81,8 @@ test('lore cards, quick open, grouped edits, manual buoys, split and last-reques
 		await page.keyboard.press('F12');
 		await expect(page.locator('.tabs [aria-selected=true]')).toContainText('林小满');
 		await expect(page.locator('.editor-pane:visible .lore-form')).toBeVisible();
-		await expect(page.locator('.editor-pane:visible').getByLabel('别名')).toHaveValue('小满、林姑娘');
+		await expect(page.locator('.editor-pane:visible .lore-title-row h2')).toHaveText('林小满');
+		await expect(page.locator('.editor-pane:visible .lore-pill > span')).toHaveText(['小满', '林姑娘']);
 		await expect(page.locator('.editor:visible .cm-content')).toContainText('林小满每天天不亮就出门');
 		await expect(page.locator('.editor:visible .cm-content')).not.toContainText('aliases:');
 		await menu('quickOpen');
@@ -230,10 +231,11 @@ test('lore entry frontmatter form uses single full-document representation, pres
 		await page.locator('.sidebar.left .lore-row').filter({ hasText: '守塔人记录' }).click();
 		const pane = page.locator('.editor-pane:visible');
 		await expect(pane.locator('.lore-form')).toBeVisible();
+		await expect(pane.locator('.lore-title-row h2')).toHaveText('守塔人记录');
 		await expect(page.locator('.assistant-context')).toContainText('守塔人记录');
 		await expect(page.locator('.assistant-context')).toContainText('第 6 行');
-		await expect(pane.locator('.lore-form').getByLabel('类型')).toHaveValue('人物');
-		await expect(pane.locator('.lore-form').getByLabel('别名')).toHaveValue('老周、守塔人');
+		await expect(pane.locator('.lore-form').getByLabel('类型')).toContainText('人物');
+		await expect(pane.locator('.lore-form .lore-pill > span')).toHaveText(['老周', '守塔人']);
 		await expect(pane.locator('.editor .cm-content')).toHaveText('北角灯塔最后一任守塔人。\n');
 		await pane.locator('.lore-form').getByLabel('摘要').focus();
 		await pane.locator('.lore-form').getByLabel('别名').focus();
@@ -242,29 +244,56 @@ test('lore entry frontmatter form uses single full-document representation, pres
 		await page.locator('.sidebar.left .lore-row').filter({ hasText: '北角灯塔' }).click();
 		const form = pane.locator('.lore-form');
 		await expect(form).toBeVisible();
+		await expect(form.locator('.lore-title-row h2')).toHaveText('北角灯塔');
 		await expect(page.locator('.assistant-context')).toContainText('北角灯塔');
 		await expect(page.locator('.assistant-context')).toContainText('第 9 行');
 		await expect(pane.locator('.editor .cm-content')).toHaveText('雾港北角礁石上的白色灯塔，林小满常来。\n');
 		await expect(pane.locator('.editor .cm-content')).not.toContainText('---');
 		await expect(pane.locator('.editor .lore-name').filter({ hasText: '林小满' })).toBeVisible();
 
-		const typeInput = form.getByLabel('类型');
+		// Title and property grid left-align with the prose body (not centered in wide window) and title font is larger than body font.
+		const layoutMetrics = await pane.evaluate((root) => {
+			const h2 = root.querySelector('.lore-title-row h2')!;
+			const props = root.querySelector('.lore-props')!;
+			const line = root.querySelector('.cm-line')!;
+			const scroller = root.querySelector('.cm-scroller')!;
+			return {
+				titleLeft: h2.getBoundingClientRect().left,
+				propsLeft: props.getBoundingClientRect().left,
+				propsWidth: props.getBoundingClientRect().width,
+				lineLeft: line.getBoundingClientRect().left,
+				lineWidth: line.getBoundingClientRect().width,
+				titleSize: parseFloat(getComputedStyle(h2).fontSize),
+				bodySize: parseFloat(getComputedStyle(scroller).fontSize),
+			};
+		});
+		expect(Math.abs(layoutMetrics.titleLeft - layoutMetrics.lineLeft)).toBeLessThanOrEqual(1);
+		expect(Math.abs(layoutMetrics.propsLeft - layoutMetrics.lineLeft)).toBeLessThanOrEqual(1);
+		expect(Math.abs(layoutMetrics.propsWidth - layoutMetrics.lineWidth)).toBeLessThanOrEqual(2);
+		expect(layoutMetrics.titleSize).toBeGreaterThan(layoutMetrics.bodySize);
+
+		const typeButton = form.getByLabel('类型');
 		const aliasesInput = form.getByLabel('别名');
-		const alwaysBox = form.getByLabel('常驻');
+		const alwaysSwitch = form.getByRole('switch', { name: '常驻', exact: true });
 		const summaryInput = form.getByLabel('摘要');
 		const eraInput = form.getByLabel('era');
-		const litBox = form.getByLabel('lit');
+		const litSwitch = form.getByRole('switch', { name: 'lit', exact: true });
 		const tagsInput = form.getByLabel('tags');
+		const aliasRow = aliasesInput.locator('..');
+		const tagsRow = tagsInput.locator('..');
 
-		await expect(typeInput).toHaveValue('地点');
-		await expect(aliasesInput).toHaveValue('灯塔、旧灯塔');
-		await expect(alwaysBox).not.toBeChecked();
+		await expect(typeButton).toContainText('地点');
+		await expect(aliasRow.locator('.lore-pill > span')).toHaveText(['灯塔', '旧灯塔']);
+		await expect(aliasesInput).toHaveAttribute('placeholder', '＋ 添加');
+		await expect(alwaysSwitch).not.toBeChecked();
 		await expect(summaryInput).toHaveValue('');
+		await expect(summaryInput).toHaveAttribute('placeholder', '添加摘要');
 		await expect(eraInput).toHaveValue('旧港');
-		await expect(litBox).not.toBeChecked();
-		await expect(tagsInput).toHaveValue('礁石, 航标');
+		await expect(litSwitch).not.toBeChecked();
+		await expect(tagsRow.locator('.lore-pill > span')).toHaveText(['礁石', '航标']);
 
 		await summaryInput.focus();
+		expect(await summaryInput.evaluate((el) => getComputedStyle(el).borderTopWidth)).toBe('0px');
 		await aliasesInput.focus();
 		await page.waitForTimeout(1200);
 		expect(Buffer.compare(await readFile(crlfPath), crlfBytesBefore)).toBe(0);
@@ -276,6 +305,18 @@ test('lore entry frontmatter form uses single full-document representation, pres
 		await page.getByRole('textbox', { name: '给助手的消息' }).fill('echo');
 		await page.getByRole('button', { name: '发送', exact: true }).click();
 		await expect(page.locator('.assistant-reply').first()).toContainText('光标在第 9 行');
+
+		// 源码 and 表单 toggle sit at the exact same position beside the entry title.
+		const sourceBtnBox = (await form.getByRole('button', { name: '源码', exact: true }).boundingBox())!;
+		await form.getByRole('button', { name: '源码', exact: true }).click();
+		await expect(pane.locator('.lore-form')).toHaveCount(0);
+		const formBtn = pane.getByRole('button', { name: '表单', exact: true });
+		await expect(formBtn).toBeVisible();
+		const formBtnBox = (await formBtn.boundingBox())!;
+		expect(Math.abs(sourceBtnBox.x - formBtnBox.x)).toBeLessThanOrEqual(2);
+		expect(Math.abs(sourceBtnBox.y - formBtnBox.y)).toBeLessThanOrEqual(2);
+		await formBtn.click();
+		await expect(form).toBeVisible();
 
 		// In-file find (⌘F) matching frontmatter-only text automatically switches the editor to 源码 mode and selects the match.
 		await menu('find');
@@ -317,6 +358,86 @@ test('lore entry frontmatter form uses single full-document representation, pres
 		await page.getByRole('tab').filter({ hasText: '北角灯塔' }).click();
 		await expect(form).toBeVisible();
 
+		// Type menu: lists ALL existing types in the book unfiltered, checks current type, closes on Escape / outside click returning focus to 类型, and edits ONLY the `type` line.
+		await typeButton.click();
+		const typeMenu = form.locator('.lore-type-menu');
+		await expect(typeMenu).toBeVisible();
+		const listedTypes = await typeMenu.getByRole('option').allTextContents();
+		expect(listedTypes.map((text) => text.replace('✓', '').trim())).toEqual(expect.arrayContaining(['人物', '地点', '物件', '文风']));
+		await expect(typeMenu.getByRole('option', { selected: true })).toContainText('地点');
+		await expect(typeMenu.getByRole('option', { selected: true })).toContainText('✓');
+		const newTypeInput = typeMenu.getByPlaceholder('新类型…');
+		await newTypeInput.fill('未提交草稿');
+		// Typing in 新类型… does not filter out existing options.
+		expect((await typeMenu.getByRole('option').allTextContents()).length).toBeGreaterThanOrEqual(4);
+		await page.keyboard.press('Escape');
+		await expect(typeMenu).toHaveCount(0);
+		await expect(typeButton).toBeFocused();
+		expect(await readFile(towerPath, 'utf8')).toBe(initialTower);
+
+		// Outside click closes menu and returns focus to 类型.
+		await typeButton.click();
+		await expect(typeMenu).toBeVisible();
+		await form.locator('.lore-title-row h2').click();
+		await expect(typeMenu).toHaveCount(0);
+		await expect(typeButton).toBeFocused();
+
+		// Choose existing type, then enter a custom new type with Enter: file changes ONLY on the `type` line.
+		await typeButton.click();
+		await typeMenu.getByRole('option', { name: /物件/ }).click();
+		await expect(typeButton).toContainText('物件');
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(initialTower.replace('type: 地点', 'type: 物件'));
+
+		await typeButton.click();
+		await typeMenu.getByPlaceholder('新类型…').fill('建筑');
+		await typeMenu.getByPlaceholder('新类型…').press('Enter');
+		await expect(typeMenu).toHaveCount(0);
+		await expect(typeButton).toContainText('建筑');
+		await expect(typeButton).toBeFocused();
+		const afterTypeOnly = initialTower.replace('type: 地点', 'type: 建筑');
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(afterTypeOnly);
+		await expect(page.locator('.sidebar.left summary').filter({ hasText: '建筑' })).toBeVisible();
+
+		// Aliases: add one, ignore duplicate, delete one, undo single deletion, paste comma/顿号-separated text — only `aliases` line changes byte-for-byte.
+		await aliasesInput.fill('北塔');
+		await aliasesInput.press('Enter');
+		await expect(aliasRow.locator('.lore-pill > span')).toHaveText(['灯塔', '旧灯塔', '北塔']);
+		const afterAliasAdd = afterTypeOnly.replace('aliases: [灯塔, 旧灯塔]  # 镇上叫法', 'aliases: [灯塔, 旧灯塔, 北塔]  # 镇上叫法');
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(afterAliasAdd);
+
+		// Duplicate alias is ignored without modifying the file.
+		await aliasesInput.fill('灯塔');
+		await aliasesInput.press('Enter');
+		await expect(aliasesInput).toHaveValue('');
+		await expect(aliasRow.locator('.lore-pill > span')).toHaveText(['灯塔', '旧灯塔', '北塔']);
+		expect(await readFile(towerPath, 'utf8')).toBe(afterAliasAdd);
+
+		// Delete one alias (`旧灯塔`) via ✕, verify exact bytes, then Undo (`⌘Z`) restores ONLY that one deleted alias (`北塔` addition stays intact).
+		await aliasRow.getByRole('button', { name: '删除 旧灯塔', exact: true }).click();
+		await expect(aliasRow.locator('.lore-pill > span')).toHaveText(['灯塔', '北塔']);
+		const afterAliasRemove = afterTypeOnly.replace('aliases: [灯塔, 旧灯塔]  # 镇上叫法', 'aliases: [灯塔, 北塔]  # 镇上叫法');
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(afterAliasRemove);
+
+		await page.keyboard.press('Meta+z');
+		await expect(aliasRow.locator('.lore-pill > span')).toHaveText(['灯塔', '旧灯塔', '北塔']);
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(afterAliasAdd);
+
+		// Delete `旧灯塔` again, then paste comma/顿号 text containing both new aliases and an existing duplicate.
+		await aliasRow.getByRole('button', { name: '删除 旧灯塔', exact: true }).click();
+		await expect(aliasRow.locator('.lore-pill > span')).toHaveText(['灯塔', '北塔']);
+		await aliasesInput.evaluate((el: HTMLInputElement) => {
+			el.focus();
+			const clipboardData = new DataTransfer();
+			clipboardData.setData('text/plain', '白塔，灯塔、礁塔, 海标');
+			el.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+		});
+		await expect(aliasRow.locator('.lore-pill > span')).toHaveText(['灯塔', '北塔', '白塔', '礁塔', '海标']);
+		const afterAliasPaste = afterTypeOnly.replace(
+			'aliases: [灯塔, 旧灯塔]  # 镇上叫法',
+			'aliases: [灯塔, 北塔, 白塔, 礁塔, 海标]  # 镇上叫法',
+		);
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(afterAliasPaste);
+
 		// IME composition does not write to document mid-composition, and writes immediately when composition ends.
 		await eraInput.focus();
 		await eraInput.evaluate((el: HTMLInputElement) => {
@@ -326,34 +447,23 @@ test('lore entry frontmatter form uses single full-document representation, pres
 			el.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true, data: '新纪元' }));
 		});
 		await page.waitForTimeout(1200);
-		expect(await readFile(towerPath, 'utf8')).toBe(initialTower);
+		expect(await readFile(towerPath, 'utf8')).toBe(afterAliasPaste);
 		await eraInput.evaluate((el: HTMLInputElement) => {
 			el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '新纪元' }));
 		});
-		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(initialTower.replace('era: 旧港', 'era: 新纪元'));
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(afterAliasPaste.replace('era: 旧港', 'era: 新纪元'));
 
 		// Immediate live writes without pressing Enter or blurring.
 		await eraInput.fill('十年前');
-		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(initialTower.replace('era: 旧港', 'era: 十年前'));
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(afterAliasPaste.replace('era: 旧港', 'era: 十年前'));
 
-		// Select an existing type from the dropdown, then type a custom new type.
-		await form.locator('.lore-type-arrow').click();
-		await expect(form.getByRole('option', { name: /人物/ })).toBeVisible();
-		await form.getByRole('option', { name: /物件/ }).click();
-		await expect(typeInput).toHaveValue('物件');
-		await expect.poll(() => readFile(towerPath, 'utf8')).toContain('# 礁石灯塔\ntype: 物件\n');
-
-		await typeInput.fill('建筑');
-
-		// Focused aliases input preserves trailing separator while typing, while writing parsed list to disk.
-		await aliasesInput.focus();
-		await aliasesInput.fill('灯塔, 旧灯塔、北塔, ');
-		await expect(aliasesInput).toHaveValue('灯塔, 旧灯塔、北塔, ');
-		await expect.poll(() => readFile(towerPath, 'utf8')).toContain('aliases: [灯塔, 旧灯塔, 北塔]  # 镇上叫法');
-		await aliasesInput.blur();
-		await expect(aliasesInput).toHaveValue('灯塔、旧灯塔、北塔');
-
-		await alwaysBox.check();
+		// Toggle 常驻 switch on and off and back on.
+		await alwaysSwitch.click();
+		await expect(alwaysSwitch).toBeChecked();
+		await alwaysSwitch.click();
+		await expect(alwaysSwitch).not.toBeChecked();
+		await alwaysSwitch.click();
+		await expect(alwaysSwitch).toBeChecked();
 
 		// Summary keeps single line on disk: Enter does nothing, pasted newlines become spaces.
 		await summaryInput.focus();
@@ -369,17 +479,22 @@ test('lore entry frontmatter form uses single full-document representation, pres
 		});
 		await expect(summaryInput).toHaveValue('北角礁石上的 旧灯塔， 守望航道。');
 
-		await litBox.check();
-		await tagsInput.fill('风暴, 铜钟');
+		// Extra boolean switch and extra string-list pills.
+		await litSwitch.click();
+		await expect(litSwitch).toBeChecked();
+		await tagsRow.getByRole('button', { name: '删除 礁石', exact: true }).click();
+		await tagsInput.fill('风暴，铜钟');
+		await tagsInput.press('Enter');
+		await expect(tagsRow.locator('.lore-pill > span')).toHaveText(['航标', '风暴', '铜钟']);
 
 		const expectedEdited = [
 			'---',
 			'# 礁石灯塔',
 			'type: 建筑',
-			'aliases: [灯塔, 旧灯塔, 北塔]  # 镇上叫法',
+			'aliases: [灯塔, 北塔, 白塔, 礁塔, 海标]  # 镇上叫法',
 			'era: 十年前',
 			'lit: true',
-			'tags: [风暴, 铜钟]',
+			'tags: [航标, 风暴, 铜钟]',
 			'always: true',
 			'summary: 北角礁石上的 旧灯塔， 守望航道。',
 			'---',
@@ -490,13 +605,13 @@ test('lore entry frontmatter form uses single full-document representation, pres
 		await page.getByRole('menuitem', { name: '改别名', exact: true }).click();
 		await page.getByRole('dialog', { name: '改别名', exact: true }).getByLabel('别名').fill('老塔、白塔');
 		await page.getByRole('button', { name: '确定', exact: true }).click();
-		await expect(aliasesInput).toHaveValue('老塔、白塔');
+		await expect(aliasRow.locator('.lore-pill > span')).toHaveText(['老塔', '白塔']);
 
 		await row.click({ button: 'right' });
 		await page.getByRole('menuitem', { name: '改类型', exact: true }).click();
 		await page.getByRole('dialog', { name: '改类型', exact: true }).locator('input').fill('古迹');
 		await page.getByRole('button', { name: '确定', exact: true }).click();
-		await expect(typeInput).toHaveValue('古迹');
+		await expect(typeButton).toContainText('古迹');
 
 		const assistantRewritten = [
 			'---',
@@ -513,11 +628,111 @@ test('lore entry frontmatter form uses single full-document representation, pres
 			.fill(JSON.stringify(['write', towerRel, assistantRewritten]) + '\nsay 已改好灯塔条目');
 		await page.getByRole('button', { name: '发送', exact: true }).click();
 		await expect(page.locator('.assistant-reply').last()).toContainText('已改好灯塔条目');
-		await expect(typeInput).toHaveValue('遗迹');
-		await expect(aliasesInput).toHaveValue('北角古塔');
-		await expect(alwaysBox).not.toBeChecked();
+		await expect(typeButton).toContainText('遗迹');
+		await expect(aliasRow.locator('.lore-pill > span')).toHaveText(['北角古塔']);
+		await expect(alwaysSwitch).not.toBeChecked();
 		await expect(summaryInput).toHaveValue('助手更新后的摘要。');
 		await expect(pane.locator('.editor .cm-content')).toHaveText('助手更新后的灯塔正文。\n');
+	});
+});
+
+test('left lore tree group + and bottom row preselect types, and new entry dialog creates entries with existing or custom types', async () => {
+	await withReferenceBook(async ({ page, book }) => {
+		const leftLore = page.locator('.sidebar.left');
+		await leftLore.locator('.segments').getByRole('button', { name: '设定', exact: true }).click();
+
+		// No top 新建条目 button; bottom row is ＋ 新建条目.
+		await expect(leftLore.locator('.panel-actions')).toHaveCount(0);
+		const bottomNew = leftLore.getByRole('button', { name: '＋ 新建条目', exact: true });
+		await expect(bottomNew).toBeVisible();
+
+		// Currently open tab is chapter 第2章 灯塔 -> bottom ＋ 新建条目 preselects the first type (人物).
+		await bottomNew.click();
+		const dialog = page.getByRole('dialog', { name: '新建条目', exact: true });
+		await expect(dialog).toBeVisible();
+		const nameInput = dialog.getByLabel('名字');
+		await expect(nameInput).toBeFocused();
+		await expect(dialog.getByRole('button', { name: '人物', exact: true })).toHaveAttribute('aria-pressed', 'true');
+		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 人物/');
+		await expect(dialog.getByRole('button', { name: '新建', exact: true })).toBeDisabled();
+		await page.keyboard.press('Escape');
+		await expect(dialog).toHaveCount(0);
+
+		// When a lore entry (潮汐钟, type 物件) is active, bottom ＋ 新建条目 preselects 物件.
+		await leftLore.locator('.lore-row').filter({ hasText: '潮汐钟' }).click();
+		await expect(page.locator('.editor-pane:visible .lore-title-row h2')).toHaveText('潮汐钟');
+		await bottomNew.click();
+		await expect(dialog.getByRole('button', { name: '物件', exact: true })).toHaveAttribute('aria-pressed', 'true');
+		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 设定/');
+		await dialog.getByRole('button', { name: '取消', exact: true }).click();
+		await expect(dialog).toHaveCount(0);
+
+		// Hovering a group summary reveals ＋ on the right; clicking it opens the dialog with that group's type preselected.
+		const placeSummary = leftLore.locator('summary.lore-group-summary').filter({ hasText: '地点' });
+		const placePlus = placeSummary.getByRole('button', { name: '＋', exact: true });
+		await expect(placePlus).toBeHidden();
+		await placeSummary.hover();
+		await expect(placePlus).toBeVisible();
+		await placePlus.click();
+		await expect(dialog).toBeVisible();
+		await expect(nameInput).toBeFocused();
+		await expect(dialog.getByRole('button', { name: '地点', exact: true })).toHaveAttribute('aria-pressed', 'true');
+		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 设定/');
+
+		// Empty, duplicate, or invalid names disable 新建 without showing any error alert.
+		const createBtn = dialog.getByRole('button', { name: '新建', exact: true });
+		await expect(createBtn).toBeDisabled();
+		await nameInput.fill('雾港');
+		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 设定/雾港.md');
+		await expect(createBtn).toBeDisabled();
+		await nameInput.press('Enter');
+		await expect(dialog).toBeVisible();
+		await expect(page.getByRole('alert')).toHaveCount(0);
+
+		await nameInput.fill('北角/新地');
+		await expect(createBtn).toBeDisabled();
+		await nameInput.fill('..');
+		await expect(createBtn).toBeDisabled();
+
+		// Switching type chip to 人物 updates target folder to 人物/.
+		await nameInput.fill('沈三娘');
+		await dialog.getByRole('button', { name: '人物', exact: true }).click();
+		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 人物/沈三娘.md');
+		await expect(createBtn).toBeEnabled();
+
+		// ＋ 新类型: click turns into input, Escape reverts to ＋ 新类型, Enter adds chip and selects it.
+		await dialog.getByRole('button', { name: '＋ 新类型', exact: true }).click();
+		const chipInput = dialog.locator('.lore-chip-input');
+		await expect(chipInput).toBeFocused();
+		await chipInput.fill('放弃类型');
+		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 设定/沈三娘.md');
+		await chipInput.press('Escape');
+		await expect(chipInput).toHaveCount(0);
+		await expect(dialog).toBeVisible();
+		await expect(dialog.getByRole('button', { name: '＋ 新类型', exact: true })).toBeVisible();
+		await expect(dialog.getByRole('button', { name: '人物', exact: true })).toHaveAttribute('aria-pressed', 'true');
+		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 人物/沈三娘.md');
+
+		await dialog.getByRole('button', { name: '＋ 新类型', exact: true }).click();
+		await expect(chipInput).toBeFocused();
+		await chipInput.fill('势力');
+		await chipInput.press('Enter');
+		await expect(chipInput).toHaveCount(0);
+		await expect(dialog.getByRole('button', { name: '势力', exact: true })).toHaveAttribute('aria-pressed', 'true');
+		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 设定/沈三娘.md');
+		await expect(createBtn).toBeEnabled();
+
+		// Enter creates the entry, opens it in the editor, writes expected file on disk, and shows the new group in the left sidebar.
+		await page.keyboard.press('Enter');
+		await expect(dialog).toHaveCount(0);
+		await expect(page.locator('.tabs [aria-selected=true]')).toContainText('沈三娘');
+		await expect(page.locator('.editor-pane:visible .lore-title-row h2')).toHaveText('沈三娘');
+		await expect(page.locator('.editor-pane:visible .lore-form').getByLabel('类型')).toContainText('势力');
+		await expect(leftLore.locator('summary.lore-group-summary').filter({ hasText: '势力' })).toBeVisible();
+		await expect(leftLore.locator('details').filter({ hasText: '势力' }).locator('.lore-row').filter({ hasText: '沈三娘' })).toBeVisible();
+
+		const createdContent = await readFile(join(book, '设定/沈三娘.md'), 'utf8');
+		expect(createdContent).toBe('---\ntype: 势力\naliases: []\nsummary:\n---\n\n## 想要什么\n\n## 成员\n\n## 和其他势力的关系\n');
 	});
 });
 

@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { Book, SessionState, OpenOptions, ReferenceData, BuoyStatus, ReportKind } from '../shared/api';
+import type { Book, SessionState, OpenOptions, ReferenceData, BuoyStatus, ReportKind, Settings } from '../shared/api';
 export interface EditorSnapshot {
 	path: string;
 	text: string;
@@ -11,6 +11,7 @@ export interface Workspace {
 	structure(action: import('../shared/structure').StructureAction, path?: string): void;
 	searchBook(): void;
 	book?: Book;
+	settings: Settings;
 	session: SessionState;
 	current(): EditorSnapshot | undefined;
 	open(path: string, options?: OpenOptions): Promise<void>;

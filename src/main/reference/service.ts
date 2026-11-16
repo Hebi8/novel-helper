@@ -4,12 +4,11 @@ import type { BookIndex } from '../book/indexer';
 import { scanFiles } from '../book/indexer';
 import { bookPath } from '../book/paths';
 import { documentText, readOptional } from '../book/files';
-import { globFolders, type BookNode } from '../../core/library';
+import type { BookNode } from '../../core/library';
 import { FrontmatterError, setField, type FieldValue } from '../../core/frontmatter';
-import { builtinTemplate, fillTemplate, folderForNew, templateNames } from '../../core/loreGroups';
-import { nameProblem } from '../../core/book';
+import { builtinTemplate, fillTemplate, planNewLore, templateNames } from '../../core/loreGroups';
 import { firstLeaf, waysFrom } from '../../core/outline';
-import { dirSegments, stem } from '../../core/text';
+import { stem } from '../../core/text';
 import type { ReferenceData, QuickItem } from '../../shared/api';
 import { zh, translateReport } from '../../renderer/strings';
 export async function referenceData(index: BookIndex): Promise<ReferenceData> {
@@ -53,18 +52,13 @@ export async function setLoreField(index: BookIndex, path: string, field: 'alway
 	});
 }
 export async function createLore(index: BookIndex, name: string, type: string): Promise<string> {
-	const entries = index.library.entries();
-	const folder = folderForNew(type, entries, index.configuration['files.lore'].flatMap(globFolders));
-	if (
-		nameProblem(
-			name,
-			entries.filter((entry) => dirSegments(entry.id).join('/') === folder).map((entry) => stem(entry.id)),
-		)
-	) {
+	const plan = planNewLore(name, type, index.library.entries(), index.configuration['files.lore']);
+	if (!plan.valid) {
 		throw new Error(zh.invalidName);
 	}
 	name = name.trim();
-	const path = bookPath(`${folder}/${name}.md`);
+	type = type.trim();
+	const path = bookPath(plan.path);
 	let content = builtinTemplate(type, translateReport);
 	for (const template of templateNames(type)) {
 		const raw = await readOptional(join(index.root, '.novel-helper/templates', `${template}.md`));

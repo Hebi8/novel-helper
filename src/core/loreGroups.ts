@@ -1,10 +1,12 @@
 // How the sidebar lays out lore entries and starts new ones: entries grouped
 // by type, a template per type, and the folder a new entry goes in.
 
+import { nameProblem } from './book';
 import { inline, setField } from './frontmatter';
-import { type LoreEntry, parseLoreEntry } from './library';
+import { globFolders, type LoreEntry, parseLoreEntry } from './library';
 import type { Translate } from './report';
-import { dirSegments, frontmatterLength } from './text';
+import { leadsOut } from './story';
+import { dirSegments, frontmatterLength, stem } from './text';
 
 /** The group an entry is listed under: its `type`, else the first folder of its path. */
 export function groupOf(entry: LoreEntry): string {
@@ -53,6 +55,34 @@ export function folderForNew(type: string, entries: readonly LoreEntry[], folder
 		folders[0] ??
 		''
 	);
+}
+
+export interface NewLorePlan {
+	folder: string;
+	path: string;
+	preview: string;
+	valid: boolean;
+}
+
+/**
+ * Computes the destination folder, relative file path, live preview path, and
+ * validity of a new lore entry from the book's entries and `files.lore` globs.
+ */
+export function planNewLore(
+	name: string,
+	type: string,
+	entries: readonly LoreEntry[],
+	loreGlobs: readonly string[],
+): NewLorePlan {
+	const cleanType = type.trim();
+	const folder = folderForNew(cleanType, entries, loreGlobs.flatMap(globFolders));
+	const cleanName = name.trim();
+	const file = `${cleanName}.md`;
+	const path = folder ? `${folder}/${file}` : file;
+	const preview = cleanName ? path : folder ? `${folder}/` : '';
+	const siblings = entries.filter((entry) => dirSegments(entry.id).join('/') === folder).map((entry) => stem(entry.id));
+	const valid = Boolean(cleanType) && !nameProblem(name, siblings) && !leadsOut(path);
+	return { folder, path, preview, valid };
 }
 
 const KINDS: Array<{ types: string[]; headings: (t: Translate) => string[] }> = [

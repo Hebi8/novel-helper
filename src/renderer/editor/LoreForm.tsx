@@ -1,12 +1,13 @@
-import { useEffect, useId, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent } from 'react';
-import type { LoreFormData } from '../../core/loreForm';
+import { useCallback, useEffect, useId, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent } from 'react';
+import { appendLoreListItems, hasLoreListSeparator, type LoreFormData } from '../../core/loreForm';
 import { zh } from '../strings';
 
 interface Props {
+	title: string;
 	data: LoreFormData;
 	types: readonly string[];
 	syncVersion: number;
-	commit(key: string, value: string | boolean, discrete?: boolean): void;
+	commit(key: string, value: string | boolean | readonly string[], discrete?: boolean): void;
 	compositionStart(): void;
 	compositionEnd(): void;
 	undo(): void;
@@ -43,7 +44,6 @@ function handleHistoryBeforeInput(event: FormEvent<HTMLElement>, undo: () => voi
 function TypeField({
 	value,
 	types,
-	syncVersion,
 	commit,
 	compositionStart,
 	compositionEnd,
@@ -52,25 +52,23 @@ function TypeField({
 }: {
 	value: string;
 	types: readonly string[];
-	syncVersion: number;
 	commit(value: string, discrete?: boolean): void;
 	compositionStart(): void;
 	compositionEnd(): void;
 	undo(): void;
 	redo(): void;
 }) {
-	const [rawText, setRawText] = useState<string>();
 	const [open, setOpen] = useState(false);
+	const [draft, setDraft] = useState('');
 	const [activeIndex, setActiveIndex] = useState(-1);
 	const composing = useRef(false);
 	const finishComposition = useRef(compositionEnd);
 	finishComposition.current = compositionEnd;
 	const boxRef = useRef<HTMLDivElement>(null);
+	const triggerRef = useRef<HTMLButtonElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const id = useId();
-	useEffect(() => {
-		setRawText(undefined);
-	}, [syncVersion]);
+
 	useEffect(
 		() => () => {
 			if (composing.current) {
@@ -80,75 +78,308 @@ function TypeField({
 		},
 		[],
 	);
+
+	const closeMenu = useCallback(() => {
+		setOpen(false);
+		setDraft('');
+		setActiveIndex(-1);
+		setTimeout(() => triggerRef.current?.focus(), 0);
+	}, []);
+
 	useEffect(() => {
 		if (!open) {
 			return;
 		}
-		const onMouseDown = (event: MouseEvent) => {
-			if (!boxRef.current?.contains(event.target as Node)) {
-				setOpen(false);
-				setActiveIndex(-1);
+		const onKeyDown = (event: globalThis.KeyboardEvent) => {
+			if (event.key === 'Escape' && !event.isComposing && !composing.current) {
+				event.preventDefault();
+				event.stopPropagation();
+				closeMenu();
 			}
 		};
-		window.addEventListener('mousedown', onMouseDown);
-		return () => window.removeEventListener('mousedown', onMouseDown);
-	}, [open]);
+		const onMouseDown = (event: MouseEvent) => {
+			const target = event.target as Node | null;
+			if (target && !boxRef.current?.contains(target)) {
+				closeMenu();
+			}
+		};
+		window.addEventListener('keydown', onKeyDown, true);
+		window.addEventListener('mousedown', onMouseDown, true);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown, true);
+			window.removeEventListener('mousedown', onMouseDown, true);
+		};
+	}, [open, closeMenu]);
+
 	const choose = (option: string) => {
-		setRawText(undefined);
 		setOpen(false);
+		setDraft('');
 		setActiveIndex(-1);
 		commit(option, true);
+		setTimeout(() => triggerRef.current?.focus(), 0);
 	};
-	const current = rawText ?? value;
+
 	return (
-		<div className="lore-field lore-field-type">
-			<label htmlFor={id}>{zh.loreType}</label>
-			<div className="lore-type-box" ref={boxRef}>
+		<>
+			<div className="lore-prop-key">
+				<label htmlFor={id}>{zh.loreType}</label>
+			</div>
+			<div
+				className="lore-prop-val"
+				onClick={(event) => {
+					if (event.target === event.currentTarget) {
+						setOpen((was) => {
+							if (was) {
+								setDraft('');
+								setActiveIndex(-1);
+							}
+							return !was;
+						});
+						triggerRef.current?.focus();
+					}
+				}}
+			>
+				<div className="lore-type-box" ref={boxRef}>
+					<button
+						ref={triggerRef}
+						id={id}
+						type="button"
+						className="lore-type-pill"
+						aria-haspopup="listbox"
+						aria-expanded={open}
+						onClick={() => {
+							setOpen((was) => {
+								if (was) {
+									setDraft('');
+									setActiveIndex(-1);
+								}
+								return !was;
+							});
+						}}
+						onKeyDown={(event) => {
+							if (handleHistoryKey(event, undo, redo)) {
+								return;
+							}
+							if (event.key === 'ArrowDown') {
+								event.preventDefault();
+								if (!open) {
+									setOpen(true);
+									setActiveIndex(types.length > 0 ? 0 : -1);
+									if (types.length === 0) {
+										requestAnimationFrame(() => inputRef.current?.focus());
+									}
+								} else if (activeIndex + 1 < types.length) {
+									setActiveIndex(activeIndex + 1);
+								} else {
+									setActiveIndex(-1);
+									inputRef.current?.focus();
+								}
+								return;
+							}
+							if (event.key === 'ArrowUp' && open && types.length > 0) {
+								event.preventDefault();
+								setActiveIndex((index) => (index <= 0 ? types.length - 1 : index - 1));
+								return;
+							}
+							if (event.key === 'Enter' && open && activeIndex >= 0 && activeIndex < types.length) {
+								event.preventDefault();
+								choose(types[activeIndex]);
+							}
+						}}
+					>
+						<span className={value ? undefined : 'lore-placeholder'}>{value || zh.ungrouped}</span>
+						<span className="lore-type-chev" aria-hidden="true">
+							▾
+						</span>
+					</button>
+					{open ? (
+						<div className="lore-type-menu" role="listbox">
+							{types.length > 0 ? (
+								<div className="lore-type-options">
+									{types.map((option, index) => (
+										<button
+											key={option}
+											type="button"
+											role="option"
+											aria-selected={option === value}
+											className={index === activeIndex ? 'lore-type-option active' : 'lore-type-option'}
+											onMouseDown={(event) => event.preventDefault()}
+											onClick={() => choose(option)}
+										>
+											<span>{option}</span>
+											{option === value ? (
+												<span className="lore-type-check" aria-hidden="true">
+													✓
+												</span>
+											) : null}
+										</button>
+									))}
+								</div>
+							) : null}
+							{types.length > 0 ? <hr /> : null}
+							<input
+								ref={inputRef}
+								type="text"
+								className="lore-type-input"
+								placeholder={zh.newTypePlaceholder}
+								aria-label={zh.newTypePlaceholder}
+								value={draft}
+								onCompositionStart={() => {
+									composing.current = true;
+									compositionStart();
+								}}
+								onCompositionEnd={() => {
+									if (composing.current) {
+										composing.current = false;
+										compositionEnd();
+									}
+								}}
+								onBeforeInput={(event) => {
+									if (!composing.current) {
+										handleHistoryBeforeInput(event, undo, redo);
+									}
+								}}
+								onChange={(event) => {
+									setDraft(event.target.value);
+									setActiveIndex(-1);
+								}}
+								onKeyDown={(event) => {
+									if (event.nativeEvent.isComposing || composing.current) {
+										return;
+									}
+									if (handleHistoryKey(event, undo, redo)) {
+										return;
+									}
+									if (event.key === 'Enter') {
+										event.preventDefault();
+										event.stopPropagation();
+										const next = draft.trim();
+										if (next) {
+											choose(next);
+										}
+									}
+								}}
+							/>
+						</div>
+					) : null}
+				</div>
+			</div>
+		</>
+	);
+}
+
+function PillListField({
+	fieldKey,
+	label,
+	items,
+	syncVersion,
+	commit,
+	compositionStart,
+	compositionEnd,
+	undo,
+	redo,
+}: {
+	fieldKey: string;
+	label: string;
+	items: readonly string[];
+	syncVersion: number;
+	commit(items: readonly string[], discrete?: boolean): void;
+	compositionStart(): void;
+	compositionEnd(): void;
+	undo(): void;
+	redo(): void;
+}) {
+	const [draft, setDraft] = useState('');
+	const composing = useRef(false);
+	const finishComposition = useRef(compositionEnd);
+	finishComposition.current = compositionEnd;
+	const inputRef = useRef<HTMLInputElement>(null);
+	const id = useId();
+
+	useEffect(() => {
+		setDraft('');
+	}, [syncVersion]);
+
+	useEffect(
+		() => () => {
+			if (composing.current) {
+				composing.current = false;
+				finishComposition.current();
+			}
+		},
+		[],
+	);
+
+	return (
+		<>
+			<div className="lore-prop-key">
+				<label htmlFor={id}>{label}</label>
+			</div>
+			<div
+				className="lore-prop-val"
+				onClick={(event) => {
+					if (event.target === event.currentTarget) {
+						inputRef.current?.focus();
+					}
+				}}
+			>
+				{items.map((item, index) => (
+					<span key={item} className="lore-pill">
+						<span>{item}</span>
+						<button
+							type="button"
+							className="lore-pill-remove"
+							aria-label={zh.removeItem(item)}
+							onClick={() => {
+								commit(
+									items.filter((_, current) => current !== index),
+									true,
+								);
+								inputRef.current?.focus();
+							}}
+						>
+							✕
+						</button>
+					</span>
+				))}
 				<input
 					ref={inputRef}
 					id={id}
 					type="text"
-					value={current}
-					onMouseDown={() => {
-						if (types.length > 0) {
-							setOpen(true);
-						}
-					}}
-					onCompositionStart={(event) => {
+					className="lore-pill-input"
+					placeholder={zh.addAlias}
+					value={draft}
+					onCompositionStart={() => {
 						composing.current = true;
-						setRawText(event.currentTarget.value);
 						compositionStart();
 					}}
-					onCompositionEnd={(event) => {
-						if (!composing.current) {
-							return;
+					onCompositionEnd={() => {
+						if (composing.current) {
+							composing.current = false;
+							compositionEnd();
 						}
-						composing.current = false;
-						const next = event.currentTarget.value;
-						setRawText(next);
-						commit(next, false);
-						compositionEnd();
 					}}
 					onBeforeInput={(event) => {
 						if (!composing.current) {
 							handleHistoryBeforeInput(event, undo, redo);
 						}
 					}}
-					onChange={(event) => {
-						const next = event.target.value;
-						setRawText(next);
-						setActiveIndex(-1);
-						if (!composing.current) {
-							commit(next, false);
-						}
-					}}
-					onBlur={() => {
-						if (composing.current) {
+					onChange={(event) => setDraft(event.target.value)}
+					onPaste={(event) => {
+						const pasted = event.clipboardData.getData('text/plain');
+						if (!hasLoreListSeparator(pasted, fieldKey)) {
 							return;
 						}
-						setRawText(undefined);
-						setOpen(false);
-						setActiveIndex(-1);
+						event.preventDefault();
+						const target = event.currentTarget;
+						const start = target.selectionStart ?? draft.length;
+						const end = target.selectionEnd ?? start;
+						const combined = draft.slice(0, start) + pasted + draft.slice(end);
+						const next = appendLoreListItems(items, combined, fieldKey);
+						setDraft('');
+						if (next.length !== items.length) {
+							commit(next, true);
+						}
 					}}
 					onKeyDown={(event) => {
 						if (event.nativeEvent.isComposing || composing.current) {
@@ -157,84 +388,48 @@ function TypeField({
 						if (handleHistoryKey(event, undo, redo)) {
 							return;
 						}
-						if (event.key === 'ArrowDown' && types.length > 0) {
-							event.preventDefault();
-							if (!open) {
-								setOpen(true);
-								setActiveIndex(0);
-							} else {
-								setActiveIndex((index) => (index + 1) % types.length);
-							}
-							return;
-						}
-						if (event.key === 'ArrowUp' && open && types.length > 0) {
-							event.preventDefault();
-							setActiveIndex((index) => (index <= 0 ? types.length - 1 : index - 1));
-							return;
-						}
-						if (event.key === 'Escape' && open) {
-							event.preventDefault();
-							event.stopPropagation();
-							setOpen(false);
-							setActiveIndex(-1);
-							return;
-						}
 						if (event.key === 'Enter') {
 							event.preventDefault();
-							if (open && activeIndex >= 0 && activeIndex < types.length) {
-								choose(types[activeIndex]);
-							} else {
-								setOpen(false);
-								setActiveIndex(-1);
+							const next = appendLoreListItems(items, draft, fieldKey);
+							setDraft('');
+							if (next.length !== items.length) {
+								commit(next, true);
 							}
 						}
 					}}
 				/>
-				{types.length > 0 ? (
-					<button
-						type="button"
-						className="lore-type-arrow"
-						tabIndex={-1}
-						aria-hidden="true"
-						onMouseDown={(event) => {
-							event.preventDefault();
-							setOpen((wasOpen) => !wasOpen);
-							setActiveIndex(-1);
-							inputRef.current?.focus();
-						}}
-					>
-						▾
-					</button>
-				) : null}
-				{open && types.length > 0 ? (
-					<div className="lore-type-menu" role="listbox">
-						{types.map((option, index) => (
-							<button
-								key={option}
-								type="button"
-								role="option"
-								aria-selected={index === activeIndex || (activeIndex === -1 && option === current)}
-								onMouseDown={(event) => event.preventDefault()}
-								onClick={() => choose(option)}
-							>
-								<span>{option}</span>
-								{option === value ? <span aria-hidden="true">✓</span> : null}
-							</button>
-						))}
-					</div>
-				) : null}
 			</div>
-		</div>
+		</>
 	);
 }
 
-function TextField({
+function SwitchField({ label, checked, commit }: { label: string; checked: boolean; commit(value: boolean): void }) {
+	const id = useId();
+	return (
+		<>
+			<div className="lore-prop-key">
+				<label htmlFor={id}>{label}</label>
+			</div>
+			<div className="lore-prop-val">
+				<button
+					id={id}
+					type="button"
+					role="switch"
+					aria-checked={checked}
+					className={checked ? 'lore-switch on' : 'lore-switch'}
+					onClick={() => commit(!checked)}
+				/>
+			</div>
+		</>
+	);
+}
+
+function InlineTextField({
 	label,
 	value,
+	placeholder,
 	multiline = false,
-	keepRawWhileFocused = false,
 	syncVersion,
-	className,
 	commit,
 	compositionStart,
 	compositionEnd,
@@ -243,10 +438,9 @@ function TextField({
 }: {
 	label: string;
 	value: string;
+	placeholder?: string;
 	multiline?: boolean;
-	keepRawWhileFocused?: boolean;
 	syncVersion: number;
-	className?: string;
 	commit(value: string): void;
 	compositionStart(): void;
 	compositionEnd(): void;
@@ -257,9 +451,14 @@ function TextField({
 	const composing = useRef(false);
 	const finishComposition = useRef(compositionEnd);
 	finishComposition.current = compositionEnd;
+	const inputRef = useRef<HTMLInputElement>(null);
+	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const id = useId();
+
 	useEffect(() => {
 		setRawText(undefined);
 	}, [syncVersion]);
+
 	useEffect(
 		() => () => {
 			if (composing.current) {
@@ -269,7 +468,10 @@ function TextField({
 		},
 		[],
 	);
+
 	const shared = {
+		id,
+		placeholder,
 		value: rawText ?? value,
 		onCompositionStart: (event: FormEvent<HTMLInputElement | HTMLTextAreaElement>) => {
 			composing.current = true;
@@ -282,7 +484,7 @@ function TextField({
 			}
 			composing.current = false;
 			const next = event.currentTarget.value.replace(/(?:\r\n|\r|\n)+/g, ' ');
-			setRawText(keepRawWhileFocused ? next : undefined);
+			setRawText(next);
 			commit(next);
 			compositionEnd();
 		},
@@ -302,9 +504,7 @@ function TextField({
 			const start = target.selectionStart ?? target.value.length;
 			const end = target.selectionEnd ?? start;
 			const next = target.value.slice(0, start) + clean + target.value.slice(end);
-			if (keepRawWhileFocused) {
-				setRawText(next);
-			}
+			setRawText(next);
 			commit(next);
 			const caret = start + clean.length;
 			requestAnimationFrame(() => {
@@ -319,9 +519,7 @@ function TextField({
 				return;
 			}
 			const next = event.target.value.replace(/(?:\r\n|\r|\n)+/g, ' ');
-			if (keepRawWhileFocused) {
-				setRawText(next);
-			}
+			setRawText(next);
 			commit(next);
 		},
 		onBlur: () => {
@@ -341,15 +539,31 @@ function TextField({
 			}
 		},
 	};
+
 	return (
-		<label className={className ?? 'lore-field'}>
-			<span>{label}</span>
-			{multiline ? <textarea rows={2} {...shared} /> : <input type="text" {...shared} />}
-		</label>
+		<>
+			<div className="lore-prop-key">
+				<label htmlFor={id}>{label}</label>
+			</div>
+			<div
+				className="lore-prop-val"
+				onClick={(event) => {
+					if (event.target === event.currentTarget) {
+						(multiline ? textareaRef.current : inputRef.current)?.focus();
+					}
+				}}
+			>
+				{multiline ? (
+					<textarea ref={textareaRef} rows={1} className="lore-inline-textarea" {...shared} />
+				) : (
+					<input ref={inputRef} type="text" className="lore-inline-input" {...shared} />
+				)}
+			</div>
+		</>
 	);
 }
 
-export function LoreForm({ data, types, syncVersion, commit, compositionStart, compositionEnd, undo, redo, showSource }: Props) {
+export function LoreForm({ title, data, types, syncVersion, commit, compositionStart, compositionEnd, undo, redo, showSource }: Props) {
 	return (
 		<div
 			className="lore-form"
@@ -357,81 +571,83 @@ export function LoreForm({ data, types, syncVersion, commit, compositionStart, c
 				handleHistoryKey(event, undo, redo);
 			}}
 		>
-			<div className="lore-form-inner">
-				<div className="lore-form-row">
-					<TypeField
-						value={data.type}
-						types={types}
-						syncVersion={syncVersion}
-						commit={(value, discrete) => commit('type', value, discrete)}
-						compositionStart={compositionStart}
-						compositionEnd={compositionEnd}
-						undo={undo}
-						redo={redo}
-					/>
-					<TextField
-						label={zh.aliases}
-						value={data.aliases.join('、')}
-						keepRawWhileFocused
-						syncVersion={syncVersion}
-						className="lore-field lore-field-aliases"
-						commit={(value) => commit('aliases', value)}
-						compositionStart={compositionStart}
-						compositionEnd={compositionEnd}
-						undo={undo}
-						redo={redo}
-					/>
-					<label className="lore-field lore-field-check">
-						<input type="checkbox" checked={data.always} onChange={(event) => commit('always', event.target.checked, true)} />
-						<span>{zh.always}</span>
-					</label>
-					<button type="button" className="lore-mode-toggle" onClick={showSource}>
-						{zh.loreSource}
-					</button>
-				</div>
-				<TextField
+			<div className="lore-title-row">
+				<h2>{title}</h2>
+				<button type="button" className="lore-mode-toggle" onClick={showSource}>
+					{zh.loreSource}
+				</button>
+			</div>
+			<div className="lore-props">
+				<TypeField
+					value={data.type}
+					types={types}
+					commit={(value, discrete) => commit('type', value, discrete)}
+					compositionStart={compositionStart}
+					compositionEnd={compositionEnd}
+					undo={undo}
+					redo={redo}
+				/>
+				<PillListField
+					fieldKey="aliases"
+					label={zh.aliases}
+					items={data.aliases}
+					syncVersion={syncVersion}
+					commit={(items, discrete) => commit('aliases', items, discrete)}
+					compositionStart={compositionStart}
+					compositionEnd={compositionEnd}
+					undo={undo}
+					redo={redo}
+				/>
+				<SwitchField label={zh.always} checked={data.always} commit={(value) => commit('always', value, true)} />
+				<InlineTextField
 					label={zh.summary}
 					value={data.summary}
+					placeholder={zh.addSummary}
 					multiline
 					syncVersion={syncVersion}
-					className="lore-field lore-field-summary"
 					commit={(value) => commit('summary', value)}
 					compositionStart={compositionStart}
 					compositionEnd={compositionEnd}
 					undo={undo}
 					redo={redo}
 				/>
-				{data.extras.length > 0 ? (
-					<div className="lore-form-extras">
-						{data.extras.map((extra) =>
-							extra.kind === 'boolean' ? (
-								<label key={extra.key} className="lore-field lore-field-extra lore-field-check">
-									<input
-										type="checkbox"
-										checked={extra.value as boolean}
-										onChange={(event) => commit(extra.key, event.target.checked, true)}
-									/>
-									<span>{extra.key}</span>
-								</label>
-							) : (
-								<TextField
-									key={extra.key}
-									label={extra.key}
-									value={extra.kind === 'list' ? (extra.value as string[]).join(', ') : (extra.value as string)}
-									keepRawWhileFocused={extra.kind === 'list'}
-									syncVersion={syncVersion}
-									className="lore-field lore-field-extra"
-									commit={(value) => commit(extra.key, value)}
-									compositionStart={compositionStart}
-									compositionEnd={compositionEnd}
-									undo={undo}
-									redo={redo}
-								/>
-							),
-						)}
-					</div>
-				) : null}
+				{data.extras.map((extra) =>
+					extra.kind === 'boolean' ? (
+						<SwitchField
+							key={extra.key}
+							label={extra.key}
+							checked={extra.value as boolean}
+							commit={(value) => commit(extra.key, value, true)}
+						/>
+					) : extra.kind === 'list' ? (
+						<PillListField
+							key={extra.key}
+							fieldKey={extra.key}
+							label={extra.key}
+							items={extra.value as string[]}
+							syncVersion={syncVersion}
+							commit={(items, discrete) => commit(extra.key, items, discrete)}
+							compositionStart={compositionStart}
+							compositionEnd={compositionEnd}
+							undo={undo}
+							redo={redo}
+						/>
+					) : (
+						<InlineTextField
+							key={extra.key}
+							label={extra.key}
+							value={extra.value as string}
+							syncVersion={syncVersion}
+							commit={(value) => commit(extra.key, value)}
+							compositionStart={compositionStart}
+							compositionEnd={compositionEnd}
+							undo={undo}
+							redo={redo}
+						/>
+					),
+				)}
 			</div>
+			<hr className="lore-rule" />
 		</div>
 	);
 }

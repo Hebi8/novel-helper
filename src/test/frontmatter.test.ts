@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { type FieldValue, FrontmatterError, setField } from '../core/frontmatter';
 import { parseLoreEntry } from '../core/library';
-import { commitLoreField, diffFrontmatterPrefix, inspectLoreForm } from '../core/loreForm';
+import { appendLoreListItems, commitLoreField, diffFrontmatterPrefix, hasLoreListSeparator, inspectLoreForm } from '../core/loreForm';
 
 const FILE = `---
 # 主角
@@ -219,6 +219,29 @@ describe('loreForm', () => {
 		const diff = diffFrontmatterPrefix(beforeForm.prefix, afterForm.prefix);
 		assert.equal(FILE.slice(0, diff.from) + diff.insert + FILE.slice(diff.to), withAlways);
 		assert.equal(diff.insert, 'tru');
+	});
+
+	test('splits pasted list items, ignores duplicates, and commits pill arrays byte-for-byte', () => {
+		assert.equal(hasLoreListSeparator('老周', 'aliases'), false);
+		assert.equal(hasLoreListSeparator('老周，守塔人', 'aliases'), true);
+		assert.equal(hasLoreListSeparator('老周、守塔人', 'aliases'), true);
+		assert.equal(hasLoreListSeparator('a;b', 'aliases'), true);
+		assert.equal(hasLoreListSeparator('a;b', 'tags'), false);
+
+		assert.deepEqual(appendLoreListItems(['老周'], '守塔人， 老周、周老头, 守塔人\n阿周', 'aliases'), [
+			'老周',
+			'守塔人',
+			'周老头',
+			'阿周',
+		]);
+		assert.deepEqual(appendLoreListItems(['老周'], '  老周  ', 'aliases'), ['老周']);
+
+		const data = inspectLoreForm(FILE)!;
+		assert.equal(commitLoreField(FILE, data, 'aliases', ['小满', '林姑娘']), undefined);
+		const added = commitLoreField(FILE, data, 'aliases', ['小满', '林姑娘', '阿满'])!;
+		assert.equal(added, FILE.replace('aliases: [小满, 林姑娘]   # 镇上的人这么叫', 'aliases: [小满, 林姑娘, 阿满]   # 镇上的人这么叫'));
+		const removed = commitLoreField(added, inspectLoreForm(added)!, 'aliases', ['小满', '阿满'])!;
+		assert.equal(removed, FILE.replace('aliases: [小满, 林姑娘]   # 镇上的人这么叫', 'aliases: [小满, 阿满]   # 镇上的人这么叫'));
 	});
 
 	test('falls back to undefined for missing trailing newline after closing delimiter or non-lossless frontmatter', () => {

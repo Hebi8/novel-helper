@@ -1,23 +1,45 @@
-import { useEffect, useRef, useState } from 'react';
-import type { LoreEntry } from '../../core/library';
-import { groupLore, groupOf, parseAliases } from '../../core/loreGroups';
+import { useEffect, useId, useRef, useState } from 'react';
+import { type LoreEntry, parseLoreEntry } from '../../core/library';
+import { groupLore, groupOf, parseAliases, planNewLore } from '../../core/loreGroups';
 import { useWorkspace } from '../workspace';
 import { zh } from '../strings';
 import { errorMessage } from '../errors';
-type Edit = { kind: 'create' | 'aliases' | 'type'; entry?: LoreEntry };
+
+type FieldEdit = { kind: 'aliases' | 'type'; entry: LoreEntry };
+
 export function LorePanel() {
 	const workspace = useWorkspace();
 	const groups = groupLore(workspace.reference.entries);
+	const types = groups.map((group) => group.type).filter(Boolean);
 	const [menu, setMenu] = useState<{ entry: LoreEntry; x: number; y: number }>();
-	const [edit, setEdit] = useState<Edit>();
+	const [creating, setCreating] = useState<string>();
+	const [edit, setEdit] = useState<FieldEdit>();
 	const [error, setError] = useState('');
+
 	const closeMenu = () => {
 		setMenu(undefined);
+		workspace.focusEditor();
+	};
+	const closeCreate = () => {
+		setCreating(undefined);
 		workspace.focusEditor();
 	};
 	const closeEdit = () => {
 		setEdit(undefined);
 		workspace.focusEditor();
+	};
+	const defaultCreateType = () => {
+		const activePath = workspace.session.active;
+		const activeEntry = activePath ? workspace.reference.entries.find((entry) => entry.id === activePath) : undefined;
+		if (activeEntry) {
+			const current = workspace.current();
+			const liveType =
+				current && current.path === activeEntry.id ? groupOf(parseLoreEntry(current.path, current.text)) : groupOf(activeEntry);
+			if (liveType) {
+				return liveType;
+			}
+		}
+		return types[0] ?? '';
 	};
 	const run = async (operation: () => Promise<void>) => {
 		closeMenu();
@@ -30,11 +52,9 @@ export function LorePanel() {
 			setError(errorMessage(error));
 		}
 	};
+
 	return (
 		<>
-			<div className="panel-actions">
-				<button onClick={() => setEdit({ kind: 'create' })}>{zh.newLore}</button>
-			</div>
 			{error ? (
 				<p role="alert" className="panel-error">
 					{error}
@@ -43,7 +63,20 @@ export function LorePanel() {
 			<div className="tree" role="tree" aria-label={zh.lore}>
 				{groups.map((group) => (
 					<details open key={group.type}>
-						<summary>{group.type || zh.ungrouped}</summary>
+						<summary className="lore-group-summary">
+							<span>{group.type || zh.ungrouped}</span>
+							<button
+								type="button"
+								className="lore-group-add"
+								onClick={(event) => {
+									event.preventDefault();
+									event.stopPropagation();
+									setCreating(group.type);
+								}}
+							>
+								＋
+							</button>
+						</summary>
 						{group.entries.map((entry) => (
 							<button
 								key={entry.id}
@@ -62,6 +95,9 @@ export function LorePanel() {
 						))}
 					</details>
 				))}
+				<button type="button" className="tree-row lore-new-row" onClick={() => setCreating(defaultCreateType())}>
+					{zh.newLoreRow}
+				</button>
 			</div>
 			{menu ? (
 				<div
@@ -114,24 +150,37 @@ export function LorePanel() {
 					</div>
 				</div>
 			) : null}
-			{edit ? (
-				<LoreInput
-					edit={edit}
-					types={groups.map((group) => group.type)}
-					close={closeEdit}
+			{creating !== undefined ? (
+				<NewLoreDialog
+					initialType={creating}
+					types={types}
+					entries={workspace.reference.entries}
+					loreGlobs={workspace.settings['files.lore']}
+					close={closeCreate}
 					submit={async (name, type) => {
-						type = type.trim();
-						if (edit.kind !== 'aliases' && !type) {
+						if (!(await workspace.saveAll())) {
+							return false;
+						}
+						await workspace.open(await window.novel.reference.create(name, type));
+						setError('');
+						return true;
+					}}
+					fail={(message) => setError(message)}
+				/>
+			) : null}
+			{edit ? (
+				<LoreFieldDialog
+					edit={edit}
+					types={types}
+					close={closeEdit}
+					submit={async (value) => {
+						if (edit.kind === 'type' && !value.trim()) {
 							return false;
 						}
 						if (!(await workspace.saveAll())) {
 							return false;
 						}
-						if (edit.kind === 'create') {
-							await workspace.open(await window.novel.reference.create(name, type));
-						} else {
-							await window.novel.reference.set(edit.entry!.id, edit.kind, edit.kind === 'aliases' ? parseAliases(name) : type);
-						}
+						await window.novel.reference.set(edit.entry.id, edit.kind, edit.kind === 'aliases' ? parseAliases(value) : value.trim());
 						return true;
 					}}
 				/>
@@ -139,26 +188,212 @@ export function LorePanel() {
 		</>
 	);
 }
-function LoreInput({
+
+function NewLoreDialog({
+	initialType,
+	types,
+	entries,
+	loreGlobs,
+	close,
+	submit,
+	fail,
+}: {
+	initialType: string;
+	types: readonly string[];
+	entries: readonly LoreEntry[];
+	loreGlobs: readonly string[];
+	close(): void;
+	submit(name: string, type: string): Promise<boolean>;
+	fail(message: string): void;
+}) {
+	const [name, setName] = useState('');
+	const [chipTypes, setChipTypes] = useState<string[]>(() =>
+		initialType && !types.includes(initialType) ? [...types, initialType] : [...types],
+	);
+	const [selectedType, setSelectedType] = useState(initialType);
+	const [addingType, setAddingType] = useState(false);
+	const [typeDraft, setTypeDraft] = useState('');
+	const [pending, setPending] = useState(false);
+	const nameId = useId();
+	const nameRef = useRef<HTMLInputElement>(null);
+	const typeInputRef = useRef<HTMLInputElement>(null);
+	const addChipRef = useRef<HTMLButtonElement>(null);
+	const cancelRef = useRef<HTMLButtonElement>(null);
+
+	useEffect(() => {
+		nameRef.current?.focus();
+	}, []);
+
+	useEffect(() => {
+		if (addingType) {
+			typeInputRef.current?.focus();
+		}
+	}, [addingType]);
+
+	const effectiveType = addingType ? typeDraft.trim() : selectedType;
+	const plan = planNewLore(name, effectiveType, entries, loreGlobs);
+
+	const submitForm = () => {
+		if (pending || !plan.valid) {
+			return;
+		}
+		setPending(true);
+		void submit(name, effectiveType)
+			.then((done) => {
+				if (done) {
+					close();
+				}
+			})
+			.catch((error) => {
+				close();
+				fail(errorMessage(error));
+			})
+			.finally(() => setPending(false));
+	};
+
+	return (
+		<div className="popover-backdrop">
+			<div
+				className="lore-dialog"
+				role="dialog"
+				aria-label={zh.newLore}
+				onKeyDown={(event) => {
+					if (event.nativeEvent.isComposing) {
+						return;
+					}
+					if (event.key === 'Escape' && !pending) {
+						event.preventDefault();
+						event.stopPropagation();
+						close();
+						return;
+					}
+					if (event.key === 'Enter' && !addingType && event.target !== cancelRef.current && event.target !== addChipRef.current) {
+						event.preventDefault();
+						submitForm();
+					}
+				}}
+			>
+				<h3>{zh.newLore}</h3>
+				<div className="lore-dialog-field">
+					<label htmlFor={nameId} className="lore-dialog-label">
+						{zh.loreName}
+					</label>
+					<input
+						ref={nameRef}
+						id={nameId}
+						type="text"
+						className="lore-dialog-name"
+						value={name}
+						disabled={pending}
+						onChange={(event) => setName(event.target.value)}
+					/>
+				</div>
+				<div className="lore-dialog-field">
+					<span className="lore-dialog-label">{zh.loreType}</span>
+					<div className="lore-type-chips" role="group" aria-label={zh.loreType}>
+						{chipTypes.map((item) => {
+							const active = !addingType && selectedType === item;
+							return (
+								<button
+									key={item}
+									type="button"
+									className={active ? 'lore-chip on' : 'lore-chip'}
+									aria-pressed={active}
+									disabled={pending}
+									onClick={() => {
+										setSelectedType(item);
+										setAddingType(false);
+										setTypeDraft('');
+									}}
+								>
+									{item}
+								</button>
+							);
+						})}
+						{addingType ? (
+							<input
+								ref={typeInputRef}
+								type="text"
+								className="lore-chip-input"
+								aria-label={zh.newTypePlaceholder}
+								value={typeDraft}
+								disabled={pending}
+								onChange={(event) => setTypeDraft(event.target.value)}
+								onKeyDown={(event) => {
+									if (event.nativeEvent.isComposing) {
+										return;
+									}
+									if (event.key === 'Escape') {
+										event.preventDefault();
+										event.stopPropagation();
+										setAddingType(false);
+										setTypeDraft('');
+										requestAnimationFrame(() => addChipRef.current?.focus());
+										return;
+									}
+									if (event.key === 'Enter') {
+										event.preventDefault();
+										event.stopPropagation();
+										const next = typeDraft.trim();
+										if (next) {
+											setChipTypes((prev) => (prev.includes(next) ? prev : [...prev, next]));
+											setSelectedType(next);
+										}
+										setAddingType(false);
+										setTypeDraft('');
+										requestAnimationFrame(() => nameRef.current?.focus());
+									}
+								}}
+							/>
+						) : (
+							<button
+								ref={addChipRef}
+								type="button"
+								className="lore-chip add"
+								disabled={pending}
+								onClick={() => {
+									setAddingType(true);
+									setTypeDraft('');
+								}}
+							>
+								{zh.newTypeChip}
+							</button>
+						)}
+					</div>
+					<div className="lore-dialog-where">{zh.loreWhere(plan.preview)}</div>
+				</div>
+				<div className="lore-dialog-actions">
+					<button ref={cancelRef} type="button" className="lore-dialog-btn" disabled={pending} onClick={close}>
+						{zh.cancel}
+					</button>
+					<button type="button" className="lore-dialog-btn primary" disabled={pending || !plan.valid} onClick={submitForm}>
+						{zh.createLore}
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function LoreFieldDialog({
 	edit,
 	types,
 	close,
 	submit,
 }: {
-	edit: Edit;
+	edit: FieldEdit;
 	types: string[];
 	close(): void;
-	submit(name: string, type: string): Promise<boolean>;
+	submit(value: string): Promise<boolean>;
 }) {
-	const [name, setName] = useState(edit.kind === 'aliases' ? edit.entry!.aliases.join('、') : '');
-	const [type, setType] = useState(edit.entry ? groupOf(edit.entry) : (types[0] ?? ''));
+	const [value, setValue] = useState(edit.kind === 'aliases' ? edit.entry.aliases.join('、') : groupOf(edit.entry));
 	const [error, setError] = useState('');
 	const [pending, setPending] = useState(false);
 	const form = useRef<HTMLFormElement>(null);
 	useEffect(() => {
 		form.current?.querySelector('input')?.focus();
 	}, []);
-	const title = edit.kind === 'create' ? zh.newLore : edit.kind === 'aliases' ? zh.setAliases : zh.setType;
+	const title = edit.kind === 'aliases' ? zh.setAliases : zh.setType;
 	return (
 		<div className="popover-backdrop">
 			<form
@@ -177,7 +412,7 @@ function LoreInput({
 						return;
 					}
 					setPending(true);
-					void submit(name, type)
+					void submit(value)
 						.then((done) => {
 							if (done) {
 								close();
@@ -188,29 +423,28 @@ function LoreInput({
 				}}
 			>
 				<h3>{title}</h3>
-				{edit.kind !== 'type' ? (
+				{edit.kind === 'aliases' ? (
 					<label>
-						{edit.kind === 'aliases' ? zh.aliases : zh.loreName}
-						<input value={name} onChange={(event) => setName(event.target.value)} />
+						{zh.aliases}
+						<input value={value} onChange={(event) => setValue(event.target.value)} />
 					</label>
-				) : null}
-				{edit.kind !== 'aliases' ? (
+				) : (
 					<label>
 						{zh.loreType}
-						<input list="lore-types" value={type} onChange={(event) => setType(event.target.value)} />
+						<input list="lore-types" value={value} onChange={(event) => setValue(event.target.value)} />
 						<datalist id="lore-types">
 							{types.map((type) => (
 								<option key={type} value={type} />
 							))}
 						</datalist>
 					</label>
-				) : null}
+				)}
 				{error ? <p role="alert">{error}</p> : null}
 				<div className="panel-actions">
 					<button type="button" onClick={close}>
 						{zh.cancel}
 					</button>
-					<button disabled={pending || (edit.kind !== 'aliases' && !type.trim())} type="submit">
+					<button disabled={pending || (edit.kind === 'type' && !value.trim())} type="submit">
 						{zh.confirm}
 					</button>
 				</div>
