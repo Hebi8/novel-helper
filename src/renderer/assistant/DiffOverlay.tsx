@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { MergeView } from '@codemirror/merge';
 import { EditorState } from '@codemirror/state';
 import { EditorView, lineNumbers } from '@codemirror/view';
@@ -7,7 +7,17 @@ import { zh } from '../strings';
 import { Overlay } from './Overlay';
 import type { DiffView } from './events';
 
-export function DiffOverlay({ diff, close, open }: { diff: DiffView; close(): void; open(path: string): void }) {
+export function DiffOverlay({
+	diff,
+	close,
+	open,
+	actions,
+}: {
+	diff: DiffView;
+	close(): void;
+	open(path: string): void;
+	actions?: ReactNode;
+}) {
 	const parent = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		const extensions = [
@@ -38,11 +48,12 @@ export function DiffOverlay({ diff, close, open }: { diff: DiffView; close(): vo
 				<span>{diff.afterLabel ?? zh.assistantAfter}</span>
 			</div>
 			<div className="assistant-merge" ref={parent} />
-			{diff.canOpen ? (
-				<footer>
-					<button onClick={() => open(diff.path)}>{zh.assistantOpenFile}</button>
-				</footer>
-			) : null}
+			{actions ??
+				(diff.canOpen ? (
+					<footer>
+						<button onClick={() => open(diff.path)}>{zh.assistantOpenFile}</button>
+					</footer>
+				) : null)}
 		</Overlay>
 	);
 }

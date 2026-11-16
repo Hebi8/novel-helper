@@ -51,6 +51,8 @@ const api: AppAPI = {
 		open: (root, selected) => ipcRenderer.invoke(c.bookOpen, root, selected),
 		read: (path) => ipcRenderer.invoke(c.bookRead, path),
 		save: (path, text, base, force) => ipcRenderer.invoke(c.bookSave, path, text, base, force),
+		conflictDiff: (path) => ipcRenderer.invoke(c.bookConflictDiff, path),
+		resolveConflict: (path, action) => ipcRenderer.invoke(c.bookConflictResolve, path, action),
 		onChanged: (listener) => listen(c.bookChanged, listener),
 		onFileChanged: (listener) => listen(c.fileChanged, listener),
 	},

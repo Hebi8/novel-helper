@@ -1,16 +1,25 @@
+import type { ConflictCopy } from '../core/conflict';
 import type { BookNode } from '../core/library';
 import type { Totals } from '../core/usage';
 import type { ProviderId } from '../llm/providers';
 import type { Settings, SettingKey } from './defaults';
 import type { AssistantAPI } from './assistant';
-export type { Settings, SettingKey };
+export type { ConflictCopy, Settings, SettingKey };
 export interface Book {
 	referenceVersion?: number;
 	buoyVersion?: number;
 	root: string;
 	name: string;
 	tree: BookNode;
+	conflicts: ConflictCopy[];
 }
+export interface ConflictDiff {
+	path: string;
+	original: string;
+	before: string;
+	after: string;
+}
+export type ConflictResolution = 'replace' | 'trash';
 export interface TabState {
 	path: string;
 	anchor: number;
@@ -89,6 +98,8 @@ export interface AppAPI {
 		open(root?: string, selected?: boolean): Promise<OpenResult>;
 		read(path: string): Promise<DiskFile>;
 		save(path: string, text: string, base: string, force?: boolean): Promise<SaveResult>;
+		conflictDiff(path: string): Promise<ConflictDiff>;
+		resolveConflict(path: string, action: ConflictResolution): Promise<void>;
 		onOpenResult(listener: (result: OpenResult) => void): () => void;
 		onChanged(listener: (book: Book) => void): () => void;
 		onFileChanged(listener: (file: DiskFile) => void): () => void;
@@ -155,6 +166,8 @@ export const channels = {
 	openResult: 'book:openResult',
 	bookRead: 'book:read',
 	bookSave: 'book:save',
+	bookConflictDiff: 'book:conflictDiff',
+	bookConflictResolve: 'book:conflictResolve',
 	bookChanged: 'book:changed',
 	fileChanged: 'book:fileChanged',
 	completionRequest: 'completion:request',

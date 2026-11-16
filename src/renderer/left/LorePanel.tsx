@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import type { ConflictCopy } from '../../core/conflict';
 import type { LoreEntry } from '../../core/library';
 import { groupLore, groupOf, parseAliases } from '../../core/loreGroups';
+import { stem } from '../../core/text';
+import { TreeMenu } from '../scaffold/TreeMenu';
 import { useWorkspace } from '../workspace';
 import { zh } from '../strings';
 import { errorMessage } from '../errors';
@@ -9,8 +12,15 @@ export function LorePanel() {
 	const workspace = useWorkspace();
 	const groups = groupLore(workspace.reference.entries);
 	const [menu, setMenu] = useState<{ entry: LoreEntry; x: number; y: number }>();
+	const [conflictMenu, setConflictMenu] = useState<{ path: string; x: number; y: number }>();
 	const [edit, setEdit] = useState<Edit>();
 	const [error, setError] = useState('');
+	const conflicts = new Map<string, ConflictCopy[]>();
+	for (const conflict of workspace.book?.conflicts ?? []) {
+		const list = conflicts.get(conflict.original) ?? [];
+		list.push(conflict);
+		conflicts.set(conflict.original, list);
+	}
 	const closeMenu = () => {
 		setMenu(undefined);
 		workspace.focusEditor();
@@ -45,20 +55,37 @@ export function LorePanel() {
 					<details open key={group.type}>
 						<summary>{group.type || zh.ungrouped}</summary>
 						{group.entries.map((entry) => (
-							<button
-								key={entry.id}
-								className="tree-row lore-row"
-								onClick={() => {
-									void workspace.open(entry.id);
-								}}
-								onContextMenu={(event) => {
-									event.preventDefault();
-									setMenu({ entry, x: event.clientX, y: event.clientY });
-								}}
-							>
-								<span>{entry.name}</span>
-								<small>{[entry.always ? zh.always : '', entry.aliases.join('、')].filter(Boolean).join(' · ')}</small>
-							</button>
+							<Fragment key={entry.id}>
+								<button
+									className="tree-row lore-row"
+									onClick={() => {
+										void workspace.open(entry.id);
+									}}
+									onContextMenu={(event) => {
+										event.preventDefault();
+										setMenu({ entry, x: event.clientX, y: event.clientY });
+									}}
+								>
+									<span>{entry.name}</span>
+									<small>{[entry.always ? zh.always : '', entry.aliases.join('、')].filter(Boolean).join(' · ')}</small>
+								</button>
+								{(conflicts.get(entry.id) ?? []).map((copy) => (
+									<button
+										type="button"
+										key={copy.path}
+										className="tree-row lore-row conflict-copy-row"
+										style={{ paddingLeft: 22 }}
+										onClick={() => workspace.openConflict(copy.path)}
+										onContextMenu={(event) => {
+											event.preventDefault();
+											setConflictMenu({ path: copy.path, x: event.clientX, y: event.clientY });
+										}}
+									>
+										<span className="tree-name">{stem(copy.path)}</span>
+										<small className="conflict-badge">{zh.conflictCopy}</small>
+									</button>
+								))}
+							</Fragment>
 						))}
 					</details>
 				))}
@@ -113,6 +140,21 @@ export function LorePanel() {
 						</button>
 					</div>
 				</div>
+			) : null}
+			{conflictMenu ? (
+				<TreeMenu
+					x={conflictMenu.x}
+					y={conflictMenu.y}
+					close={() => setConflictMenu(undefined)}
+					actions={[
+						{
+							label: zh.reveal,
+							run: () => {
+								void window.novel.book.reveal(conflictMenu.path).catch((error) => setError(errorMessage(error)));
+							},
+						},
+					]}
+				/>
 			) : null}
 			{edit ? (
 				<LoreInput

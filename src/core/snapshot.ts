@@ -58,7 +58,7 @@ export interface SnapshotRecord {
 	id: number;
 	/** ISO time of the snapshot. */
 	time: string;
-	kind: 'turn' | 'revert' | 'timed';
+	kind: 'turn' | 'revert' | 'timed' | 'conflict';
 	/** Of a turn: how the writer's message starts. */
 	title?: string;
 	/** Of going back: the record whose `files` were restored. */

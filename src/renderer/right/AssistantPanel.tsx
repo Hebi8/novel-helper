@@ -416,13 +416,16 @@ export function AssistantPanel({ visible = true }: { visible?: boolean }) {
 					<div className="assistant-history">
 						{history.length ? (
 							history.map((record) => {
-								const mode: RevertMode = record.kind === 'revert' ? 'undo' : record.kind === 'timed' ? 'timed' : 'turn';
+								const mode: RevertMode =
+									record.kind === 'revert' ? 'undo' : record.kind === 'timed' || record.kind === 'conflict' ? 'timed' : 'turn';
 								return (
 									<article className="assistant-turn" key={record.id}>
 										<strong>
 											{record.kind === 'timed'
 												? `${zh.snapshotTimed} · ${(record.changes ?? []).length} ${zh.assistantFiles}`
-												: `#${record.id} · ${record.kind === 'revert' ? zh.assistantUndoRevert : record.title}`}
+												: record.kind === 'conflict'
+													? `${zh.snapshotConflict} · ${record.title}`
+													: `#${record.id} · ${record.kind === 'revert' ? zh.assistantUndoRevert : record.title}`}
 										</strong>
 										<time>{new Date(record.time).toLocaleString('zh-CN')}</time>
 										<Changes changes={record.changes ?? []} record={record.id} diff={showDiff} />

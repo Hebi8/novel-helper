@@ -459,7 +459,7 @@ export class SnapshotStore {
 		if (!target) {
 			return { blocked: [] };
 		}
-		const record = await this.begin({ kind: 'revert', ...(target.kind !== 'timed' && { target: id }) });
+		const record = await this.begin({ kind: 'revert', ...((target.kind === 'turn' || target.kind === 'revert') && { target: id }) });
 		const plan = restorePlan(target.files, record.files);
 		const blocked = await this.blocked(plan, record.files);
 		if (!blocked.length) {

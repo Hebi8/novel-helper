@@ -128,6 +128,7 @@ export const zh = {
 	assistantSnapshots: '快照',
 	assistantNoSnapshots: '还没有快照',
 	snapshotTimed: '定时',
+	snapshotConflict: '冲突替换',
 	snapshotBefore: '上一份快照',
 	snapshotAfter: '这份快照',
 	snapshotRevert: '退回到这个时间点',
@@ -135,6 +136,18 @@ export const zh = {
 	snapshotRevertConfirm:
 		'整本书会恢复成这份快照的样子，之后新建的文件会移除，包括后来改过的内容。退回前会保存现在的样子，可以撤销这次退回。',
 	snapshotFailed: (reason: string) => `定时快照没存上：${reason}`,
+	conflictCopy: '冲突副本',
+	conflictOriginal: '原文件',
+	conflictCount: (count: number) => `有 ${count} 个冲突副本`,
+	conflictReplace: '用副本替换原文',
+	conflictDelete: '删除副本',
+	conflictConfirmReplace: '确认替换',
+	conflictConfirmDelete: '确认删除',
+	conflictReplaceConfirm: (copy: string, original: string) =>
+		`将用「${copy}」的内容覆盖「${original}」，并把冲突副本移到废纸篓。替换前会先保存快照，可在「快照」中退回。`,
+	conflictDeleteConfirm: (copy: string) => `将把「${copy}」移到废纸篓，原文件保持不变。`,
+	conflictBlockedUnsaved: '原文件或冲突副本在编辑器里有未保存内容，未执行操作。',
+	conflictBlockedConflict: '原文件或冲突副本在编辑器里有尚未解决的冲突，未执行操作。',
 	assistantBlocked: '无法退回',
 	assistantBlockedDetail: '以下文件挡住了退回。这次没有改动任何文件。',
 	assistantBlockReasons: {

@@ -1,0 +1,75 @@
+// Identifying iCloud Drive conflict copies (`name 2.md`, `name 3.md`…) next to
+// their original files in the same folder.
+
+import { comparePaths } from './naturalSort';
+
+export interface ConflictCopy {
+	/** Relative path of the conflict copy. */
+	path: string;
+	/** Relative path of the original file in the same folder. */
+	original: string;
+}
+
+const CONFLICT_STEM = /^(.+) ([2-9]|[1-9]\d+)$/;
+
+/**
+ * If `path` has the filename shape `<stem> <n>=2+<ext>` for one of
+ * `extensions`, returns the candidate original path `<stem><ext>` in the same
+ * folder; otherwise undefined.
+ */
+export function conflictCandidate(path: string, extensions: readonly string[] = ['.md']): string | undefined {
+	const slash = path.lastIndexOf('/');
+	const dir = slash === -1 ? '' : path.slice(0, slash + 1);
+	const base = slash === -1 ? path : path.slice(slash + 1);
+	const ext = extensions.find((item) => base.endsWith(item));
+	if (!ext) {
+		return undefined;
+	}
+	const stem = base.slice(0, -ext.length);
+	if (!stem || stem.startsWith('.')) {
+		return undefined;
+	}
+	const match = CONFLICT_STEM.exec(stem);
+	if (!match || match[1].startsWith('.')) {
+		return undefined;
+	}
+	return `${dir}${match[1]}${ext}`;
+}
+
+/**
+ * Returns the original path in `existing` that `path` is an iCloud conflict
+ * copy of, or undefined when `path` is not a conflict copy.
+ */
+export function conflictOriginal(
+	path: string,
+	existing: ReadonlySet<string>,
+	extensions: readonly string[] = ['.md'],
+): string | undefined {
+	const candidate = conflictCandidate(path, extensions);
+	return candidate !== undefined && existing.has(candidate) ? candidate : undefined;
+}
+
+/**
+ * Finds all conflict copies among `paths` in natural path order. When a
+ * conflict copy itself has a conflict copy (`a.md`, `a 2.md`, `a 2 2.md`),
+ * `original` resolves to the non-conflict base file (`a.md`).
+ */
+export function findConflictCopies(paths: Iterable<string>, extensions: readonly string[] = ['.md']): ConflictCopy[] {
+	const all = new Set(paths);
+	const direct = new Map<string, string>();
+	for (const path of all) {
+		const original = conflictOriginal(path, all, extensions);
+		if (original !== undefined) {
+			direct.set(path, original);
+		}
+	}
+	return [...direct.keys()].sort(comparePaths).map((path) => {
+		let original = direct.get(path)!;
+		const seen = new Set([path]);
+		while (direct.has(original) && !seen.has(original)) {
+			seen.add(original);
+			original = direct.get(original)!;
+		}
+		return { path, original };
+	});
+}

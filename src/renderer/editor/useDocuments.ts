@@ -1,6 +1,7 @@
 import { movedPath } from '../../shared/paths';
 import type { Rename } from '../../core/library';
 import { errorMessage } from '../errors';
+import { zh } from '../strings';
 import { useRef, useState } from 'react';
 import type { DiskFile, SessionState, OpenOptions, ReportKind } from '../../shared/api';
 import type { EditorHandle } from './Editor';
@@ -133,6 +134,39 @@ export function useDocuments() {
 		pendingOffsets.current.delete(path);
 		documents.current.delete(path);
 		model.dispose();
+	};
+	const closeRemoved = (path: string) => {
+		const model = documents.current.get(path);
+		if (!model) {
+			return;
+		}
+		const current = sessionRef.current;
+		const index = current.tabs.findIndex((tab) => tab.path === path);
+		const tabs = current.tabs.filter((tab) => tab.path !== path);
+		persist({ tabs, active: current.active === path ? tabs[Math.min(index, tabs.length - 1)]?.path : current.active });
+		if (panesRef.current?.left === path || panesRef.current?.right === path) {
+			setSplit(undefined);
+		}
+		pendingOffsets.current.delete(path);
+		documents.current.delete(path);
+		model.dispose();
+	};
+	const conflictBlockReason = (paths: readonly string[]): string | undefined => {
+		for (const path of paths) {
+			const model = documents.current.get(path);
+			if (!model) {
+				continue;
+			}
+			if (model.conflict !== undefined) {
+				select(path);
+				return zh.conflictBlockedConflict;
+			}
+			if (model.dirty) {
+				select(path);
+				return zh.conflictBlockedUnsaved;
+			}
+		}
+		return undefined;
 	};
 	const saveAll = async () => {
 		flushSession();
@@ -278,6 +312,8 @@ export function useDocuments() {
 		select,
 		open,
 		close,
+		closeRemoved,
+		conflictBlockReason,
 		saveAll,
 		restore,
 		external,
