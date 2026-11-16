@@ -46,6 +46,7 @@ if (!app.requestSingleInstanceLock()) {
 		const windows = new WindowStore(directory);
 		const books = new Map<number, BookIndex>();
 		const snapshots = new BookSnapshots(
+			directory,
 			() => settings.get(),
 			isAssistantBusy,
 			(root, message) => {

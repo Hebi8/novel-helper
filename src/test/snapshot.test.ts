@@ -1,6 +1,7 @@
 // Snapshots of a story folder: what is kept, what a turn is found to have
 // changed, going back, and what is thrown away.
 
+import { createHash } from 'node:crypto';
 import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import fsp = require('node:fs/promises');
@@ -26,42 +27,50 @@ import { BookSnapshots } from '../main/assistant/snapshots';
 import { BookIndex } from '../main/book/indexer';
 import { renameBook, renamePlan } from '../main/scaffold/rename';
 import { defaults, type Settings } from '../shared/defaults';
-import { SnapshotStore } from '../storage/snapshotStore';
+import { snapshotBookId, snapshotDirectory, SnapshotStore } from '../storage/snapshotStore';
 import { filesIn } from './files';
 
 const made: string[] = [];
 after(() => made.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
 
+function tempDir(prefix: string) {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	made.push(dir);
+	return dir;
+}
+
 /** A story folder with these files, and its store. */
 function story(files: Record<string, string | Buffer>, keep = 50, timedKeep = 100) {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-helper-snapshot-'));
-	made.push(dir);
+	const dir = tempDir('novel-helper-snapshot-');
+	const userData = tempDir('novel-helper-userdata-');
 	const write = (file: string, content: string | Buffer = '') => {
 		fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
 		fs.writeFileSync(path.join(dir, file), content);
 	};
 	Object.entries(files).forEach(([file, content]) => write(file, content));
+	const store = new SnapshotStore(
+		dir,
+		userData,
+		() => keep,
+		() => timedKeep,
+	);
 	return {
 		dir,
-		store: new SnapshotStore(
-			dir,
-			() => keep,
-			() => timedKeep,
-		),
+		userData,
+		store,
 		write,
 		remove: (file: string) => fs.rmSync(path.join(dir, file)),
 		read: (file: string) => fs.readFileSync(path.join(dir, file), 'utf8'),
-		/** The story's own files, the snapshots aside. */
+		/** The story's own files, legacy snapshots aside. */
 		files: () => filesIn(dir).filter((file) => !file.startsWith(`${SNAPSHOT_DIR}/`)),
-		objects: () => filesIn(path.join(dir, SNAPSHOT_DIR, 'objects')).length,
-		timedObjects: () => filesIn(path.join(dir, SNAPSHOT_DIR, 'timed-objects')).length,
+		objects: () => filesIn(path.join(store.dir, 'objects')).length,
+		timedObjects: () => filesIn(path.join(store.dir, 'timed-objects')).length,
 	};
 }
 
 /** A temporary copy of `examples` for testing `BookSnapshots`. */
 function exampleCopy() {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-helper-examples-'));
-	made.push(dir);
+	const dir = tempDir('novel-helper-examples-');
 	fs.cpSync(path.resolve('examples'), dir, { recursive: true });
 	return dir;
 }
@@ -98,10 +107,53 @@ describe('what a snapshot holds', () => {
 		assert.equal(manifest['正文/第一卷/第1章.md'], manifest['正文/第一卷/第2章.md']);
 		assert.equal(one.objects(), 3);
 		assert.equal((await one.store.read(manifest['设定/雾港.md'])).toString(), '港');
-		// Taking it again adds nothing, and the snapshots are not part of the next one.
+		// Taking it again adds nothing, and snapshots live under userData rather than inside the book.
 		assert.deepEqual(await one.store.capture(), manifest);
 		assert.equal(one.objects(), 3);
-		assert.equal(fs.readFileSync(path.join(one.dir, SNAPSHOT_DIR, '.gitignore'), 'utf8'), '*\n');
+		const real = fs.realpathSync(one.dir);
+		const expectedId = createHash('sha256').update(real).digest('hex').slice(0, 16);
+		assert.equal(snapshotBookId(real), expectedId);
+		assert.equal(one.store.dir, path.join(one.userData, 'snapshots', expectedId));
+		assert.deepEqual(JSON.parse(fs.readFileSync(path.join(one.store.dir, 'book.json'), 'utf8')), { root: real });
+		assert.equal(fs.existsSync(path.join(one.dir, SNAPSHOT_DIR)), false);
+	});
+
+	test('canonicalizes symlinked book roots to one userData snapshot folder and leaves legacy in-book snapshots untouched', async () => {
+		const one = story({
+			'正文/第1章.md': '初稿',
+			'.novel-helper/snapshots/turns/000001.json': JSON.stringify({
+				id: 1,
+				time: '2026-01-01T00:00:00.000Z',
+				kind: 'turn',
+				title: '旧快照',
+				files: { '正文/第1章.md': '0'.repeat(64) },
+				changes: [{ path: '正文/第1章.md', after: '0'.repeat(64) }],
+			}),
+		});
+		const linkParent = tempDir('novel-helper-link-');
+		const linkedBook = path.join(linkParent, 'linked-book');
+		fs.symlinkSync(one.dir, linkedBook);
+		const viaLink = new SnapshotStore(linkedBook, one.userData, () => 50);
+
+		const real = fs.realpathSync(one.dir);
+		assert.equal(viaLink.dir, one.store.dir);
+		assert.equal(viaLink.dir, snapshotDirectory(one.userData, real));
+		// Legacy in-book snapshots are ignored on list/get and excluded from seed/capture/revert.
+		assert.deepEqual(await viaLink.list(), []);
+		assert.equal(await viaLink.get(1), undefined);
+		const seeded = await viaLink.seed();
+		assert.deepEqual(Object.keys(seeded.files), ['正文/第1章.md']);
+
+		const turn = await viaLink.begin({ kind: 'turn', title: '本机快照' });
+		one.write('正文/第1章.md', '第二稿');
+		await viaLink.finish(turn.id);
+		assert.deepEqual(JSON.parse(fs.readFileSync(path.join(viaLink.dir, 'book.json'), 'utf8')), { root: real });
+		assert.equal((await one.store.list()).length, 1);
+		assert.equal((await one.store.list())[0].title, '本机快照');
+
+		await one.store.revert(turn.id);
+		assert.equal(one.read('正文/第1章.md'), '初稿');
+		assert.equal(fs.existsSync(path.join(one.dir, '.novel-helper/snapshots/turns/000001.json')), true);
 	});
 });
 
@@ -373,7 +425,7 @@ describe('turns', () => {
 		await assert.rejects(one.store.finish(record.id), /killed/);
 
 		// The window is opened again; another turn comes and goes, and clears away what nothing refers to.
-		const again = new SnapshotStore(one.dir, () => 50);
+		const again = new SnapshotStore(one.dir, one.userData, () => 50);
 		assert.deepEqual(
 			(await again.list()).map((kept) => kept.id),
 			[record.id],
@@ -381,14 +433,14 @@ describe('turns', () => {
 		const next = await again.begin({ kind: 'turn', title: '再改' });
 		one.write('正文/第1章.md', '一再改');
 		await again.finish(next.id);
-		assert.deepEqual(filesIn(path.join(one.dir, SNAPSHOT_DIR, 'turns')), ['000001.json', '000002.json'], 'what was half-written is cleared away');
+		assert.deepEqual(filesIn(path.join(one.store.dir, 'turns')), ['000001.json', '000002.json'], 'what was half-written is cleared away');
 		await again.revert(record.id);
 		assert.equal(one.read('正文/第1章.md'), '一');
 	});
 
 	test('two windows that start a turn at the same moment get a record each', async () => {
 		const one = story({ '正文/第1章.md': '一' });
-		const other = new SnapshotStore(one.dir, () => 50);
+		const other = new SnapshotStore(one.dir, one.userData, () => 50);
 		const records = await Promise.all([one.store.begin({ kind: 'turn', title: '甲' }), other.begin({ kind: 'turn', title: '乙' })]);
 		assert.deepEqual(
 			records.map((record) => record.id).sort(),
@@ -402,13 +454,13 @@ describe('turns', () => {
 
 	test('what one window has kept for a record it is about to write is not cleared away by another that ends a turn', async () => {
 		const one = story({ '正文/第1章.md': '一' });
-		const other = new SnapshotStore(one.dir, () => 50);
+		const other = new SnapshotStore(one.dir, one.userData, () => 50);
 		const first = await other.begin({ kind: 'turn', title: '乙' });
 		one.write('正文/第1章.md', '二');
 		// This window has read the folder and is held up right before it writes its record.
 		let reached!: () => void;
 		const there = new Promise<void>((resolve) => (reached = resolve));
-		const turns = path.join(one.dir, SNAPSHOT_DIR, 'turns');
+		const turns = path.join(one.store.dir, 'turns');
 		const readdir = fsp.readdir as (...args: unknown[]) => Promise<unknown>;
 		const hold = mock.method(fsp as unknown as { readdir: typeof readdir }, 'readdir', async (...args: unknown[]) => {
 			if (args[0] === turns) {
@@ -446,15 +498,17 @@ describe('timed snapshots', () => {
 
 	test('saves only once the interval has elapsed since the latest snapshot of any kind, and skips unchanged saves', async () => {
 		const root = exampleCopy();
+		const userData = tempDir('novel-helper-userdata-');
 		const full = path.join(root, ...chapter.split('/'));
 		const original = fs.readFileSync(full, 'utf8');
 		const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
-		const snapshots = new BookSnapshots(() => current);
+		const snapshots = new BookSnapshots(userData, () => current);
 		const t0 = Date.parse('2026-04-01T10:00:00.000Z');
 		await snapshots.open(root, t0);
 
-		// Unchanged save past the interval writes nothing and does not create `.novel-helper/snapshots`.
+		// Unchanged save past the interval writes nothing and does not create the snapshot directory.
 		assert.equal(await snapshots.afterSave(root, t0 + 15 * 60_000), undefined);
+		assert.equal(fs.existsSync(snapshots.store(root).dir), false);
 		assert.equal(fs.existsSync(path.join(root, SNAPSHOT_DIR)), false);
 
 		// Changed save before the interval elapses does not snapshot yet.
@@ -502,6 +556,7 @@ describe('timed snapshots', () => {
 		let busy = false;
 		const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
 		const snapshots = new BookSnapshots(
+			tempDir('novel-helper-userdata-'),
 			() => current,
 			async () => busy,
 		);
@@ -552,7 +607,7 @@ describe('timed snapshots', () => {
 		const full = path.join(root, ...chapter.split('/'));
 		const original = fs.readFileSync(full, 'utf8');
 		const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
-		const snapshots = new BookSnapshots(() => current);
+		const snapshots = new BookSnapshots(tempDir('novel-helper-userdata-'), () => current);
 		const t0 = Date.parse('2026-04-01T14:00:00.000Z');
 		await snapshots.open(root, t0);
 		fs.writeFileSync(full, original + '\n第一次关书前改动。\n');
@@ -589,6 +644,7 @@ describe('timed snapshots', () => {
 			const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
 			const notices: string[] = [];
 			const snapshots = new BookSnapshots(
+				tempDir('novel-helper-userdata-'),
 				() => current,
 				async () => false,
 				(_bookRoot, message) => notices.push(message),
@@ -662,7 +718,7 @@ describe('timed snapshots', () => {
 		await index.load();
 		try {
 			const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
-			const snapshots = new BookSnapshots(() => current);
+			const snapshots = new BookSnapshots(tempDir('novel-helper-userdata-'), () => current);
 			const store = snapshots.store(root);
 			const realSeed = store.seed.bind(store);
 
@@ -714,7 +770,7 @@ describe('timed snapshots', () => {
 		const zeroFull = path.join(zeroRoot, ...chapter.split('/'));
 		const zeroOriginal = fs.readFileSync(zeroFull, 'utf8');
 		const settings: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 0 };
-		const zeroSnapshots = new BookSnapshots(() => settings);
+		const zeroSnapshots = new BookSnapshots(tempDir('novel-helper-userdata-'), () => settings);
 		const zeroStore = zeroSnapshots.store(zeroRoot);
 		const spySeed = mock.method(zeroStore, 'seed');
 		const t1 = Date.parse('2026-04-01T17:00:00.000Z');
@@ -743,7 +799,7 @@ describe('timed snapshots', () => {
 		await index.load();
 		try {
 			const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
-			const snapshots = new BookSnapshots(() => current);
+			const snapshots = new BookSnapshots(tempDir('novel-helper-userdata-'), () => current);
 			const store = snapshots.store(root);
 			const t0 = Date.parse('2026-04-01T18:00:00.000Z');
 			await snapshots.open(root, t0);
@@ -827,6 +883,7 @@ describe('timed snapshots', () => {
 			const current: Settings = { ...structuredClone(defaults), 'snapshots.intervalMinutes': 10 };
 			const notices: string[] = [];
 			const snapshots = new BookSnapshots(
+				tempDir('novel-helper-userdata-'),
 				() => current,
 				async () => false,
 				(_bookRoot, message) => notices.push(message),
@@ -917,8 +974,8 @@ describe('timed snapshots', () => {
 		// Unchanged lore shares the same SHA-256 and the same underlying inode across `objects` and `timed-objects`.
 		const loreHash = timed[0].files['设定/雾港.md'];
 		assert.equal(loreHash, turns[0].files['设定/雾港.md']);
-		const turnStat = fs.statSync(path.join(one.dir, SNAPSHOT_DIR, 'objects', loreHash.slice(0, 2), loreHash.slice(2)));
-		const timedStat = fs.statSync(path.join(one.dir, SNAPSHOT_DIR, 'timed-objects', loreHash.slice(0, 2), loreHash.slice(2)));
+		const turnStat = fs.statSync(path.join(one.store.dir, 'objects', loreHash.slice(0, 2), loreHash.slice(2)));
+		const timedStat = fs.statSync(path.join(one.store.dir, 'timed-objects', loreHash.slice(0, 2), loreHash.slice(2)));
 		assert.equal(turnStat.ino, timedStat.ino);
 	});
 
@@ -971,10 +1028,9 @@ describe('timed snapshots', () => {
 		one.write('正文/第1章.md', '助手第一版');
 		await one.store.finish(turn1.id);
 
-		// Simulate VS Code extension 0.4.0 (`vscode-extension:src/storage/snapshotStore.ts`):
-		// it reads only `turns/*.json` and prunes `objects/*` against `referenced(turns)` with `keep = 1`.
-		const turnsDir = path.join(one.dir, SNAPSHOT_DIR, 'turns');
-		const objectsDir = path.join(one.dir, SNAPSHOT_DIR, 'objects');
+		// Simulate pruning `objects/*` against `referenced(turns)` with `keep = 1` while `timed-objects/*` stays independent.
+		const turnsDir = path.join(one.store.dir, 'turns');
+		const objectsDir = path.join(one.store.dir, 'objects');
 		const extList = (): SnapshotRecord[] =>
 			fs
 				.readdirSync(turnsDir)

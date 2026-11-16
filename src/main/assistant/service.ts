@@ -100,6 +100,7 @@ export class AssistantService {
 			options.store ??
 			new SnapshotStore(
 				options.root,
+				options.userData,
 				() => options.settings()['assistant.snapshots.keep'],
 				() => options.settings()['snapshots.keep'],
 			);

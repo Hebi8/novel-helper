@@ -6,7 +6,7 @@
 import { comparePaths } from './naturalSort';
 import { leadsOut } from './story';
 
-/** Where the snapshots of a story folder are kept, relative to it. */
+/** Legacy in-book snapshot folder from the VS Code extension, still excluded from scans, snapshots, and unprompted agent edits. */
 export const SNAPSHOT_DIR = '.novel-helper/snapshots';
 /** A file larger than this is not kept: no chapter is, and a snapshot is taken before every turn. */
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
