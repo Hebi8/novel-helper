@@ -14,7 +14,7 @@ const api: AppAPI = {
 		suggest: (action, path) => ipcRenderer.invoke(c.structureSuggest, action, path),
 		create: (input) => ipcRenderer.invoke(c.structureCreate, input),
 		trashPlan: (target) => ipcRenderer.invoke(c.structureTrashPlan, target),
-		trash: (target) => ipcRenderer.invoke(c.structureTrash, target),
+		trash: (plan) => ipcRenderer.invoke(c.structureTrash, plan),
 	},
 	search: { find: (query) => ipcRenderer.invoke(c.bookSearch, query) },
 	assistant: {

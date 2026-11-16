@@ -473,15 +473,16 @@ test('trashing chapters, volumes and lore entries moves companions and stops wit
 	const lorePreview = await trashPlan(index, { kind: 'lore', path: '人物/陆青青.md' });
 	assert.equal(lorePreview.kind, 'lore');
 	assert.equal(lorePreview.name, '陆青青');
-	await index.exclusive(() => executeTrash(index, { kind: 'lore', path: '人物/陆青青.md' }, fakeTrash));
+	await index.exclusive(() => executeTrash(index, lorePreview, fakeTrash));
 	assert.equal(index.library.entry('人物/陆青青.md'), undefined);
 	assert.deepEqual(trashed, ['人物/陆青青.md']);
 
 	// Partial failure on chapter trash stops immediately, reports moved vs untouched, and rebuilds index.
 	trashed.length = 0;
 	let calls = 0;
+	const chapPreview = await trashPlan(index, { kind: 'structure', path: chapter });
 	const partial = await index.exclusive(() =>
-		executeTrash(index, { kind: 'structure', path: chapter }, async (fullPath) => {
+		executeTrash(index, chapPreview, async (fullPath) => {
 			if (++calls === 2) {
 				throw new Error('trash failed');
 			}
@@ -504,7 +505,7 @@ test('trashing chapters, volumes and lore entries moves companions and stops wit
 	assert.equal(volPreview.chapters, 1);
 	assert.equal(volPreview.summaries, 1);
 	assert.equal(volPreview.hasBuoys, true);
-	const volResult = await index.exclusive(() => executeTrash(index, { kind: 'structure', path: volPath }, fakeTrash));
+	const volResult = await index.exclusive(() => executeTrash(index, volPreview, fakeTrash));
 	assert.equal(volResult.error, undefined);
 	assert.deepEqual(
 		volResult.trashed.sort(),
@@ -518,4 +519,75 @@ test('trashing chapters, volumes and lore entries moves companions and stops wit
 	);
 	assert.equal(index.library.chapterList().length, 0);
 	assert.ok(await info(join(book, '大纲/全书.md')));
+});
+
+test('trashing a chapter or level named after the book keeps book-level outline and summary files', async (t) => {
+	const { book, index, root } = await fixture(t);
+	const trashDir = join(root, 'trash');
+	await mkdir(trashDir);
+	const trashed: string[] = [];
+	let seq = 0;
+	const fakeTrash = async (fullPath: string) => {
+		trashed.push(fullPath.slice(book.length + 1));
+		await renameFile(fullPath, join(trashDir, `${++seq}`));
+	};
+
+	await writeFile(join(book, '摘要/全书.md'), '全书摘要\n');
+	await writeFile(join(book, '正文/全书.md'), '同名章节正文\n');
+	await index.refresh('摘要/全书.md');
+	await index.refresh('正文/全书.md');
+
+	const bookNamedNode = index.book.tree.children.find((child) => child.path === '正文/全书.md')!;
+	assert.equal(bookNamedNode.outline, '大纲/全书.md');
+	assert.equal(bookNamedNode.summary, '摘要/全书.md');
+	assert.deepEqual(index.library.trashTargets(bookNamedNode), {
+		targets: ['正文/全书.md'],
+		outlines: [],
+		summaries: [],
+	});
+
+	const plan = await trashPlan(index, { kind: 'structure', path: '正文/全书.md' });
+	assert.equal(plan.outlines, 0);
+	assert.equal(plan.summaries, 0);
+	assert.deepEqual(plan.targets, ['正文/全书.md']);
+	const result = await index.exclusive(() => executeTrash(index, plan, fakeTrash));
+	assert.deepEqual(result.trashed, ['正文/全书.md']);
+	assert.deepEqual(trashed, ['正文/全书.md']);
+	assert.ok(await info(join(book, '大纲/全书.md')));
+	assert.ok(await info(join(book, '摘要/全书.md')));
+});
+
+test('executeTrash stops without moving anything if files in scope changed after confirmation', async (t) => {
+	const { book, index } = await fixture(t);
+	const chapter1 = '正文/第一卷 雾港/第一幕 来信/第1章 雾里来信.md';
+	const trashed: string[] = [];
+	const fakeTrash = async (fullPath: string) => {
+		trashed.push(fullPath.slice(book.length + 1));
+	};
+
+	// 1. A newly synced companion outline for a chapter aborts trash before any move.
+	const syncedOutline = '大纲/第一卷 雾港/第一幕 来信/第1章 雾里来信.md';
+	await rm(join(book, syncedOutline));
+	await index.refresh(syncedOutline);
+	const chapPlan = await trashPlan(index, { kind: 'structure', path: chapter1 });
+	assert.equal(chapPlan.outlines, 0);
+	await writeFile(join(book, syncedOutline), '# 第1章新同步大纲\n');
+	const beforeChap = await contents(book);
+	await assert.rejects(
+		index.exclusive(() => executeTrash(index, chapPlan, fakeTrash)),
+		/要移走的文件有变化，请重新确认/,
+	);
+	assert.deepEqual(trashed, []);
+	assert.deepEqual(await contents(book), beforeChap);
+
+	// 2. A newly synced file inside a volume's outline directory also aborts volume trash before any move.
+	const volPlan = await trashPlan(index, { kind: 'structure', path: '正文/第一卷 雾港' });
+	await writeFile(join(book, '大纲/第一卷 雾港/第一幕 来信/第3章 预告.md'), '# 预告\n');
+	const beforeVol = await contents(book);
+	await assert.rejects(
+		index.exclusive(() => executeTrash(index, volPlan, fakeTrash)),
+		/要移走的文件有变化，请重新确认/,
+	);
+	assert.deepEqual(trashed, []);
+	assert.deepEqual(await contents(book), beforeVol);
 });

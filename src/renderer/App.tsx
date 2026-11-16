@@ -38,20 +38,27 @@ export function App() {
 	const [focus, setFocus] = useState(false);
 	const [structure, setStructure] = useState<{ action: StructureAction; path?: string }>();
 	const [renameBookRequest, setRenameBookRequest] = useState(0);
-	const [trashDialog, setTrashDialog] = useState<{ target: TrashTarget; preview: TrashPreview; pending?: boolean }>();
+	const [trashDialog, setTrashDialog] = useState<TrashPreview>();
+	const [trashing, setTrashingState] = useState(false);
+	const trashingRef = useRef(false);
+	const setTrashing = (value: boolean) => {
+		trashingRef.current = value;
+		setTrashingState(value);
+	};
 	const [savingICloud, setSavingICloudState] = useState<'confirm' | 'running'>();
 	const savingICloudRef = useRef<'confirm' | 'running' | undefined>(undefined);
 	const setSavingICloud = (value: 'confirm' | 'running' | undefined) => {
 		savingICloudRef.current = value;
 		setSavingICloudState(value);
 	};
+	const isWindowLocked = () => savingICloudRef.current === 'running' || trashingRef.current;
 	const [conflictDiff, setConflictDiff] = useState<ConflictDiff>();
 	const canSaveToICloud = Boolean(book && !book.inICloud && initial?.icloudAvailable);
 	useEffect(() => {
 		document.title = book ? book.name : zh.app;
 	}, [book]);
 	const requestRenameBook = () => {
-		if (!book) {
+		if (!book || isWindowLocked()) {
 			return;
 		}
 		if (focus) {
@@ -62,34 +69,42 @@ export function App() {
 		setRenameBookRequest((count) => count + 1);
 	};
 	const requestTrash = (target: TrashTarget) => {
-		if (!book) {
+		if (!book || isWindowLocked()) {
 			return;
 		}
 		void (async () => {
 			try {
 				await Promise.all([...docs.documents.current.values()].map((model) => model.save()));
 				const preview = await window.novel.structure.trashPlan(target);
+				if (isWindowLocked()) {
+					return;
+				}
 				setError('');
-				setTrashDialog({ target, preview });
+				setTrashDialog(preview);
 			} catch (err) {
 				setError(errorMessage(err));
 			}
 		})();
 	};
 	const confirmTrash = async () => {
-		if (!trashDialog || trashDialog.pending) {
+		if (!trashDialog || isWindowLocked()) {
 			return;
 		}
-		const { target } = trashDialog;
-		setTrashDialog((cur) => (cur ? { ...cur, pending: true } : cur));
+		const plan = trashDialog;
+		setStructure(undefined);
+		setTrashDialog(undefined);
+		setSearch(false);
+		setQuick(false);
+		(document.activeElement as HTMLElement | null)?.blur();
+		setTrashing(true);
 		try {
 			if (!(await docs.saveAll())) {
-				setTrashDialog(undefined);
+				setTrashing(false);
 				setError(zh.assistantSaveFailed);
 				requestAnimationFrame(() => docs.focus());
 				return;
 			}
-			const result = await window.novel.structure.trash(target);
+			const result = await window.novel.structure.trash(plan);
 			for (const tab of [...docs.sessionRef.current.tabs]) {
 				if (result.trashed.some((removed) => tab.path === removed || tab.path.startsWith(`${removed}/`))) {
 					docs.closeRemoved(tab.path);
@@ -107,26 +122,22 @@ export function App() {
 			) {
 				setConflictDiff(undefined);
 			}
-			setTrashDialog(undefined);
-			if (result.error) {
-				setError(result.error);
-			} else {
-				setError('');
-			}
+			setTrashing(false);
+			setError(result.error ?? '');
 			requestAnimationFrame(() => docs.focus());
 		} catch (err) {
-			setTrashDialog(undefined);
+			setTrashing(false);
 			setError(errorMessage(err));
 			requestAnimationFrame(() => docs.focus());
 		}
 	};
 	const requestSaveToICloud = () => {
-		if (canSaveToICloud && !savingICloudRef.current) {
+		if (canSaveToICloud && !savingICloudRef.current && !isWindowLocked()) {
 			setSavingICloud('confirm');
 		}
 	};
 	const confirmSaveToICloud = async () => {
-		if (!book || savingICloudRef.current === 'running') {
+		if (!book || isWindowLocked()) {
 			return;
 		}
 		setStructure(undefined);
@@ -134,6 +145,7 @@ export function App() {
 		setSearch(false);
 		setQuick(false);
 		setConflictDiff(undefined);
+		(document.activeElement as HTMLElement | null)?.blur();
 		setSavingICloud('running');
 		try {
 			if (!(await docs.saveAll())) {
@@ -168,19 +180,21 @@ export function App() {
 		}
 	};
 	const showStructure = (action: StructureAction, path?: string) => {
-		if (book) {
+		if (book && !isWindowLocked()) {
 			setStructure({ action, path: path ?? docs.sessionRef.current.active });
 		}
 	};
 	const toggleFocus = () => {
-		if (!book) {
+		if (!book || isWindowLocked()) {
 			return;
 		}
 		void window.novel.window
 			.focus(!focus)
 			.then(() => {
 				setFocus(!focus);
-				docs.focus();
+				if (!isWindowLocked()) {
+					docs.focus();
+				}
 			})
 			.catch((error) => setError(errorMessage(error)));
 	};
@@ -252,7 +266,7 @@ export function App() {
 			window.novel.settings.onChanged((settings) => setInitial((value) => (value ? { ...value, settings } : value))),
 			window.novel.usage.onChanged((usage) => setInitial((value) => (value ? { ...value, usage } : value))),
 			window.novel.window.onCommand((command) => {
-				if (savingICloudRef.current === 'running') {
+				if (isWindowLocked()) {
 					return;
 				}
 				actionRef.current[command]();
@@ -260,7 +274,7 @@ export function App() {
 			window.novel.window.onNotice(setError),
 		];
 		const onBlur = () => {
-			if (savingICloudRef.current !== 'running') {
+			if (!isWindowLocked()) {
 				docs.blur();
 			}
 		};
@@ -337,8 +351,7 @@ export function App() {
 				) : null}
 				{trashDialog && book ? (
 					<TrashDialog
-						preview={trashDialog.preview}
-						pending={trashDialog.pending}
+						preview={trashDialog}
 						close={() => {
 							setTrashDialog(undefined);
 							docs.focus();
@@ -362,14 +375,16 @@ export function App() {
 						<p>{zh.saveToICloudConfirm(book.root.split('/').pop() ?? book.name)}</p>
 					</Popover>
 				) : savingICloud === 'running' ? (
-					<SavingICloudOverlay />
+					<BlockingOverlay text={zh.savingToICloud} />
+				) : trashing ? (
+					<BlockingOverlay text={zh.movingToTrash} />
 				) : null}
 				{search && book ? <Search close={() => setSearch(false)} /> : null}
 				{quick && book ? <QuickOpen close={() => setQuick(false)} /> : null}
 				<TopBar
 					name={book?.name}
 					canSaveToICloud={canSaveToICloud}
-					savingToICloud={Boolean(savingICloud)}
+					savingToICloud={Boolean(savingICloud) || trashing}
 					saveToICloud={requestSaveToICloud}
 					left={actions['left:toggle']}
 					right={actions['right:toggle']}
@@ -515,7 +530,7 @@ export function App() {
 		</WorkspaceContext>
 	);
 }
-function SavingICloudOverlay() {
+function BlockingOverlay({ text }: { text: string }) {
 	const ref = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		(document.activeElement as HTMLElement | null)?.blur();
@@ -532,7 +547,7 @@ function SavingICloudOverlay() {
 	}, []);
 	return (
 		<div ref={ref} className="popover-backdrop icloud-saving-backdrop" role="status" aria-live="polite" tabIndex={-1}>
-			<div className="icloud-saving-card">{zh.savingToICloud}</div>
+			<div className="icloud-saving-card">{text}</div>
 		</div>
 	);
 }

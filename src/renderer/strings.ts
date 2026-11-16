@@ -11,6 +11,8 @@ export const zh = {
 	renameBook: '重命名书…',
 	moveToTrash: '移到废纸篓…',
 	confirmMoveToTrash: '移到废纸篓',
+	movingToTrash: '正在移到废纸篓…',
+	trashChanged: '要移走的文件有变化，请重新确认',
 	trashTitle: (name: string) => `把「${name}」移到废纸篓？`,
 	trashLevelSummary: (sublevels: number, sublevelUnit: string, chapters: number, words: number) =>
 		sublevels > 0

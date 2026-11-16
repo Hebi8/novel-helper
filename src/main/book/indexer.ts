@@ -166,7 +166,7 @@ export class BookIndex {
 	constructor(
 		readonly root: string,
 		settings: Settings = defaults,
-		icloudRoot = currentICloudRoot(),
+		readonly icloudRoot = currentICloudRoot(),
 	) {
 		this.settings = settings;
 		this.inICloud = isBookInICloud(root, icloudRoot);

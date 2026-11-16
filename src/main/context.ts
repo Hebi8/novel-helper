@@ -19,6 +19,8 @@ export interface MainContext {
 	isFocusedBookSavingToICloud(): boolean;
 	setSavingToICloud(senderId: number, state: 'copying' | 'closing' | undefined): void;
 	isSavingToICloud(senderId: number): boolean;
+	isFocusedBookTrashing(): boolean;
+	setTrashing(senderId: number, active: boolean): void;
 	settings: SettingsStore;
 	secrets: SecretStore;
 	completion: CompletionService;

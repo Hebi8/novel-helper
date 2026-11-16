@@ -390,9 +390,15 @@ export class Library {
 			item.children.forEach(collect);
 		};
 		collect(node);
+		const root = this.tree();
 		const subtreePaths = new Set(subtree.map((item) => item.path));
 		const uses = this.uses();
-		const users = (path: string) => [...new Set(uses.filter((use) => use.file === path).map((use) => use.user))];
+		const users = (path: string) => [
+			...new Set([
+				...(root.outline === path || root.summary === path ? [root.path] : []),
+				...uses.filter((use) => use.file === path).map((use) => use.user),
+			]),
+		];
 		const outlineSet = new Set<string>();
 		const summarySet = new Set<string>();
 		for (const item of subtree) {

@@ -3,7 +3,7 @@ import { ipcMain, shell } from 'electron';
 import type { MainContext } from '../context';
 import type { NamesLanguage } from '../../core/story';
 import { zh } from '../../renderer/strings';
-import type { StructureAction, StructureInput, TrashTarget } from '../../shared/structure';
+import type { StructureAction, StructureInput, TrashPreview, TrashTarget } from '../../shared/structure';
 import { initialization, initialize } from './initialize';
 import { structureSuggestion, createStructure } from './structure';
 import { renamePlan, renameBook } from './rename';
@@ -38,24 +38,30 @@ export function registerScaffold(ctx: MainContext): void {
 		return ctx.snapshots.write(book.root, () => book.exclusive(() => renameBook(book, plan)));
 	});
 	ipcMain.handle(channels.structureTrashPlan, (event, target: TrashTarget) => trashPlan(ctx.bookFor(event)!, target));
-	ipcMain.handle(channels.structureTrash, async (event, target: TrashTarget) => {
+	ipcMain.handle(channels.structureTrash, async (event, plan: TrashPreview) => {
+		const senderId = event.sender.id;
 		const book = ctx.bookFor(event)!;
-		if (ctx.isBookBusy(book.root)) {
-			throw new Error(zh.trashBusy);
+		ctx.setTrashing(senderId, true);
+		try {
+			if (ctx.isBookBusy(book.root)) {
+				throw new Error(zh.trashBusy);
+			}
+			ctx.completion.cancel(String(senderId));
+			await ctx.completion.buoys(book).dispose();
+			ctx.completion.closeBook(book.root);
+			await ctx.completion.drain(String(senderId));
+			return await ctx.snapshots.write(
+				book.root,
+				() => {
+					if (ctx.isBookBusy(book.root)) {
+						throw new Error(zh.trashBusy);
+					}
+					return book.exclusive(() => executeTrash(book, plan, (fullPath) => shell.trashItem(fullPath)));
+				},
+				(result) => result.trashed.length > 0,
+			);
+		} finally {
+			ctx.setTrashing(senderId, false);
 		}
-		ctx.completion.cancel(String(event.sender.id));
-		await ctx.completion.buoys(book).dispose();
-		ctx.completion.closeBook(book.root);
-		await ctx.completion.drain(String(event.sender.id));
-		return ctx.snapshots.write(
-			book.root,
-			() => {
-				if (ctx.isBookBusy(book.root)) {
-					throw new Error(zh.trashBusy);
-				}
-				return book.exclusive(() => executeTrash(book, target, (fullPath) => shell.trashItem(fullPath)));
-			},
-			(result) => result.trashed.length > 0,
-		);
 	});
 }

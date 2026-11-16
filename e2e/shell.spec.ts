@@ -372,3 +372,122 @@ test('moves chapters, volumes and lore entries to Trash via shell.trashItem, clo
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test('blocking overlay locks shortcuts and typing from save start until Move to Trash completes', async () => {
+	const root = await realpath(await mkdtemp(join(tmpdir(), 'novel-trash-lock-e2e-')));
+	const book = join(root, 'book');
+	const data = join(root, 'data');
+	const trash = join(root, 'trash');
+
+	await cp(resolve('examples'), book, { recursive: true });
+	await mkdir(data, { recursive: true });
+	await mkdir(trash, { recursive: true });
+
+	const originalChap1 = await readFile(join(book, chapter1), 'utf8');
+	const originalChap2 = await readFile(join(book, chapter2), 'utf8');
+
+	await writeFile(
+		join(data, 'windows.json'),
+		JSON.stringify({
+			open: [book],
+			recent: [book],
+			books: {
+				[book]: {
+					tabs: [
+						{ path: chapter1, anchor: 0, head: 0 },
+						{ path: chapter2, anchor: 0, head: 0 },
+					],
+					active: chapter2,
+				},
+			},
+		}),
+	);
+	await writeFile(join(data, 'settings.json'), JSON.stringify({ enabled: false, 'snapshots.intervalMinutes': 0 }));
+
+	let app: ElectronApplication | undefined;
+	let exited: Promise<void> | undefined;
+	try {
+		app = await electron.launch({
+			env: cleanEnv(),
+			args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`],
+		});
+		exited = new Promise((done) => app!.process().once('exit', () => done()));
+
+		const page = await app.firstWindow();
+		await page.waitForLoadState('domcontentloaded');
+		const chap2Editor = page.locator(`.cm-content[aria-label="${chapter2}"]`);
+		const chap1Editor = page.locator(`.cm-content[aria-label="${chapter1}"]`);
+		await expect(chap2Editor).toContainText('林小满');
+
+		// Open Trash confirmation dialog first, then dirty Chapter 1's model or hang both saveAll and trashItem.
+		const chapterTree = page.getByRole('tree', { name: '章节', exact: true });
+		const chap2Row = chapterTree.locator('.tree-row').filter({ has: page.getByRole('button', { name: '第2章 灯塔', exact: true }) });
+		await chap2Row.hover();
+		await chap2Row.getByRole('button', { name: '⋯', exact: true }).click();
+		await page.getByRole('menuitem', { name: '移到废纸篓…', exact: true }).click();
+		const dialog = page.getByRole('dialog', { name: '把「第2章 灯塔」移到废纸篓？', exact: true });
+		await expect(dialog).toBeVisible();
+
+		await app.evaluate(({ shell }, trashDir) => {
+			const fs = process.getBuiltinModule('node:fs/promises')!;
+			const path = process.getBuiltinModule('node:path')!;
+			const state = globalThis as typeof globalThis & {
+				trashPaused?: boolean;
+				releaseTrash?: () => void;
+				trashSeq?: number;
+			};
+			state.trashPaused = false;
+			state.trashSeq = 0;
+			const gate = new Promise<void>((resolve) => {
+				state.releaseTrash = resolve;
+			});
+			shell.trashItem = async (fullPath: string) => {
+				if (!state.trashPaused) {
+					state.trashPaused = true;
+					await gate;
+				}
+				state.trashSeq = (state.trashSeq ?? 0) + 1;
+				await fs.rename(fullPath, path.join(trashDir, `${state.trashSeq}-${path.basename(fullPath)}`));
+			};
+		}, trash);
+
+		await dialog.getByRole('button', { name: '移到废纸篓', exact: true }).click();
+		await expect.poll(() => app!.evaluate(() => (globalThis as { trashPaused?: boolean }).trashPaused)).toBe(true);
+
+		// Confirmation dialog is replaced by the full-window blocking overlay.
+		await expect(dialog).toHaveCount(0);
+		await expect(page.locator('.icloud-saving-backdrop')).toHaveText('正在移到废纸篓…');
+
+		// Attempt focus mode, tab switch, new chapter, and typing while Move to Trash is suspended.
+		await page.keyboard.press('Control+Meta+f');
+		await app.evaluate(({ BrowserWindow }) => {
+			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'focus');
+			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'previousTab');
+			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'newChapter');
+		});
+		await page.keyboard.type('BlockedTyping');
+		await page.keyboard.insertText('挂起期间打字');
+
+		await expect(page.locator('.app')).not.toHaveClass(/focus-mode/);
+		await expect(page.getByRole('dialog', { name: '新建章', exact: true })).toHaveCount(0);
+		expect(await chap2Editor.innerText()).not.toContain('BlockedTyping');
+		expect(await chap2Editor.innerText()).not.toContain('挂起期间打字');
+		expect(await readFile(join(book, chapter1), 'utf8')).toBe(originalChap1);
+		expect(await readFile(join(book, chapter2), 'utf8')).toBe(originalChap2);
+
+		// Release trashItem: Chapter 2 tab closes and surviving Chapter 1 editor remains untouched.
+		await app.evaluate(() => (globalThis as { releaseTrash?: () => void }).releaseTrash?.());
+		await expect(page.locator('.icloud-saving-backdrop')).toHaveCount(0);
+		await expect(chap2Editor).toHaveCount(0);
+		await expect(chap1Editor).toBeVisible();
+		await expect(chap1Editor).not.toContainText('BlockedTyping');
+		await expect(chap1Editor).not.toContainText('挂起期间打字');
+		expect(await readFile(join(book, chapter1), 'utf8')).toBe(originalChap1);
+	} finally {
+		if (app) {
+			await app.close();
+			await exited;
+		}
+		await rm(root, { recursive: true, force: true });
+	}
+});

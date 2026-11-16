@@ -2,17 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { TrashPreview } from '../../shared/structure';
 import { zh } from '../strings';
 
-export function TrashDialog({
-	preview,
-	pending = false,
-	close,
-	submit,
-}: {
-	preview: TrashPreview;
-	pending?: boolean;
-	close(): void;
-	submit(): void;
-}) {
+export function TrashDialog({ preview, close, submit }: { preview: TrashPreview; close(): void; submit(): void }) {
 	const cancelRef = useRef<HTMLButtonElement>(null);
 	useEffect(() => {
 		cancelRef.current?.focus();
@@ -42,7 +32,7 @@ export function TrashDialog({
 					if (event.nativeEvent.isComposing) {
 						return;
 					}
-					if (event.key === 'Escape' && !pending) {
+					if (event.key === 'Escape') {
 						event.stopPropagation();
 						close();
 					}
@@ -58,10 +48,10 @@ export function TrashDialog({
 				) : null}
 				<p className="trash-hint">{zh.trashPutBackHint}</p>
 				<div className="panel-actions trash-actions">
-					<button ref={cancelRef} type="button" disabled={pending} onClick={close}>
+					<button ref={cancelRef} type="button" onClick={close}>
 						{zh.cancel}
 					</button>
-					<button type="button" className="danger" disabled={pending} onClick={submit}>
+					<button type="button" className="danger" onClick={submit}>
 						{zh.confirmMoveToTrash}
 					</button>
 				</div>

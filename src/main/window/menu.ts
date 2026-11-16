@@ -3,7 +3,7 @@ import { channels, type MenuCommand } from '../../shared/api';
 import { zh } from '../../renderer/strings';
 import type { MainContext } from '../context';
 export function installMenu(ctx: MainContext): void {
-	const saving = ctx.isFocusedBookSavingToICloud();
+	const saving = ctx.isFocusedBookSavingToICloud() || ctx.isFocusedBookTrashing();
 	const action = (label: string, command: MenuCommand, accelerator?: string): MenuItemConstructorOptions => ({
 		label,
 		accelerator,

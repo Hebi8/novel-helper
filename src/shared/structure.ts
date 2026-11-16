@@ -22,6 +22,8 @@ export interface TrashPreview {
 	kind: 'chapter' | 'level' | 'lore';
 	name: string;
 	path: string;
+	targets: string[];
+	scope: string[];
 	sublevels: number;
 	sublevelUnit: string;
 	chapters: number;
@@ -40,5 +42,5 @@ export interface StructureAPI {
 	suggest(action: StructureAction, path?: string): Promise<StructureSuggestion>;
 	create(input: StructureInput): Promise<{ path?: string; renames?: Rename[]; error?: string }>;
 	trashPlan(target: TrashTarget): Promise<TrashPreview>;
-	trash(target: TrashTarget): Promise<TrashResult>;
+	trash(plan: TrashPreview): Promise<TrashResult>;
 }

@@ -1,11 +1,13 @@
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BUOY_FOLDER } from '../../core/buoy';
 import type { BookNode } from '../../core/library';
+import { comparePaths } from '../../core/naturalSort';
 import { errorMessage } from '../../renderer/errors';
 import { zh } from '../../renderer/strings';
 import type { TrashPreview, TrashResult, TrashTarget } from '../../shared/structure';
 import { FileFormatError, isDiskConflictCopy, readOptional } from '../book/files';
-import type { BookIndex } from '../book/indexer';
+import { BookIndex } from '../book/indexer';
 import { bookPath } from '../book/paths';
 import { info, safePath } from './disk';
 import { jsonFiles } from './rename';
@@ -56,29 +58,56 @@ function descendants(node: BookNode): { levels: BookNode[]; chapters: BookNode[]
 	return { levels, chapters };
 }
 
-async function resolveTrash(index: BookIndex, target: TrashTarget): Promise<{ preview: TrashPreview; targets: string[] }> {
+async function listTree(root: string, rel: string): Promise<string[]> {
+	await safePath(root, rel);
+	const stat = await info(join(root, rel));
+	if (!stat) {
+		return [];
+	}
+	if (!stat.isDirectory()) {
+		return [rel];
+	}
+	const entries = (await readdir(join(root, rel))).sort(comparePaths);
+	const nested = await Promise.all(entries.map((name) => listTree(root, `${rel}/${name}`)));
+	return [rel, ...nested.flat()];
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+	return a.length === b.length && a.every((item, index) => item === b[index]);
+}
+
+async function snapshotIndex(index: BookIndex): Promise<BookIndex> {
+	const fresh = new BookIndex(index.root, index.configuration, index.icloudRoot);
+	await fresh.load();
+	return fresh;
+}
+
+async function resolveTrashFrom(index: BookIndex, target: TrashTarget): Promise<TrashPreview> {
 	const path = bookPath(target.path);
 	if (target.kind === 'lore') {
 		const entry = index.library.entry(path);
 		if (!entry) {
 			throw new Error(zh.fileMissing);
 		}
-		await safePath(index.root, path);
+		const targets = [path];
+		const scope = await listTree(index.root, path);
+		if (!scope.length) {
+			throw new Error(zh.fileMissing);
+		}
 		const words = await countWords(index.root, path);
 		return {
-			preview: {
-				kind: 'lore',
-				name: entry.name,
-				path,
-				sublevels: 0,
-				sublevelUnit: '幕',
-				chapters: 0,
-				words,
-				outlines: 0,
-				summaries: 0,
-				hasBuoys: false,
-			},
-			targets: [path],
+			kind: 'lore',
+			name: entry.name,
+			path,
+			targets,
+			scope,
+			sublevels: 0,
+			sublevelUnit: '幕',
+			chapters: 0,
+			words,
+			outlines: 0,
+			summaries: 0,
+			hasBuoys: false,
 		};
 	}
 	const node = findNode(index.book.tree, path);
@@ -101,48 +130,54 @@ async function resolveTrash(index: BookIndex, target: TrashTarget): Promise<{ pr
 		}
 	}
 	const targets = buoyExists ? [...libTargets, buoyTarget] : [...libTargets];
-	await Promise.all(targets.map((item) => safePath(index.root, item)));
+	const scope = (await Promise.all(targets.map((item) => listTree(index.root, item)))).flat();
 	const { levels, chapters } = descendants(node);
 	const words = (await Promise.all(chapters.map((chapter) => countWords(index.root, chapter.path)))).reduce((sum, n) => sum + n, 0);
 	return {
-		preview: {
-			kind: node.kind,
-			name: node.name,
-			path: node.path,
-			sublevels: levels.length,
-			sublevelUnit: sublevelUnitOf(node),
-			chapters: chapters.length,
-			words,
-			outlines: outlines.length,
-			summaries: summaries.length,
-			hasBuoys,
-		},
+		kind: node.kind,
+		name: node.name,
+		path: node.path,
 		targets,
+		scope,
+		sublevels: levels.length,
+		sublevelUnit: sublevelUnitOf(node),
+		chapters: chapters.length,
+		words,
+		outlines: outlines.length,
+		summaries: summaries.length,
+		hasBuoys,
 	};
 }
 
 export async function trashPlan(index: BookIndex, target: TrashTarget): Promise<TrashPreview> {
-	return (await resolveTrash(index, target)).preview;
+	return resolveTrashFrom(await snapshotIndex(index), target);
 }
 
 export async function executeTrash(
 	index: BookIndex,
-	target: TrashTarget,
+	plan: TrashPreview,
 	trashItem: (fullPath: string) => Promise<void>,
 ): Promise<TrashResult> {
-	if (index.book.conflicts.length) {
+	const fresh = await snapshotIndex(index);
+	if (fresh.book.conflicts.length) {
 		throw new Error(zh.assistantSaveFailed);
 	}
-	const { targets } = await resolveTrash(index, target);
-	const existingTargets = (
-		await Promise.all(targets.map(async (item) => ((await info(join(index.root, item))) ? item : undefined)))
-	).filter((item): item is string => item !== undefined);
-	if (!existingTargets.length) {
-		throw new Error(zh.fileMissing);
+	const target: TrashTarget = { kind: plan.kind === 'lore' ? 'lore' : 'structure', path: plan.path };
+	let current: TrashPreview;
+	try {
+		current = await resolveTrashFrom(fresh, target);
+	} catch (error) {
+		if (error instanceof Error && error.message === zh.fileMissing) {
+			throw new Error(zh.trashChanged);
+		}
+		throw error;
+	}
+	if (!sameList(current.targets, plan.targets) || !sameList(current.scope, plan.scope)) {
+		throw new Error(zh.trashChanged);
 	}
 	const trashed: string[] = [];
 	let failure: string | undefined;
-	for (const item of existingTargets) {
+	for (const item of plan.targets) {
 		try {
 			await trashItem(join(index.root, item));
 			trashed.push(item);
@@ -155,7 +190,7 @@ export async function executeTrash(
 	if (failure !== undefined) {
 		return {
 			trashed,
-			error: zh.trashPartial(trashed, existingTargets.slice(trashed.length), failure),
+			error: zh.trashPartial(trashed, plan.targets.slice(trashed.length), failure),
 		};
 	}
 	return { trashed };
