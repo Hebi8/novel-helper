@@ -1,14 +1,17 @@
-import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
+import type { BrowserWindow, IpcMainInvokeEvent, WebContents } from 'electron';
 import type { SettingsStore } from './settings/store';
 import type { SecretStore } from './secrets/store';
 import type { CompletionService } from './completion/service';
 import type { BookIndex } from './book/indexer';
 import type { WindowStore } from './window/state';
 import type { BookSnapshots } from './assistant/snapshots';
-import type { OpenResult } from '../shared/api';
+import type { BookTabItem, MenuCommand, OpenResult, TabBarState } from '../shared/api';
 export interface OpenBookOptions {
 	notice?: string;
 	replaceRecent?: string;
+	replaceSender?: boolean;
+	activate?: boolean;
+	persistActive?: boolean;
 }
 export interface MainContext {
 	reindexBooks(): Promise<void>;
@@ -29,10 +32,24 @@ export interface MainContext {
 	bookFor(event: IpcMainInvokeEvent): BookIndex | undefined;
 	onBookClosed(cleanup: (root: string) => void | Promise<void>): void;
 	windowFor(event: Pick<IpcMainInvokeEvent, 'sender'>): BrowserWindow;
+	mainWindow(): BrowserWindow | undefined;
+	activeSender(): WebContents | undefined;
+	sendCommand(command: MenuCommand): void;
+	sendOpenResult(result: OpenResult, target?: WebContents): void;
+	setFocusMode(event: Pick<IpcMainInvokeEvent, 'sender'>, enabled: boolean): void;
+	markBootstrapped(event: Pick<IpcMainInvokeEvent, 'sender'>): void;
+	closeView(event: Pick<IpcMainInvokeEvent, 'sender'>): void;
+	tabBarState(): TabBarState;
+	bookTabs(): BookTabItem[];
+	selectTab(id: number): void;
+	selectTabIndex(index: number): void;
+	cycleTab(step: number): void;
+	closeTab(id?: number, sender?: WebContents): Promise<void>;
+	setTabMenuExpanded(expanded: boolean): void;
 	broadcast(channel: string, data: unknown): void;
-	open(root: string, source?: BrowserWindow, selected?: boolean, options?: OpenBookOptions): Promise<OpenResult>;
+	open(root: string, source?: WebContents, selected?: boolean, options?: OpenBookOptions): Promise<OpenResult>;
 	openSettings(): void;
-	openWelcome(result: OpenResult): void;
+	openWelcome(result?: OpenResult): void;
 	initialResult(event: IpcMainInvokeEvent): OpenResult | undefined;
 	initialNotice(event: IpcMainInvokeEvent): string | undefined;
 }

@@ -63,12 +63,11 @@ export function commands(target: CommandTarget): Record<MenuCommand, () => void>
 		'right:0': () => target.right(0),
 		'right:1': () => target.right(1),
 		'right:2': () => target.right(2),
+		blur: () => docs.blur(),
 		flush: () => {
 			editor()?.view.contentDOM.blur();
 			void docs.saveAll().then((saved) => {
-				if (saved) {
-					window.novel.window.flushed();
-				}
+				window.novel.window.flushed(saved);
 			});
 		},
 	};

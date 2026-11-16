@@ -4,25 +4,25 @@ import { zh } from '../../renderer/strings';
 import type { MainContext } from '../context';
 export function installMenu(ctx: MainContext): void {
 	const saving = ctx.isFocusedBookSavingToICloud() || ctx.isFocusedBookTrashing();
+	const bookTabs = ctx.bookTabs();
 	const action = (label: string, command: MenuCommand, accelerator?: string): MenuItemConstructorOptions => ({
 		label,
 		accelerator,
 		enabled: !saving,
-		click: () => (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send(channels.command, command),
+		click: () => ctx.sendCommand(command),
 	});
 	const openRoot = async (root: string) => {
-		const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-		const result = await ctx.open(root, window);
+		const target = ctx.activeSender();
+		const result = await ctx.open(root, target);
 		if (result.kind !== 'opened') {
-			if (window) {
-				window.webContents.send(channels.openResult, result);
-			} else {
-				ctx.openWelcome(result);
-			}
+			ctx.sendOpenResult(result, target);
 		}
 	};
 	const open = async () => {
-		const { filePaths } = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+		const parent = ctx.mainWindow();
+		const { filePaths } = parent
+			? await dialog.showOpenDialog(parent, { properties: ['openDirectory', 'createDirectory'] })
+			: await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
 		if (filePaths[0]) {
 			await openRoot(filePaths[0]);
 		}
@@ -56,13 +56,20 @@ export function installMenu(ctx: MainContext): void {
 					{
 						label: zh.renameBook,
 						enabled: ctx.hasFocusedBook() && !saving,
-						click: () =>
-							(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send(channels.command, 'renameBook'),
+						click: () => ctx.sendCommand('renameBook'),
 					},
 					{ type: 'separator' },
 					action(zh.newChapter, 'newChapter', 'Cmd+N'),
 					action(zh.quickOpen, 'quickOpen', 'Cmd+P'),
-					action(zh.closeTab, 'closeTab', 'Cmd+W'),
+					{
+						label: zh.closeBookTab,
+						accelerator: 'Cmd+W',
+						enabled: !saving,
+						click: () => {
+							void ctx.closeTab();
+						},
+					},
+					action(zh.closeEditorTab, 'closeTab'),
 					action(zh.previousTab, 'previousTab', 'Cmd+Shift+['),
 					action(zh.nextTab, 'nextTab', 'Cmd+Shift+]'),
 				],
@@ -88,9 +95,9 @@ export function installMenu(ctx: MainContext): void {
 					action(zh.focus, 'focus', 'Ctrl+Cmd+F'),
 					action(zh.left, 'left:toggle', 'Cmd+0'),
 					action(zh.right, 'right:toggle', 'Alt+Cmd+0'),
-					action(zh.chapters, 'left:0', 'Cmd+1'),
-					action(zh.outline, 'left:1', 'Cmd+2'),
-					action(zh.lore, 'left:2', 'Cmd+3'),
+					action(zh.chapters, 'left:0'),
+					action(zh.outline, 'left:1'),
+					action(zh.lore, 'left:2'),
 					action(zh.readOutline, 'right:0', 'Alt+Cmd+1'),
 					action(zh.readLore, 'right:1', 'Alt+Cmd+2'),
 					action(zh.assistant, 'right:2', 'Alt+Cmd+3'),
@@ -117,6 +124,32 @@ export function installMenu(ctx: MainContext): void {
 				submenu: [
 					{ label: zh.minimize, role: 'minimize' },
 					{ label: zh.zoom, role: 'zoom' },
+					...(bookTabs.length
+						? ([
+								{ type: 'separator' },
+								{
+									label: zh.previousBookTab,
+									accelerator: 'Ctrl+Shift+Tab',
+									enabled: !saving && bookTabs.length > 1,
+									click: () => ctx.cycleTab(-1),
+								},
+								{
+									label: zh.nextBookTab,
+									accelerator: 'Ctrl+Tab',
+									enabled: !saving && bookTabs.length > 1,
+									click: () => ctx.cycleTab(1),
+								},
+								{ type: 'separator' },
+								...bookTabs.map((tab, index) => ({
+									label: tab.title,
+									type: 'checkbox' as const,
+									checked: tab.active,
+									enabled: !saving,
+									accelerator: index < 9 ? `Cmd+${index + 1}` : undefined,
+									click: () => ctx.selectTab(tab.id),
+								})),
+							] satisfies MenuItemConstructorOptions[])
+						: []),
 				],
 			},
 			{
@@ -140,7 +173,12 @@ export function installMenu(ctx: MainContext): void {
 					{
 						label: zh.helpTitle,
 						click: () => {
-							void dialog.showMessageBox({ title: zh.app, message: zh.app, detail: zh.helpText });
+							const parent = BrowserWindow.getFocusedWindow() ?? ctx.mainWindow();
+							if (parent) {
+								void dialog.showMessageBox(parent, { title: zh.app, message: zh.app, detail: zh.helpText });
+							} else {
+								void dialog.showMessageBox({ title: zh.app, message: zh.app, detail: zh.helpText });
+							}
 						},
 					},
 				],

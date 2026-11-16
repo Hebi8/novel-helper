@@ -4,6 +4,7 @@ import type { SessionState } from '../../shared/api';
 interface WindowState {
 	recent: string[];
 	open: string[];
+	active?: string;
 	books: Record<string, SessionState>;
 }
 export class WindowStore {
@@ -20,12 +21,35 @@ export class WindowStore {
 	forget(root: string): void {
 		this.value.recent = this.value.recent.filter((path) => path !== root);
 		this.value.open = this.value.open.filter((path) => path !== root);
+		if (this.value.active === root) {
+			this.value.active = undefined;
+		}
 		delete this.value.books[root];
 		this.save();
 	}
-	opened(root: string): void {
+	opened(root: string, activate = true): void {
 		this.value.recent = [root, ...this.value.recent.filter((p) => p !== root)].slice(0, 10);
 		this.value.open = [...new Set([...this.value.open, root])];
+		if (activate) {
+			this.value.active = root;
+		}
+		this.save();
+	}
+	setActive(root: string | undefined): void {
+		this.value.active = root;
+		this.save();
+	}
+	replaceOpen(oldRoot: string, newRoot: string): void {
+		const next = this.value.open.map((path) => (path === oldRoot ? newRoot : path));
+		this.value.open = [...new Set(next)];
+		if (this.value.active === oldRoot) {
+			this.value.active = newRoot;
+		}
+		this.save();
+	}
+	closed(root: string, nextActive?: string): void {
+		this.value.open = this.value.open.filter((path) => path !== root);
+		this.value.active = nextActive;
 		this.save();
 	}
 	replaceRecent(oldRoot: string, newRoot: string): void {

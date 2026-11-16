@@ -57,9 +57,10 @@ export function registerBook(ctx: MainContext): void {
 				}
 				return copyBookToICloud(book.root, { trashItem: (fullPath) => shell.trashItem(fullPath) });
 			});
-			const opened = await ctx.open(targetDir, undefined, true, {
+			const opened = await ctx.open(targetDir, event.sender, true, {
 				notice: zh.savedToICloud(book.root),
 				replaceRecent: book.root,
+				replaceSender: true,
 			});
 			if (opened.kind !== 'opened') {
 				throw new Error(opened.kind === 'error' ? opened.message : zh.missingBook);
@@ -81,7 +82,7 @@ export function registerBook(ctx: MainContext): void {
 	ipcMain.handle(channels.bookOpen, async (event, root?: string, chosen = false) => {
 		const window = ctx.windowFor(event);
 		const selected = root ?? (await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })).filePaths[0];
-		return selected ? ctx.open(selected, window, chosen) : { kind: 'cancelled' };
+		return selected ? ctx.open(selected, event.sender, chosen) : { kind: 'cancelled' };
 	});
 	ipcMain.handle(channels.bookRead, (event, path: string) => ctx.bookFor(event)!.read(bookPath(path)));
 	ipcMain.handle(channels.bookSave, async (event, path: string, text: string, base: string, force?: boolean) => {

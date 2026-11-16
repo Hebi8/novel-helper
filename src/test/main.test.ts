@@ -453,3 +453,26 @@ test('a restarted watcher ignores the renamed open path and reports changes at t
 	await emit([next]);
 	assert.deepEqual(events, [{ path: next, text: 'Changed at new path' }]);
 });
+
+test('WindowStore tracks active book tab, replaces open books in place, and updates active on close', async (t) => {
+	const { root } = await fixture(t);
+	const store = new WindowStore(root);
+	store.opened('/books/a');
+	store.opened('/books/b');
+	store.opened('/books/c');
+	assert.deepEqual(store.value.open, ['/books/a', '/books/b', '/books/c']);
+	assert.equal(store.value.active, '/books/c');
+
+	store.setActive('/books/b');
+	assert.equal(new WindowStore(root).value.active, '/books/b');
+
+	store.replaceOpen('/books/b', '/icloud/b');
+	const afterReplace = new WindowStore(root);
+	assert.deepEqual(afterReplace.value.open, ['/books/a', '/icloud/b', '/books/c']);
+	assert.equal(afterReplace.value.active, '/icloud/b');
+
+	store.closed('/icloud/b', '/books/c');
+	const afterClose = new WindowStore(root);
+	assert.deepEqual(afterClose.value.open, ['/books/a', '/books/c']);
+	assert.equal(afterClose.value.active, '/books/c');
+});

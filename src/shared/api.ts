@@ -9,6 +9,22 @@ export interface ListedBook {
 	root: string;
 	name: string;
 }
+export interface BookTabItem {
+	id: number;
+	kind: 'book' | 'welcome';
+	root?: string;
+	title: string;
+	active: boolean;
+}
+export interface TabBarState {
+	tabs: BookTabItem[];
+	locked: boolean;
+	theme: Settings['appearance.theme'];
+}
+export interface PlusMenuData {
+	icloudBooks: ListedBook[];
+	recent: ListedBook[];
+}
 export interface Book {
 	referenceVersion?: number;
 	buoyVersion?: number;
@@ -106,6 +122,7 @@ export type MenuCommand =
 	| 'quickOpen'
 	| 'report'
 	| 'usageReport'
+	| 'blur'
 	| 'flush';
 export interface Bootstrap {
 	openResult?: OpenResult;
@@ -163,13 +180,33 @@ export interface AppAPI {
 		onFocusChanged(listener: (enabled: boolean) => void): () => void;
 		bootstrap(): Promise<Bootstrap>;
 		saveSession(session: SessionState): Promise<void>;
-		flushed(): void;
+		flushed(saved?: boolean): void;
 		close(): void;
 		onCommand(listener: (command: MenuCommand) => void): () => void;
 		onNotice(listener: (message: string) => void): () => void;
 	};
+	tabs: {
+		state(): Promise<TabBarState>;
+		select(id: number): Promise<void>;
+		selectIndex(index: number): Promise<void>;
+		cycle(step: number): Promise<void>;
+		close(id?: number): Promise<void>;
+		openMenu(): Promise<PlusMenuData>;
+		closeMenu(): Promise<void>;
+		openBook(root?: string): Promise<void>;
+		onChanged(listener: (state: TabBarState) => void): () => void;
+	};
 }
 export const channels = {
+	tabsState: 'tabs:state',
+	tabsSelect: 'tabs:select',
+	tabsSelectIndex: 'tabs:selectIndex',
+	tabsCycle: 'tabs:cycle',
+	tabsClose: 'tabs:close',
+	tabsOpenMenu: 'tabs:openMenu',
+	tabsCloseMenu: 'tabs:closeMenu',
+	tabsOpenBook: 'tabs:openBook',
+	tabsChanged: 'tabs:changed',
 	structurePlan: 'structure:plan',
 	structureInitialize: 'structure:initialize',
 	structureSuggest: 'structure:suggest',

@@ -15,7 +15,7 @@ export function registerScaffold(ctx: MainContext): void {
 	);
 	ipcMain.handle(channels.structureInitialize, async (event, root: string, language: NamesLanguage, selected: string[]) => {
 		await initialize(root, language, selected, ctx.settings.get());
-		return ctx.open(root, ctx.windowFor(event));
+		return ctx.open(root, event.sender);
 	});
 	ipcMain.handle(channels.structureSuggest, (event, action: StructureAction, path?: string) =>
 		structureSuggestion(ctx.bookFor(event)!, action, path),

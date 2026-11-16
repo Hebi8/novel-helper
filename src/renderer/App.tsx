@@ -21,6 +21,7 @@ import { reportKind, useDocuments } from './editor/useDocuments';
 import { TopBar } from './shell/TopBar';
 import { Welcome } from './shell/Welcome';
 import { commands } from './shell/commands';
+import { handleBookTabShortcut } from './shell/tabShortcuts';
 import { applyTheme } from './theme';
 import { zh } from './strings';
 import { WorkspaceContext } from './workspace';
@@ -309,24 +310,34 @@ export function App() {
 			window.novel.usage.onChanged((usage) => setInitial((value) => (value ? { ...value, usage } : value))),
 			window.novel.window.onCommand((command) => {
 				if (isWindowLocked()) {
+					if (command === 'flush') {
+						window.novel.window.flushed(false);
+					}
 					return;
 				}
-				if (command !== 'flush' && modalOpenRef.current) {
+				if (command !== 'flush' && command !== 'blur' && modalOpenRef.current) {
 					return;
 				}
 				actionRef.current[command]();
 			}),
 			window.novel.window.onNotice(setError),
 		];
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (!isWindowLocked()) {
+				handleBookTabShortcut(event);
+			}
+		};
 		const onBlur = () => {
 			if (!isWindowLocked()) {
 				docs.blur();
 			}
 		};
+		window.addEventListener('keydown', onKeyDown, true);
 		window.addEventListener('blur', onBlur);
 		return () => {
 			alive = false;
 			unsubscribes.forEach((unsubscribe) => unsubscribe());
+			window.removeEventListener('keydown', onKeyDown, true);
 			window.removeEventListener('blur', onBlur);
 			docs.dispose();
 		};

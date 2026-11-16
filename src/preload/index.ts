@@ -87,10 +87,21 @@ const api: AppAPI = {
 		onFocusChanged: (listener) => listen(c.focusChanged, listener),
 		bootstrap: () => ipcRenderer.invoke(c.bootstrap),
 		saveSession: (session) => ipcRenderer.invoke(c.session, session),
-		flushed: () => ipcRenderer.send(c.flushed),
+		flushed: (saved = true) => ipcRenderer.send(c.flushed, saved),
 		close: () => ipcRenderer.send(c.close),
 		onCommand: (listener) => listen(c.command, listener),
 		onNotice: (listener) => listen(c.notice, listener),
+	},
+	tabs: {
+		state: () => ipcRenderer.invoke(c.tabsState),
+		select: (id) => ipcRenderer.invoke(c.tabsSelect, id),
+		selectIndex: (index) => ipcRenderer.invoke(c.tabsSelectIndex, index),
+		cycle: (step) => ipcRenderer.invoke(c.tabsCycle, step),
+		close: (id) => ipcRenderer.invoke(c.tabsClose, id),
+		openMenu: () => ipcRenderer.invoke(c.tabsOpenMenu),
+		closeMenu: () => ipcRenderer.invoke(c.tabsCloseMenu),
+		openBook: (root) => ipcRenderer.invoke(c.tabsOpenBook, root),
+		onChanged: (listener) => listen(c.tabsChanged, listener),
 	},
 };
 contextBridge.exposeInMainWorld('novel', api);

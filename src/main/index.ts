@@ -1,10 +1,10 @@
 import { BookOpenings } from './window/opening';
+import { BookWindow } from './window/bookWindow';
 import { isAssistantBusy, prepareBookRename } from './assistant/ipc';
 import { BookSnapshots } from './assistant/snapshots';
 import { prepareOpen } from './scaffold/initialize';
 import { resolveBookRoot, restoreBooks } from './window/reopen';
-import { CloseGate } from './window/closeGate';
-import { app, BrowserWindow, ipcMain, webContents } from 'electron';
+import { app, BrowserWindow, webContents } from 'electron';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SettingsStore } from './settings/store';
@@ -35,9 +35,10 @@ if (icloudDir) {
 if (!app.requestSingleInstanceLock()) {
 	app.quit();
 } else {
+	let mainShell: BookWindow | undefined;
 	app.on('second-instance', () => {
-		const window = BrowserWindow.getAllWindows()[0];
-		if (window) {
+		const window = mainShell?.window ?? BrowserWindow.getAllWindows()[0];
+		if (window && !window.isDestroyed()) {
 			window.restore();
 			window.focus();
 		}
@@ -78,91 +79,35 @@ if (!app.requestSingleInstanceLock()) {
 		const initialNotices = new Map<number, string>();
 		const savingToICloud = new Map<number, 'copying' | 'closing'>();
 		const trashing = new Set<number>();
+		const preloadPath = join(__dirname, '../preload/index.js');
 		let settingsWindow: BrowserWindow | undefined;
 		let quitting = false;
-		const createWindow = (index?: BookIndex, settingsOnly = false, notice?: string) => {
+
+		const createSettingsWindow = () => {
 			const window = new BrowserWindow({
-				width: settingsOnly ? 540 : 1440,
-				height: settingsOnly ? 430 : 900,
-				minWidth: settingsOnly ? 500 : 820,
+				width: 540,
+				height: 430,
+				minWidth: 500,
 				minHeight: 400,
 				show: false,
-				title: index ? index.book.name : zh.app,
+				title: zh.app,
 				titleBarStyle: 'hiddenInset',
 				backgroundColor: '#fbfaf7',
-				webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+				webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: true },
 			});
-			if (notice) {
-				initialNotices.set(window.webContents.id, notice);
-			}
-			if (index) {
-				books.set(window.webContents.id, index);
-				index.onChanged((book) => {
-					window.setTitle(book.name);
-					installMenu(context);
-					window.webContents.send(channels.bookChanged, book);
-				});
-				index.onFileChanged((file) => window.webContents.send(channels.fileChanged, file));
-				index.start();
-				windows.opened(index.root);
-				void snapshots.open(index.root);
-			}
-			const senderId = window.webContents.id;
-			const closeGate = new CloseGate();
 			window.on('focus', () => installMenu(context));
-			window.on('leave-full-screen', () => window.webContents.send(channels.focusChanged, false));
-			window.webContents.on('render-process-gone', () => closeGate.rendererGone());
-			const onFlushed = async (event: Electron.IpcMainEvent) => {
-				if (event.sender !== window.webContents) {
-					return;
-				}
-				if (index) {
-					await completion.buoys(index).dispose();
-				}
-				await completion.drain(String(senderId));
-				closeGate.acknowledge();
-				window.close();
-			};
-			ipcMain.on(channels.flushed, onFlushed);
-			window.on('close', (event) => {
-				if (savingToICloud.get(senderId) === 'copying' || trashing.has(senderId)) {
-					event.preventDefault();
-					return;
-				}
-				if (!settingsOnly && closeGate.needsFlush()) {
-					event.preventDefault();
-					window.webContents.send(channels.command, 'flush');
-				}
-			});
 			window.on('closed', () => {
-				ipcMain.removeListener(channels.flushed, onFlushed);
-				completion.cancel(String(senderId));
-				books.delete(senderId);
-				initialResults.delete(senderId);
-				initialNotices.delete(senderId);
-				savingToICloud.delete(senderId);
-				trashing.delete(senderId);
-				index?.dispose();
-				if (index) {
-					bookClosed.forEach((cleanup) => {
-						void cleanup(index.root);
-					});
-				}
-				if (index && !quitting) {
-					windows.value.open = windows.value.open.filter((root) => root !== index.root);
-					windows.save();
-				}
+				settingsWindow = undefined;
 				if (!quitting) {
 					installMenu(context);
 				}
 			});
 			window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 			window.webContents.on('will-navigate', (event) => event.preventDefault());
-			const query = settingsOnly ? '?settings' : '';
 			if (process.env.ELECTRON_RENDERER_URL) {
-				void window.loadURL(process.env.ELECTRON_RENDERER_URL + query);
+				void window.loadURL(process.env.ELECTRON_RENDERER_URL + '?settings');
 			} else {
-				void window.loadFile(join(__dirname, '../renderer/index.html'), settingsOnly ? { query: { settings: '' } } : {});
+				void window.loadFile(join(__dirname, '../renderer/index.html'), { query: { settings: '' } });
 			}
 			window.once('ready-to-show', () => {
 				if (!testing) {
@@ -171,24 +116,60 @@ if (!app.requestSingleInstanceLock()) {
 			});
 			return window;
 		};
+
+		const ensureMainShell = () => {
+			if (!mainShell) {
+				mainShell = new BookWindow({
+					testing,
+					preloadPath,
+					books,
+					initialResults,
+					initialNotices,
+					savingToICloud,
+					trashing,
+					settings,
+					windows,
+					completion,
+					snapshots,
+					isQuitting: () => quitting,
+					cancelQuitting: () => {
+						quitting = false;
+					},
+					onBookClosed: (root) => {
+						bookClosed.forEach((cleanup) => {
+							void cleanup(root);
+						});
+					},
+					onStateChanged: () => installMenu(context),
+					onClosed: () => {
+						mainShell = undefined;
+					},
+				});
+			}
+			return mainShell;
+		};
+
+		const isSettingsFocused = () => Boolean(settingsWindow && BrowserWindow.getFocusedWindow() === settingsWindow);
+		const focusedBookSenderId = () => (isSettingsFocused() ? undefined : mainShell?.activeSenderId());
+
 		const context: MainContext = {
 			prepareBookRename,
 			isBookBusy: isAssistantBusy,
 			hasFocusedBook: () => {
-				const active = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-				return Boolean(active && books.has(active.webContents.id));
+				const id = focusedBookSenderId();
+				return Boolean(id !== undefined && books.has(id));
 			},
 			canSaveFocusedBookToICloud: () => {
 				if (!isICloudDriveAvailableSync()) {
 					return false;
 				}
-				const active = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-				const book = active ? books.get(active.webContents.id) : undefined;
+				const id = focusedBookSenderId();
+				const book = id !== undefined ? books.get(id) : undefined;
 				return Boolean(book && !book.inICloud);
 			},
 			isFocusedBookSavingToICloud: () => {
-				const active = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-				return Boolean(active && savingToICloud.has(active.webContents.id));
+				const id = focusedBookSenderId();
+				return Boolean(id !== undefined && savingToICloud.has(id));
 			},
 			setSavingToICloud: (senderId, state) => {
 				if (state) {
@@ -196,12 +177,13 @@ if (!app.requestSingleInstanceLock()) {
 				} else {
 					savingToICloud.delete(senderId);
 				}
+				mainShell?.publishTabBar();
 				installMenu(context);
 			},
 			isSavingToICloud: (senderId) => savingToICloud.has(senderId),
 			isFocusedBookTrashing: () => {
-				const active = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-				return Boolean(active && trashing.has(active.webContents.id));
+				const id = focusedBookSenderId();
+				return Boolean(id !== undefined && trashing.has(id));
 			},
 			setTrashing: (senderId, active) => {
 				if (active) {
@@ -209,6 +191,7 @@ if (!app.requestSingleInstanceLock()) {
 				} else {
 					trashing.delete(senderId);
 				}
+				mainShell?.publishTabBar();
 				installMenu(context);
 			},
 			reindexBooks: async () => {
@@ -223,8 +206,83 @@ if (!app.requestSingleInstanceLock()) {
 				bookClosed.add(cleanup);
 			},
 			bookFor: (event) => books.get(event.sender.id),
-			windowFor: (event) => BrowserWindow.fromWebContents(event.sender)!,
-			broadcast: (channel, data) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channel, data)),
+			windowFor: (event) => BrowserWindow.fromWebContents(event.sender) ?? mainShell?.window ?? settingsWindow!,
+			mainWindow: () => mainShell?.window,
+			activeSender: () => mainShell?.activeWebContents(),
+			sendCommand: (command) => {
+				if (isSettingsFocused() && settingsWindow && !settingsWindow.webContents.isDestroyed()) {
+					settingsWindow.webContents.send(channels.command, command);
+					return;
+				}
+				mainShell?.activeWebContents()?.send(channels.command, command);
+			},
+			sendOpenResult: (result, target) => {
+				const recipient = target && !target.isDestroyed() ? target : mainShell?.activeWebContents();
+				if (recipient) {
+					recipient.send(channels.openResult, result);
+				} else {
+					context.openWelcome(result);
+				}
+			},
+			setFocusMode: (event, enabled) => {
+				if (mainShell?.ownsSender(event.sender.id)) {
+					mainShell.setFocusMode(enabled);
+				} else {
+					BrowserWindow.fromWebContents(event.sender)?.setFullScreen(enabled);
+				}
+			},
+			markBootstrapped: (event) => {
+				mainShell?.markReady(event.sender.id);
+			},
+			closeView: (event) => {
+				if (settingsWindow && event.sender === settingsWindow.webContents) {
+					settingsWindow.close();
+					return;
+				}
+				if (mainShell?.ownsSender(event.sender.id)) {
+					void mainShell.closeTab(event.sender.id);
+					return;
+				}
+				BrowserWindow.fromWebContents(event.sender)?.close();
+			},
+			tabBarState: () =>
+				mainShell?.tabBarState() ?? {
+					tabs: [],
+					locked: false,
+					theme: settings.get()['appearance.theme'],
+				},
+			bookTabs: () => (mainShell?.tabItems() ?? []).filter((tab) => tab.kind === 'book'),
+			selectTab: (id) => {
+				mainShell?.selectTab(id);
+				mainShell?.showAndFocus();
+			},
+			selectTabIndex: (index) => {
+				mainShell?.selectIndex(index);
+			},
+			cycleTab: (step) => {
+				mainShell?.cycleTab(step);
+			},
+			closeTab: async (id, sender) => {
+				if (id === undefined && ((sender && settingsWindow && sender === settingsWindow.webContents) || isSettingsFocused())) {
+					settingsWindow?.close();
+					return;
+				}
+				await mainShell?.closeTab(id);
+			},
+			setTabMenuExpanded: (expanded) => {
+				mainShell?.setMenuExpanded(expanded);
+			},
+			broadcast: (channel, data) => {
+				for (const wc of mainShell?.allWebContents() ?? []) {
+					wc.send(channel, data);
+				}
+				if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.webContents.isDestroyed()) {
+					settingsWindow.webContents.send(channel, data);
+				}
+				if (channel === channels.settingsChanged) {
+					mainShell?.publishTabBar();
+				}
+			},
 			open: async (root, source, selected, options) => {
 				try {
 					root = await resolveBookRoot(root);
@@ -235,17 +293,13 @@ if (!app.requestSingleInstanceLock()) {
 								windows.setSession(root, prior);
 							}
 						}
-						const existing = [...books].find(([, book]) => book.root === root);
+						const existing = mainShell?.findBookTab(root);
 						if (existing) {
-							const window = BrowserWindow.fromWebContents(webContents.fromId(existing[0])!)!;
-							if (options?.notice) {
-								window.webContents.send(channels.notice, options.notice);
+							mainShell!.selectTab(existing.id);
+							if (options?.notice && !existing.view.webContents.isDestroyed()) {
+								existing.view.webContents.send(channels.notice, options.notice);
 							}
-							if (!testing) {
-								window.restore();
-								window.show();
-								window.focus();
-							}
+							mainShell!.showAndFocus();
 						} else {
 							const prepared = await prepareOpen(root, settings.get(), selected);
 							if (prepared.roots) {
@@ -254,13 +308,20 @@ if (!app.requestSingleInstanceLock()) {
 							if (prepared.initialize) {
 								return { kind: 'empty', root };
 							}
-							createWindow(prepared.index!, false, options?.notice);
+							const shell = ensureMainShell();
+							if (options?.replaceSender && source) {
+								shell.replaceBook(source.id, prepared.index!, options.notice);
+							} else {
+								shell.openBook(prepared.index!, {
+									notice: options?.notice,
+									activate: options?.activate,
+									persistActive: options?.persistActive,
+								});
+							}
+							shell.showAndFocus();
 						}
 						if (options?.replaceRecent) {
 							windows.replaceRecent(options.replaceRecent, root);
-						}
-						if (source && !books.has(source.webContents.id) && source !== settingsWindow) {
-							source.close();
 						}
 						installMenu(context);
 						return { kind: 'opened' };
@@ -276,15 +337,14 @@ if (!app.requestSingleInstanceLock()) {
 				return notice;
 			},
 			openWelcome: (result) => {
-				const window = createWindow();
-				initialResults.set(window.webContents.id, result);
+				const shell = ensureMainShell();
+				shell.openWelcome(result);
+				shell.showAndFocus();
+				installMenu(context);
 			},
 			openSettings: () => {
 				if (!settingsWindow) {
-					settingsWindow = createWindow(undefined, true);
-					settingsWindow.on('closed', () => {
-						settingsWindow = undefined;
-					});
+					settingsWindow = createSettingsWindow();
 				} else if (!testing) {
 					settingsWindow.show();
 					settingsWindow.focus();
@@ -302,23 +362,28 @@ if (!app.requestSingleInstanceLock()) {
 			}
 		});
 		app.on('activate', () => {
-			if (!BrowserWindow.getAllWindows().length) {
-				createWindow();
+			if (!mainShell) {
+				context.openWelcome();
+			} else {
+				mainShell.showAndFocus();
 			}
 		});
+		const rememberedActive = windows.value.active;
 		let reopenError: OpenResult | undefined;
 		const restored = await restoreBooks(windows, async (root) => {
-			const result = await context.open(root);
+			const result = await context.open(root, undefined, false, { activate: false, persistActive: false });
 			if (result.kind === 'error') {
 				reopenError = result;
 			}
 			return result;
 		});
 		if (!restored) {
-			if (reopenError) {
-				context.openWelcome(reopenError);
+			context.openWelcome(reopenError);
+		} else if (mainShell) {
+			if (rememberedActive && mainShell.findBookTab(rememberedActive)) {
+				mainShell.selectByRoot(rememberedActive);
 			} else {
-				createWindow();
+				windows.setActive(mainShell.tabItems().find((tab) => tab.active)?.root);
 			}
 		}
 	});

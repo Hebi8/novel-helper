@@ -7,6 +7,7 @@ import { errorMessage } from '../errors';
 import { Popover } from '../scaffold/Popover';
 import { zh } from '../strings';
 import { applyTheme } from '../theme';
+import { handleBookTabShortcut } from '../shell/tabShortcuts';
 import { availableFontOptions } from './fonts';
 
 interface SliderSpec {
@@ -179,9 +180,14 @@ export function SettingsWindow() {
 				window.novel.window.close();
 			}
 		});
+		const onKeyDown = (event: KeyboardEvent) => {
+			handleBookTabShortcut(event, { closeOnly: true });
+		};
+		window.addEventListener('keydown', onKeyDown, true);
 		return () => {
 			off();
 			commands();
+			window.removeEventListener('keydown', onKeyDown, true);
 		};
 	}, []);
 
