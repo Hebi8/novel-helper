@@ -773,6 +773,7 @@ test('left lore tree group + and bottom row preselect types, and new entry dialo
 		await expect(dialog.getByRole('button', { name: '势力', exact: true })).toHaveAttribute('aria-pressed', 'true');
 		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 设定/沈三娘.md');
 		await expect(createBtn).toBeEnabled();
+		await expect(nameInput).toBeFocused();
 
 		// Enter creates the entry, opens it in the editor, writes expected file on disk, and shows the new group in the left sidebar.
 		await page.keyboard.press('Enter');
