@@ -1,5 +1,7 @@
-import { readFile, writeFile, rename } from 'node:fs/promises';
+import { readFile, stat, writeFile, rename } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { conflictCandidate } from '../../core/conflict';
 import { zh } from '../../renderer/strings';
 export type LineEnding = '\n' | '\r\n' | '\r';
 export class FileFormatError extends Error {}
@@ -35,4 +37,25 @@ export async function atomicWrite(file: string, text: string): Promise<void> {
 	const temporary = `${file}.${randomUUID()}.tmp`;
 	await writeFile(temporary, text, 'utf8');
 	await rename(temporary, file);
+}
+export async function isDiskConflictCopy(root: string, relativePath: string, extensions: readonly string[] = ['.json']): Promise<boolean> {
+	const candidate = conflictCandidate(relativePath, extensions);
+	if (candidate === undefined) {
+		return false;
+	}
+	try {
+		return (await stat(join(root, candidate))).isFile();
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			return false;
+		}
+		throw error;
+	}
+}
+export async function readAuxiliaryOptional(
+	root: string,
+	relativePath: string,
+	extensions: readonly string[] = ['.json'],
+): Promise<string | undefined> {
+	return (await isDiskConflictCopy(root, relativePath, extensions)) ? undefined : readOptional(join(root, relativePath));
 }

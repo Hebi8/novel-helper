@@ -1,11 +1,16 @@
 import * as assert from 'node:assert/strict';
-import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, test } from 'node:test';
 import { suggestChapterName } from '../core/book';
 import { conflictCandidate, conflictOriginal, findConflictCopies } from '../core/conflict';
+import { readAuxiliaryOptional } from '../main/book/files';
 import { BookIndex } from '../main/book/indexer';
+import { Buoys } from '../main/buoys/service';
+import { renameBook, renamePlan } from '../main/scaffold/rename';
+import { SettingsStore } from '../main/settings/store';
+import { UsageStore } from '../storage/usageStore';
 
 describe('conflict copy detection', () => {
 	test('matches stem + space + integer >= 2 + .md only when the original .md exists in the same folder', () => {
@@ -115,5 +120,42 @@ describe('conflict copy detection', () => {
 		await index.refresh(chapterOriginal);
 		assert.equal(index.library.isChapter(chapterCopy), true);
 		assert.equal(index.book.conflicts.some((item) => item.path === chapterCopy), false);
+	});
+
+	test('ignores .json conflict copies of project.json and buoy files without errors, display, or merging', async (t) => {
+		const root = await mkdtemp(join(tmpdir(), 'novel-aux-conflict-test-'));
+		const book = join(root, 'book');
+		await cp(resolve('examples'), book, { recursive: true });
+		t.after(() => rm(root, { recursive: true, force: true }));
+
+		const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
+		const buoyConflict = '.novel-helper/buoys/正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md 2.json';
+		const markerConflict = '.novel-helper/project 2.json';
+		await writeFile(join(book, markerConflict), '{not-valid-json');
+		await writeFile(join(book, buoyConflict), '{not-valid-json');
+
+		assert.equal(await readAuxiliaryOptional(book, markerConflict), undefined);
+		assert.equal(await readAuxiliaryOptional(book, buoyConflict), undefined);
+
+		const index = new BookIndex(book);
+		t.after(() => index.dispose());
+		await index.load();
+		assert.equal(index.marker?.version, 1);
+		assert.deepEqual(index.book.conflicts, []);
+
+		const settings = new SettingsStore(join(root, 'data'));
+		const usage = new UsageStore(join(root, 'usage'));
+		await usage.load();
+		const buoys = new Buoys(index, settings, usage, () => undefined);
+		t.after(() => buoys.dispose());
+		const status = await buoys.status(chapter);
+		assert.equal(status.lost, false);
+		assert.equal(status.state?.nodes[0]?.title, '周伯收信');
+		assert.equal(await buoys.status('正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md 2').then((s) => s.state), undefined);
+
+		const plan = await renamePlan(index, chapter, '第2章 北角灯塔');
+		const renamed = await index.exclusive(() => renameBook(index, plan));
+		assert.equal(renamed.error, undefined);
+		assert.equal(await readFile(join(book, buoyConflict), 'utf8'), '{not-valid-json');
 	});
 });

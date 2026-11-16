@@ -1,6 +1,6 @@
 import { movedPath } from '../../shared/paths';
 import { dirname } from 'node:path';
-import { findConflictCopies, type ConflictCopy } from '../../core/conflict';
+import { conflictCandidate, findConflictCopies, type ConflictCopy } from '../../core/conflict';
 import { comparePaths } from '../../core/naturalSort';
 import { buildOutline, type OutlineGraph } from '../../core/outline';
 import { readdir, stat, mkdir } from 'node:fs/promises';
@@ -10,7 +10,15 @@ import { Library, globRootDepth, globFolders, type FileKind, type Rename } from 
 import { MARKER_FILE, SCAN_DEPTH, SCAN_EXCLUDE, parseMarker, type Marker, storiesFromMarkers } from '../../core/story';
 import { defaults, type Settings } from '../../shared/defaults';
 import type { Book, DiskFile, SaveResult } from '../../shared/api';
-import { atomicWrite, readOptional, readDocument, FileFormatError, type LineEnding } from './files';
+import {
+	atomicWrite,
+	isDiskConflictCopy,
+	readAuxiliaryOptional,
+	readOptional,
+	readDocument,
+	FileFormatError,
+	type LineEnding,
+} from './files';
 const groupsFor = (settings: Settings) =>
 	[
 		['lore', settings['files.lore']],
@@ -56,7 +64,7 @@ export async function findStories(root: string): Promise<string[]> {
 	async function visit(relative: string, depth: number): Promise<void> {
 		const marker = relative ? `${relative}/${MARKER_FILE}` : MARKER_FILE;
 		try {
-			const text = await readOptional(join(root, marker));
+			const text = await readAuxiliaryOptional(root, marker);
 			if (text !== undefined && parseMarker(text)) {
 				markers.push(marker);
 			}
@@ -136,7 +144,7 @@ export class BookIndex {
 	}
 	async load(): Promise<void> {
 		try {
-			const marker = await readOptional(join(this.root, MARKER_FILE));
+			const marker = await readAuxiliaryOptional(this.root, MARKER_FILE);
 			const metadata = marker !== undefined ? parseMarker(marker) : undefined;
 			this.marker = metadata;
 			if (metadata?.book && this.library.empty) {
@@ -183,8 +191,19 @@ export class BookIndex {
 			}
 			const path = filename.toString();
 			if (path.startsWith('.novel-helper/buoys/')) {
-				this.buoyVersion++;
-				this.notify();
+				if (conflictCandidate(path, ['.json']) === undefined) {
+					this.buoyVersion++;
+					this.notify();
+				} else {
+					void isDiskConflictCopy(this.root, path)
+						.then((conflict) => {
+							if (!conflict && !this.disposed) {
+								this.buoyVersion++;
+								this.notify();
+							}
+						})
+						.catch(() => {});
+				}
 				return;
 			}
 			if (!this.roots.some((root) => path === root || path.startsWith(root + '/')) && !this.opened.has(path)) {

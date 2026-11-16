@@ -20,6 +20,7 @@ async function withConflictBook(
 		originalChapterText: string;
 		trashed(): Promise<string[]>;
 	}) => Promise<void>,
+	setupBook?: (book: string) => Promise<void>,
 ) {
 	const root = await mkdtemp(join(tmpdir(), 'novel-conflicts-e2e-'));
 	const book = join(root, 'book');
@@ -30,13 +31,17 @@ async function withConflictBook(
 	await mkdir(trash);
 
 	const originalChapterText = await readFile(join(book, chapterOriginal), 'utf8');
-	await writeFile(join(book, chapterCopy), originalChapterText + '\n另一台 Mac 上的灯塔续段。\n');
-	await writeFile(join(book, outlineCopy), '# 第一卷 雾港\n\n## 冲突副本大纲节点\n');
-	await writeFile(join(book, loreCopy), '---\naliases: [冲突别名]\n---\n另一台 Mac 上的林小满。\n');
-	// Number < 2 and .txt files must not count as conflict copies.
-	await writeFile(join(book, '设定/雾港 1.md'), '编号为 1 的普通设定');
-	await writeFile(join(book, '设定/草稿.txt'), '原 txt');
-	await writeFile(join(book, '设定/草稿 2.txt'), '副本 txt');
+	if (setupBook) {
+		await setupBook(book);
+	} else {
+		await writeFile(join(book, chapterCopy), originalChapterText + '\n另一台 Mac 上的灯塔续段。\n');
+		await writeFile(join(book, outlineCopy), '# 第一卷 雾港\n\n## 冲突副本大纲节点\n');
+		await writeFile(join(book, loreCopy), '---\naliases: [冲突别名]\n---\n另一台 Mac 上的林小满。\n');
+		// Number < 2 and .txt files must not count as conflict copies.
+		await writeFile(join(book, '设定/雾港 1.md'), '编号为 1 的普通设定');
+		await writeFile(join(book, '设定/草稿.txt'), '原 txt');
+		await writeFile(join(book, '设定/草稿 2.txt'), '副本 txt');
+	}
 
 	await writeFile(join(data, 'windows.json'), JSON.stringify({ open: [], recent: [], books: {} }));
 	await writeFile(join(data, 'settings.json'), JSON.stringify({ enabled: false, 'snapshots.intervalMinutes': 0 }));
@@ -196,4 +201,37 @@ test('identifies .md conflict copies across trees and status bar, blocks on unsa
 		await rename(join(book, loreCopy), join(trash, 'manual-lore-copy.md'));
 		await expect(page.locator('.status-conflict')).toHaveCount(0);
 	});
+});
+
+test('ignores .json conflict copies of project.json and buoy files when opening, moving buoys, and renaming chapters', async () => {
+	const markerCopy = '.novel-helper/project 2.json';
+	const buoyCopy = `.novel-helper/buoys/${chapterOriginal.slice(0, -'.md'.length)}.md 2.json`;
+	await withConflictBook(
+		async ({ page, book }) => {
+			await expect(page.locator('.notice[role="alert"]')).toHaveCount(0);
+			await expect(page.locator('.status-conflict')).toHaveCount(0);
+
+			const chapterTree = page.getByRole('tree', { name: '章节', exact: true });
+			await chapterTree.getByRole('button', { name: '第2章 灯塔', exact: true }).click();
+			await expect(page.locator('.status-buoy')).toContainText('周伯收信');
+
+			await page.getByRole('button', { name: '前进一格', exact: true }).click();
+			await expect(page.locator('.status-buoy')).not.toContainText('周伯收信');
+
+			await chapterTree.getByRole('button', { name: '第2章 灯塔', exact: true }).click({ button: 'right' });
+			await page.getByRole('menuitem', { name: '重命名', exact: true }).click();
+			const dialog = page.getByRole('dialog', { name: '重命名', exact: true });
+			await dialog.getByRole('textbox', { name: '名字', exact: true }).fill('第2章 北角灯塔');
+			await dialog.getByRole('button', { name: '确定', exact: true }).click();
+
+			await expect(chapterTree.getByRole('button', { name: '第2章 北角灯塔', exact: true })).toBeVisible();
+			await expect(page.locator('.notice[role="alert"]')).toHaveCount(0);
+			expect(await readFile(join(book, markerCopy), 'utf8')).toBe('{corrupted-marker-copy');
+			expect(await readFile(join(book, buoyCopy), 'utf8')).toBe('{corrupted-buoy-copy');
+		},
+		async (book) => {
+			await writeFile(join(book, markerCopy), '{corrupted-marker-copy');
+			await writeFile(join(book, buoyCopy), '{corrupted-buoy-copy');
+		},
+	);
 });

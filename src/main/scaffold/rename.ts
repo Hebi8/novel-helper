@@ -1,6 +1,7 @@
 import { movedPath } from '../../shared/paths';
 import { join, dirname } from 'node:path';
 import { readdir, mkdir, link, unlink, rename } from 'node:fs/promises';
+import { conflictOriginal } from '../../core/conflict';
 import type { Rename } from '../../core/library';
 import { nameProblem } from '../../core/book';
 import { BUOY_FOLDER, hasOpenMarks, markAt, parseBuoyFile, renameState, serializeBuoyFile, type BuoyFile } from '../../core/buoy';
@@ -17,12 +18,16 @@ async function jsonFiles(root: string, path: string): Promise<string[]> {
 	}
 	await safePath(root, path);
 	const entries = await readdir(join(root, path), { withFileTypes: true });
+	const siblings = new Set(entries.filter((entry) => entry.isFile()).map((entry) => `${path}/${entry.name}`));
 	return (
 		await Promise.all(
 			entries.map(async (entry) => {
 				const file = `${path}/${entry.name}`;
 				await safePath(root, file);
-				return entry.isDirectory() ? jsonFiles(root, file) : entry.name.endsWith('.json') ? [file] : [];
+				if (entry.isDirectory()) {
+					return jsonFiles(root, file);
+				}
+				return entry.isFile() && entry.name.endsWith('.json') && !conflictOriginal(file, siblings, ['.json']) ? [file] : [];
 			}),
 		)
 	).flat();
