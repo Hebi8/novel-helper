@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useId, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent } from 'react';
+import {
+	useCallback,
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useRef,
+	useState,
+	type ClipboardEvent,
+	type FormEvent,
+	type KeyboardEvent,
+} from 'react';
 import { appendLoreListItems, hasLoreListSeparator, type LoreFormData } from '../../core/loreForm';
 import { zh } from '../strings';
 
@@ -69,22 +79,22 @@ function TypeField({
 	const inputRef = useRef<HTMLInputElement>(null);
 	const id = useId();
 
-	const endComposing = useCallback(() => {
+	const releaseComposing = useCallback(() => {
 		if (composing.current) {
 			composing.current = false;
 			finishComposition.current();
 		}
 	}, []);
 
-	useEffect(() => () => endComposing(), [endComposing]);
+	useLayoutEffect(() => () => releaseComposing(), [releaseComposing]);
 
 	const closeMenu = useCallback(() => {
-		endComposing();
+		releaseComposing();
 		setOpen(false);
 		setDraft('');
 		setActiveIndex(-1);
 		setTimeout(() => triggerRef.current?.focus(), 0);
-	}, [endComposing]);
+	}, [releaseComposing]);
 
 	useEffect(() => {
 		if (!open) {
@@ -112,7 +122,7 @@ function TypeField({
 	}, [open, closeMenu]);
 
 	const choose = (option: string) => {
-		endComposing();
+		releaseComposing();
 		setOpen(false);
 		setDraft('');
 		setActiveIndex(-1);
@@ -122,7 +132,7 @@ function TypeField({
 
 	const toggleMenu = () => {
 		if (open) {
-			endComposing();
+			releaseComposing();
 			setOpen(false);
 			setDraft('');
 			setActiveIndex(-1);
@@ -226,7 +236,7 @@ function TypeField({
 									composing.current = true;
 									compositionStart();
 								}}
-								onCompositionEnd={endComposing}
+								onCompositionEnd={releaseComposing}
 								onBeforeInput={(event) => {
 									if (!composing.current) {
 										handleHistoryBeforeInput(event, undo, redo);
@@ -289,18 +299,19 @@ function PillListField({
 	const inputRef = useRef<HTMLInputElement>(null);
 	const id = useId();
 
-	const endComposing = useCallback(() => {
+	const releaseComposing = useCallback(() => {
 		if (composing.current) {
 			composing.current = false;
 			finishComposition.current();
 		}
 	}, []);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
+		releaseComposing();
 		setDraft('');
-	}, [syncVersion]);
+	}, [syncVersion, releaseComposing]);
 
-	useEffect(() => () => endComposing(), [endComposing]);
+	useLayoutEffect(() => () => releaseComposing(), [releaseComposing]);
 
 	return (
 		<>
@@ -323,7 +334,10 @@ function PillListField({
 							className="lore-pill-remove"
 							aria-label={zh.removeItem(item)}
 							onClick={() => {
-								endComposing();
+								if (composing.current) {
+									releaseComposing();
+									setDraft('');
+								}
 								commit(
 									items.filter((_, current) => current !== index),
 									true,
@@ -346,7 +360,7 @@ function PillListField({
 						composing.current = true;
 						compositionStart();
 					}}
-					onCompositionEnd={endComposing}
+					onCompositionEnd={releaseComposing}
 					onBeforeInput={(event) => {
 						if (!composing.current) {
 							handleHistoryBeforeInput(event, undo, redo);
@@ -362,9 +376,10 @@ function PillListField({
 						const target = event.currentTarget;
 						const start = target.selectionStart ?? draft.length;
 						const end = target.selectionEnd ?? start;
-						const combined = draft.slice(0, start) + pasted + draft.slice(end);
+						const wasComposing = composing.current;
+						releaseComposing();
+						const combined = wasComposing ? pasted : draft.slice(0, start) + pasted + draft.slice(end);
 						const next = appendLoreListItems(items, combined, fieldKey);
-						endComposing();
 						setDraft('');
 						if (next.length !== items.length) {
 							commit(next, true);
@@ -438,36 +453,25 @@ function InlineTextField({
 }) {
 	const [rawText, setRawText] = useState<string>();
 	const composing = useRef(false);
-	const latestRaw = useRef(value);
-	latestRaw.current = rawText ?? value;
-	const latestCommit = useRef(commit);
-	latestCommit.current = commit;
 	const finishComposition = useRef(compositionEnd);
 	finishComposition.current = compositionEnd;
 	const inputRef = useRef<HTMLInputElement>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const id = useId();
 
-	const finishComposing = useCallback((text: string) => {
-		if (!composing.current) {
-			return;
+	const releaseComposing = useCallback(() => {
+		if (composing.current) {
+			composing.current = false;
+			finishComposition.current();
 		}
-		composing.current = false;
-		const next = text.replace(/(?:\r\n|\r|\n)+/g, ' ');
-		latestCommit.current(next);
-		finishComposition.current();
 	}, []);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
+		releaseComposing();
 		setRawText(undefined);
-	}, [syncVersion]);
+	}, [syncVersion, releaseComposing]);
 
-	useEffect(
-		() => () => {
-			finishComposing(latestRaw.current);
-		},
-		[finishComposing],
-	);
+	useLayoutEffect(() => () => releaseComposing(), [releaseComposing]);
 
 	const shared = {
 		id,
@@ -482,9 +486,11 @@ function InlineTextField({
 			if (!composing.current) {
 				return;
 			}
+			composing.current = false;
 			const next = event.currentTarget.value.replace(/(?:\r\n|\r|\n)+/g, ' ');
 			setRawText(next);
-			finishComposing(event.currentTarget.value);
+			commit(next);
+			compositionEnd();
 		},
 		onBeforeInput: (event: FormEvent<HTMLInputElement | HTMLTextAreaElement>) => {
 			if (!composing.current) {
@@ -499,9 +505,12 @@ function InlineTextField({
 			event.preventDefault();
 			const target = event.currentTarget;
 			const clean = pasted.replace(/(?:\r\n|\r|\n)+/g, ' ');
-			const start = target.selectionStart ?? target.value.length;
-			const end = target.selectionEnd ?? start;
-			const next = target.value.slice(0, start) + clean + target.value.slice(end);
+			const wasComposing = composing.current;
+			releaseComposing();
+			const base = wasComposing ? value : target.value;
+			const start = wasComposing ? base.length : (target.selectionStart ?? base.length);
+			const end = wasComposing ? start : (target.selectionEnd ?? start);
+			const next = base.slice(0, start) + clean + base.slice(end);
 			setRawText(next);
 			commit(next);
 			const caret = start + clean.length;

@@ -610,6 +610,24 @@ test('lore entry frontmatter form uses single full-document representation, pres
 		await writeFile(towerPath, diskUpdated);
 		await expect(summaryInput).toHaveValue('外部修改后的摘要。');
 
+		// External change unmounting a composing input (`era` string -> boolean `false`) releases composition wait without committing preedit pinyin.
+		await eraInput.focus();
+		await eraInput.evaluate((el: HTMLInputElement) => {
+			el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: 'shi' }));
+			const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+			setter.call(el, 'shi');
+			el.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true, data: 'shi' }));
+		});
+		const eraAsFalse = diskUpdated.replace('era: 百年前', 'era: false');
+		await writeFile(towerPath, eraAsFalse);
+		const eraSwitch = form.getByRole('switch', { name: 'era', exact: true });
+		await expect(eraSwitch).toBeVisible();
+		await expect(eraSwitch).not.toBeChecked();
+		await page.waitForTimeout(1200);
+		expect(await readFile(towerPath, 'utf8')).toBe(eraAsFalse);
+		await summaryInput.fill('卸载组字后仍能正常保存。');
+		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(eraAsFalse.replace('外部修改后的摘要。', '卸载组字后仍能正常保存。'));
+
 		const row = page.locator('.sidebar.left .lore-row').filter({ hasText: '北角灯塔' });
 		await row.click({ button: 'right' });
 		await page.getByRole('menuitem', { name: '改别名', exact: true }).click();
