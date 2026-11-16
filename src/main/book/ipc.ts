@@ -38,7 +38,6 @@ export function registerBook(ctx: MainContext): void {
 			return;
 		}
 		const book = ctx.bookFor(event)!;
-		const oldWindow = ctx.windowFor(event);
 		ctx.setSavingToICloud(senderId, 'copying');
 		try {
 			if (ctx.isBookBusy(book.root)) {
@@ -62,11 +61,6 @@ export function registerBook(ctx: MainContext): void {
 				throw new Error(opened.kind === 'error' ? opened.message : zh.missingBook);
 			}
 			ctx.setSavingToICloud(senderId, 'closing');
-			setImmediate(() => {
-				if (!oldWindow.isDestroyed()) {
-					oldWindow.close();
-				}
-			});
 		} catch (error) {
 			ctx.setSavingToICloud(senderId, undefined);
 			throw error;

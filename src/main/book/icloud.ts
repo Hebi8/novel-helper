@@ -3,6 +3,7 @@ import { copyFile, lstat, mkdir, open, readdir, rename, stat } from 'node:fs/pro
 import { basename, join } from 'node:path';
 import { comparePaths } from '../../core/naturalSort';
 import { skipsFolder } from '../../core/snapshot';
+import { errorMessage } from '../../renderer/errors';
 import { zh } from '../../renderer/strings';
 import { info } from '../scaffold/disk';
 import { currentICloudRoot, isBookInICloud } from './files';
@@ -362,7 +363,11 @@ export async function copyBookToICloud(
 		await rename(partialDir, targetDir);
 		return targetDir;
 	} catch (error) {
-		await options.trashItem(partialDir).catch(() => {});
+		try {
+			await options.trashItem(partialDir);
+		} catch (cleanupError) {
+			throw new Error(zh.saveToICloudCleanupFailed(errorMessage(error), partialDir, errorMessage(cleanupError)));
+		}
 		throw error;
 	}
 }

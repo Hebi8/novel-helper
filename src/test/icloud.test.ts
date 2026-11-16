@@ -217,6 +217,30 @@ describe('iCloud Drive books', () => {
 		);
 		assert.deepEqual(trashed, ['雾港.partial', '雾港.partial']);
 		assert.equal(await readFile(join(booksDir, '雾港/existing.md'), 'utf8'), '原有的云端书稿');
+		await rm(join(booksDir, '雾港'), { recursive: true, force: true });
+
+		// 4. Copy failure where moving .partial to Trash also fails: reports both errors and the leftover .partial path without auto-deleting it.
+		const partialPath = join(booksDir, '雾港.partial');
+		await assert.rejects(
+			copyBookToICloud(source, {
+				icloudRoot: mobileDocs,
+				trashItem: async () => {
+					throw new Error('废纸篓不可用');
+				},
+				copyOne: async () => {
+					throw new Error('磁盘空间不足');
+				},
+			}),
+			(error: unknown) => {
+				assert.ok(error instanceof Error);
+				assert.match(error.message, /磁盘空间不足/);
+				assert.match(error.message, /废纸篓不可用/);
+				assert.ok(error.message.includes(partialPath));
+				return true;
+			},
+		);
+		assert.equal(existsSync(partialPath), true);
+		await rm(partialPath, { recursive: true, force: true });
 
 		// Verify source book never changed across all failure scenarios.
 		assert.deepEqual(await listAllRelativeFiles(source), originalFiles);

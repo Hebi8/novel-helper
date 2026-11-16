@@ -66,6 +66,7 @@ export function App() {
 				return;
 			}
 			await window.novel.book.saveToICloud();
+			window.novel.window.flushed();
 		} catch (error) {
 			setSavingICloud(undefined);
 			setError(errorMessage(error));
@@ -174,9 +175,6 @@ export function App() {
 			window.novel.usage.onChanged((usage) => setInitial((value) => (value ? { ...value, usage } : value))),
 			window.novel.window.onCommand((command) => {
 				if (savingICloudRef.current === 'running') {
-					if (command === 'flush') {
-						window.novel.window.flushed();
-					}
 					return;
 				}
 				actionRef.current[command]();

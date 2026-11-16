@@ -246,6 +246,8 @@ export const zh = {
 	icloudUnavailable: '找不到 iCloud 云盘',
 	saveToICloudChanged: '复制期间书被改动了，没有存到 iCloud，请再试一次',
 	saveToICloudVerifyFailed: '复制后的文件校验不一致',
+	saveToICloudCleanupFailed: (reason: string, partialPath: string, cleanupReason: string) =>
+		`${reason}；移入废纸篓清理临时文件夹也失败了（${cleanupReason}），残留目录仍在：${partialPath}，请手动处理后再试。`,
 	empty: '还没初始化',
 	chooseStory: '选择故事空间',
 	left: '收起左栏',

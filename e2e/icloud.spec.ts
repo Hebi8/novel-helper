@@ -446,3 +446,193 @@ test('welcome page lists iCloud books without deduplicating recent, watches for 
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test('blocks window close while initial saveAll is pending during Save to iCloud and restores close flow on failure', async () => {
+	const root = await realpath(await mkdtemp(join(tmpdir(), 'novel-icloud-close-gate-e2e-')));
+	const icloud = join(root, 'Mobile Documents');
+	const drive = join(icloud, 'com~apple~CloudDocs');
+	const booksDir = join(drive, 'Novel Helper');
+	const localBook = join(root, '雾港');
+	const otherBook = join(root, '另一本书');
+	const data = join(root, 'data');
+
+	await mkdir(booksDir, { recursive: true });
+	await mkdir(join(booksDir, '雾港'), { recursive: true });
+	await cp(resolve('examples'), localBook, { recursive: true });
+	await cp(resolve('examples'), otherBook, { recursive: true });
+	await mkdir(data, { recursive: true });
+	await writeFile(join(data, 'windows.json'), JSON.stringify({ open: [localBook, otherBook], recent: [localBook, otherBook], books: {} }));
+	await writeFile(join(data, 'settings.json'), JSON.stringify({ enabled: false, 'snapshots.intervalMinutes': 0 }));
+
+	const originalChapter = await readFile(join(localBook, chapter), 'utf8');
+
+	let app: ElectronApplication | undefined;
+	let exited: Promise<void> | undefined;
+	try {
+		app = await electron.launch({
+			env: cleanEnv(),
+			args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`, `--icloud-dir=${icloud}`],
+		});
+		exited = new Promise((done) => app!.process().once('exit', () => done()));
+
+		await expect.poll(() => app!.windows().length).toBe(2);
+		const initialWindows = app.windows();
+		for (const win of initialWindows) {
+			await win.waitForLoadState('domcontentloaded');
+			await expect(win.locator('.topbar strong')).toBeVisible();
+		}
+		const firstTitle = await initialWindows[0].locator('.topbar strong').textContent();
+		const [page, otherPage] = firstTitle === '雾港' ? [initialWindows[0], initialWindows[1]] : [initialWindows[1], initialWindows[0]];
+
+		// 1. On 雾港 (where migration will fail because booksDir/雾港 already exists):
+		// hang initial saveAll(), send window close request -> window stays open -> release save -> text is on disk -> normal close flow works.
+		await page.getByRole('tree', { name: '章节', exact: true }).getByRole('button', { name: '第2章 灯塔', exact: true }).click();
+		const editor = page.locator('.editor:visible .cm-content');
+		await expect(editor).toContainText('林小满');
+
+		await app.evaluate(() => {
+			const fs = process.getBuiltinModule('node:fs/promises')!;
+			const realWriteFile = fs.writeFile.bind(fs);
+			const state = globalThis as typeof globalThis & {
+				writePaused?: boolean;
+				releaseWrite?: () => void;
+				restoreWrite?: () => void;
+			};
+			state.writePaused = false;
+			const gate = new Promise<void>((resolve) => {
+				state.releaseWrite = resolve;
+			});
+			fs.writeFile = (async (...args: Parameters<typeof fs.writeFile>) => {
+				if (String(args[0]).includes('第2章 灯塔.md.') && !state.writePaused) {
+					state.writePaused = true;
+					await gate;
+				}
+				return realWriteFile(...args);
+			}) as typeof fs.writeFile;
+			state.restoreWrite = () => {
+				fs.writeFile = realWriteFile;
+			};
+		});
+
+		try {
+			await editor.click();
+			await page.keyboard.press('Meta+ArrowDown');
+			await page.keyboard.insertText('保存挂起期间不丢的字。');
+
+			await page.locator('.topbar button.topbar-book').click();
+			await page.getByRole('menuitem', { name: '存到 iCloud', exact: true }).click();
+			await page.getByRole('dialog', { name: '存到 iCloud', exact: true }).getByRole('button', { name: '确定', exact: true }).click();
+
+			await expect.poll(() => app!.evaluate(() => (globalThis as { writePaused?: boolean }).writePaused)).toBe(true);
+			expect(await readFile(join(localBook, chapter), 'utf8')).toBe(originalChapter);
+
+			// Request closing the window while saveAll() is still pending (before main process sets copying).
+			await page.evaluate(() => window.novel.window.close());
+			await page.waitForTimeout(150);
+			expect(page.isClosed()).toBe(false);
+			await expect(page.locator('.icloud-saving-backdrop')).toHaveText('正在存到 iCloud…');
+
+			// Release saveAll(): text lands on disk, migration fails due to existing target, window remains open.
+			await app.evaluate(() => (globalThis as { releaseWrite?: () => void }).releaseWrite?.());
+			await expect(page.locator('.icloud-saving-backdrop')).toHaveCount(0);
+			await expect(page.locator('.notice[role="alert"]')).toContainText('iCloud 里已有同名的书');
+			expect(page.isClosed()).toBe(false);
+			expect(await readFile(join(localBook, chapter), 'utf8')).toBe(originalChapter + '保存挂起期间不丢的字。');
+		} finally {
+			await app.evaluate(() => (globalThis as { restoreWrite?: () => void }).restoreWrite?.());
+		}
+
+		// Normal close flow is restored after migration failure: unsaved text is flushed and the window closes.
+		await page.getByRole('button', { name: '关闭提示', exact: true }).click();
+		await editor.click();
+		await page.keyboard.press('Meta+ArrowDown');
+		await page.keyboard.insertText('失败后关窗保存的字。');
+		await page.evaluate(() => window.novel.window.close());
+		await expect.poll(() => page.isClosed()).toBe(true);
+		expect(await readFile(join(localBook, chapter), 'utf8')).toBe(originalChapter + '保存挂起期间不丢的字。失败后关窗保存的字。');
+
+		// 2. On 另一本书 (where migration succeeds):
+		// hang both saveAll() and copyFile(), send close request during saveAll() -> window stays open through both save and copy,
+		// text is on disk once save completes, and old window closes only after migration finishes.
+		await otherPage.getByRole('tree', { name: '章节', exact: true }).getByRole('button', { name: '第2章 灯塔', exact: true }).click();
+		const otherEditor = otherPage.locator('.editor:visible .cm-content');
+		await expect(otherEditor).toContainText('林小满');
+
+		await app.evaluate(() => {
+			const fs = process.getBuiltinModule('node:fs/promises')!;
+			const realWriteFile = fs.writeFile.bind(fs);
+			const realCopyFile = fs.copyFile.bind(fs);
+			const state = globalThis as typeof globalThis & {
+				writePaused2?: boolean;
+				copyPaused2?: boolean;
+				releaseWrite2?: () => void;
+				releaseCopy2?: () => void;
+				restoreFs2?: () => void;
+			};
+			state.writePaused2 = false;
+			state.copyPaused2 = false;
+			const writeGate = new Promise<void>((resolve) => {
+				state.releaseWrite2 = resolve;
+			});
+			const copyGate = new Promise<void>((resolve) => {
+				state.releaseCopy2 = resolve;
+			});
+			fs.writeFile = (async (...args: Parameters<typeof fs.writeFile>) => {
+				if (String(args[0]).includes('第2章 灯塔.md.') && !state.writePaused2) {
+					state.writePaused2 = true;
+					await writeGate;
+				}
+				return realWriteFile(...args);
+			}) as typeof fs.writeFile;
+			fs.copyFile = (async (...args: Parameters<typeof fs.copyFile>) => {
+				if (String(args[1]).includes('另一本书.partial') && !state.copyPaused2) {
+					state.copyPaused2 = true;
+					await copyGate;
+				}
+				return realCopyFile(...args);
+			}) as typeof fs.copyFile;
+			state.restoreFs2 = () => {
+				fs.writeFile = realWriteFile;
+				fs.copyFile = realCopyFile;
+			};
+		});
+
+		try {
+			await otherEditor.click();
+			await otherPage.keyboard.press('Meta+ArrowDown');
+			await otherPage.keyboard.insertText('迁移完成才关窗的字。');
+
+			const nextWindow = app.waitForEvent('window');
+			await otherPage.locator('.topbar button.topbar-book').click();
+			await otherPage.getByRole('menuitem', { name: '存到 iCloud', exact: true }).click();
+			await otherPage.getByRole('dialog', { name: '存到 iCloud', exact: true }).getByRole('button', { name: '确定', exact: true }).click();
+
+			await expect.poll(() => app!.evaluate(() => (globalThis as { writePaused2?: boolean }).writePaused2)).toBe(true);
+			await otherPage.evaluate(() => window.novel.window.close());
+			await otherPage.waitForTimeout(150);
+			expect(otherPage.isClosed()).toBe(false);
+
+			// Finish saveAll(): text is now on disk, migration is still copying -> window still must not close.
+			await app.evaluate(() => (globalThis as { releaseWrite2?: () => void }).releaseWrite2?.());
+			await expect.poll(() => app!.evaluate(() => (globalThis as { copyPaused2?: boolean }).copyPaused2)).toBe(true);
+			expect(await readFile(join(otherBook, chapter), 'utf8')).toBe(originalChapter + '迁移完成才关窗的字。');
+			expect(otherPage.isClosed()).toBe(false);
+
+			// Finish migration: new iCloud window opens and old window closes.
+			await app.evaluate(() => (globalThis as { releaseCopy2?: () => void }).releaseCopy2?.());
+			const migratedPage = await nextWindow;
+			await migratedPage.waitForLoadState('domcontentloaded');
+			await expect(migratedPage.locator('.topbar strong')).toHaveText('另一本书');
+			await expect.poll(() => otherPage.isClosed()).toBe(true);
+			expect(await readFile(join(booksDir, '另一本书', chapter), 'utf8')).toBe(originalChapter + '迁移完成才关窗的字。');
+		} finally {
+			await app.evaluate(() => (globalThis as { restoreFs2?: () => void }).restoreFs2?.());
+		}
+	} finally {
+		if (app) {
+			await app.close();
+			await exited;
+		}
+		await rm(root, { recursive: true, force: true });
+	}
+});
