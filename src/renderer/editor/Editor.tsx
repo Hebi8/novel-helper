@@ -6,7 +6,7 @@ import { loreExtension, updateLore } from '../reference/loreExtension';
 import { useWorkspace } from '../workspace';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Annotation, ChangeSet, EditorSelection, EditorState, StateEffect, StateField, type Text, Transaction } from '@codemirror/state';
-import { Decoration, EditorView, keymap, type DecorationSet } from '@codemirror/view';
+import { Decoration, drawSelection, EditorView, keymap, type DecorationSet } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, isolateHistory, redo, undo } from '@codemirror/commands';
 import { search, searchKeymap, openSearchPanel } from '@codemirror/search';
 import { markdown } from '@codemirror/lang-markdown';
@@ -15,8 +15,9 @@ import { commitLoreField, diffFrontmatterPrefix, inspectLoreForm } from '../../c
 import { groupLore } from '../../core/loreGroups';
 import { frontmatterLength, stem } from '../../core/text';
 import type { Settings, TabState } from '../../shared/api';
+import { LINE_HEIGHT_VALUES } from '../../shared/settings';
 import type { DocumentModel } from './document';
-import { prose } from './prose';
+import { createProse } from './prose';
 import { zh } from '../strings';
 
 const formEdit = Annotation.define<boolean>();
@@ -149,7 +150,7 @@ interface Props {
 	limited: boolean;
 	nextRequestId(): number;
 	ready(handle?: EditorHandle): void;
-	cursor(anchor: number, head: number): void;
+	cursor(anchor: number, head: number, focused?: boolean): void;
 }
 export function Editor({
 	document: model,
@@ -199,13 +200,32 @@ export function Editor({
 			start: () => model.compositionStart(),
 			end: (text) => model.compositionEnd(text),
 		});
+		const isEditorFocused = (target: EditorView) => target.root.activeElement === target.contentDOM;
 		const extensions = [
 			history(),
 			EditorState.readOnly.of(model.readOnly),
 			EditorView.editable.of(!model.readOnly),
+			...(chapter && !model.readOnly ? [drawSelection({ cursorBlinkRate: 1200 })] : []),
+			EditorView.domEventObservers({
+				focus: (_event, target) => {
+					const sel = target.state.selection.main;
+					callbacks.current.cursor(sel.anchor, sel.head, true);
+				},
+				blur: (_event, target) => {
+					target.dom.classList.remove('cm-composing');
+					const sel = target.state.selection.main;
+					callbacks.current.cursor(sel.anchor, sel.head, false);
+				},
+				compositionstart: (_event, target) => {
+					target.dom.classList.add('cm-composing');
+				},
+				compositionend: (_event, target) => {
+					target.dom.classList.remove('cm-composing');
+				},
+			}),
 
 			ghost.extension(),
-			prose,
+			createProse({ chapter, autoPair: () => settingsRef.current['editor.autoPair'] }),
 			writingPreferences(() => settingsRef.current['editor.centerLine']),
 			markdown(),
 			EditorView.lineWrapping,
@@ -250,9 +270,9 @@ export function Editor({
 						}
 					});
 				}
-				if (update.selectionSet || update.docChanged) {
+				if (update.selectionSet || update.docChanged || update.focusChanged) {
 					const selection = update.state.selection.main;
-					callbacks.current.cursor(selection.anchor, selection.head);
+					callbacks.current.cursor(selection.anchor, selection.head, isEditorFocused(update.view));
 				}
 			}),
 		];
@@ -274,7 +294,7 @@ export function Editor({
 		const initialHide = loreRef.current && !sourceModeRef.current && formDataRef.current !== undefined;
 		const view = new EditorView({ parent: parent.current!, state: stateFor(tab.anchor, tab.head, initialHide) });
 		ghost.attach(view);
-		callbacks.current.cursor(view.state.selection.main.anchor, view.state.selection.main.head);
+		callbacks.current.cursor(view.state.selection.main.anchor, view.state.selection.main.head, isEditorFocused(view));
 		const instance: EditorHandle = {
 			view,
 			ghost,
@@ -301,7 +321,7 @@ export function Editor({
 			view.setState(stateFor(selection.anchor, selection.head, nextHide));
 			setSyncVersion((n) => n + 1);
 			ghost.attach(view);
-			callbacks.current.cursor(view.state.selection.main.anchor, view.state.selection.main.head);
+			callbacks.current.cursor(view.state.selection.main.anchor, view.state.selection.main.head, isEditorFocused(view));
 			if (view.hasFocus) {
 				ghost.send({ type: 'focus' });
 			}
@@ -336,6 +356,7 @@ export function Editor({
 			settings.debounceMs,
 			JSON.stringify(settings),
 		);
+		handle.current?.view.requestMeasure();
 	}, [settings, limited]);
 	useEffect(() => {
 		if (active) {
@@ -344,7 +365,10 @@ export function Editor({
 				handle.current?.view.focus();
 			}
 			if (handle.current) {
-				handle.current.view.dispatch({ effects: EditorView.scrollIntoView(handle.current.view.state.selection.main.head) });
+				const v = handle.current.view;
+				const sel = v.state.selection.main;
+				callbacks.current.cursor(sel.anchor, sel.head, v.root.activeElement === v.contentDOM);
+				v.dispatch({ effects: EditorView.scrollIntoView(sel.head) });
 			}
 		} else {
 			handle.current?.ghost.send({ type: 'blur' });
@@ -398,15 +422,31 @@ export function Editor({
 		});
 	};
 	const title = lore ? stem(model.path) : '';
+	const editorClasses = [
+		'editor',
+		chapter ? 'is-chapter' : '',
+		chapter ? `spacing-${settings['editor.paragraphSpacing']}` : '',
+		chapter && settings['editor.firstLineIndent'] ? 'indent-enabled' : '',
+		chapter && settings['editor.headingCenter'] ? 'heading-center' : '',
+		chapter && settings['editor.focusParagraph'] ? 'focus-paragraph' : '',
+		settings['editor.centerLine'] ? 'center-line' : '',
+	]
+		.filter(Boolean)
+		.join(' ');
 	return (
 		<div
-			className={`editor-pane pane-${side}${lore ? ' is-lore' : ''}`}
+			className={`editor-pane pane-${side}${lore ? ' is-lore' : ''}${chapter ? ' is-chapter-pane' : ''}`}
 			onFocus={focused}
 			style={
 				{
 					display: visible ? undefined : 'none',
 					'--writing-font': settings['editor.fontFamily'],
 					'--writing-size': `${settings['editor.fontSize']}px`,
+					...(chapter && {
+						'--writing-lh': String(LINE_HEIGHT_VALUES[settings['editor.lineHeight']] ?? 1.95),
+						'--heading-size': `${settings['editor.headingFontSize']}px`,
+						'--line-chars': String(settings['editor.lineWidth']),
+					}),
 				} as CSSProperties
 			}
 		>
@@ -460,7 +500,7 @@ export function Editor({
 					<hr className="lore-rule" />
 				</div>
 			) : null}
-			<div className={`editor ${settings['editor.centerLine'] ? 'center-line' : ''}`} ref={parent} />
+			<div className={editorClasses} ref={parent} />
 		</div>
 	);
 }

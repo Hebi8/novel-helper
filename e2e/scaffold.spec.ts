@@ -183,13 +183,12 @@ test('settings edit in place, JSON errors do not save, editor preferences update
 		await page.evaluate(() => window.novel.settings.open());
 		await expect.poll(() => app.windows().length).toBe(2);
 		const settings = app.windows().find((window) => window !== page)!;
-		await settings.getByRole('button', { name: '字体', exact: true }).click();
-		await settings.getByRole('textbox', { name: '字体', exact: true }).fill('serif');
-		await settings.getByRole('textbox', { name: '字体', exact: true }).press('Enter');
-		await settings.getByRole('button', { name: '字号', exact: true }).click();
-		await settings.getByRole('textbox', { name: '字号', exact: true }).fill('21');
-		await settings.getByRole('textbox', { name: '字号', exact: true }).press('Enter');
-		await settings.getByRole('button', { name: '当前行自动居中', exact: true }).click();
+		await settings.waitForLoadState('domcontentloaded');
+		await settings.getByRole('combobox', { name: '字体', exact: true }).selectOption('__other__');
+		await settings.getByRole('textbox', { name: '自定义字体', exact: true }).fill('serif');
+		await settings.getByRole('textbox', { name: '自定义字体', exact: true }).press('Enter');
+		await settings.getByRole('slider', { name: '字号', exact: true }).fill('21');
+		await settings.getByRole('switch', { name: '打字机滚动', exact: true }).click();
 		await expect(page.locator('.editor:visible')).toHaveClass(/center-line/);
 		await expect(page.locator('.editor:visible .cm-scroller')).toHaveCSS('font-size', '21px');
 		await page.locator('.editor:visible .cm-content').click();
@@ -198,13 +197,13 @@ test('settings edit in place, JSON errors do not save, editor preferences update
 			.poll(() =>
 				page.evaluate(() => {
 					const editor = document.querySelector('.editor-pane:not([style*="display: none"]) .cm-editor')!;
-					// The editor uses the native caret; after jumping to the end it is on the last line.
 					const cursor = [...editor.querySelectorAll('.cm-line')].at(-1)!.getBoundingClientRect();
 					const scroll = editor.querySelector('.cm-scroller')!.getBoundingClientRect();
 					return cursor ? Math.abs(cursor.top + cursor.height / 2 - scroll.top - scroll.height / 2) : Infinity;
 				}),
 			)
 			.toBeLessThan(30);
+		await settings.getByRole('tab', { name: '助手', exact: true }).click();
 		await settings.getByRole('button', { name: '命令参数', exact: true }).click();
 		const json = settings.getByRole('dialog', { name: '命令参数', exact: true });
 		await json.getByRole('textbox').fill('{broken');

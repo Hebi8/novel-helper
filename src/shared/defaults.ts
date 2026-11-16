@@ -1,7 +1,22 @@
+export type LineHeightLevel = 'tight' | 'normal' | 'loose';
+export type ParagraphSpacingLevel = 'none' | 'half' | 'full';
+export type ThemeSetting = 'system' | 'light' | 'dark';
+
 export const defaults = {
 	'editor.fontFamily': 'PingFang SC',
 	'editor.fontSize': 17,
+	'editor.lineHeight': 'normal' as LineHeightLevel,
+	'editor.paragraphSpacing': 'half' as ParagraphSpacingLevel,
+	'editor.firstLineIndent': true,
+	'editor.lineWidth': 36,
+	'editor.headingFontSize': 22,
+	'editor.headingCenter': false,
+	'editor.focusParagraph': false,
+	'editor.autoPair': true,
 	'editor.centerLine': false,
+	'editor.dailyWordGoal': 0,
+	'editor.dayStartHour': 0,
+	'appearance.theme': 'system' as ThemeSetting,
 	enabled: true,
 	trigger: 'auto',
 	debounceMs: 750,

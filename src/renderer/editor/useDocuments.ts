@@ -3,9 +3,15 @@ import type { Rename } from '../../core/library';
 import { errorMessage } from '../errors';
 import { zh } from '../strings';
 import { useRef, useState } from 'react';
-import type { DiskFile, SessionState, OpenOptions, ReportKind } from '../../shared/api';
+import type { DiskFile, SessionState, OpenOptions, ReportKind, WordsSnapshot } from '../../shared/api';
 import type { EditorHandle } from './Editor';
 import { DocumentModel } from './document';
+export interface CursorInfo {
+	path?: string;
+	anchor: number;
+	head: number;
+	focused: boolean;
+}
 export const reportPaths: Record<ReportKind, string> = { report: 'report:last-request', usageReport: 'report:usage' };
 export const reportKind = (path: string) => (Object.keys(reportPaths) as ReportKind[]).find((key) => reportPaths[key] === path);
 export function useDocuments() {
@@ -26,6 +32,27 @@ export function useDocuments() {
 	const opening = useRef(new Map<string, Promise<DocumentModel>>());
 	const serial = useRef(0);
 	const nextRequestId = () => ++serial.current;
+	const cursorRef = useRef<CursorInfo>({ anchor: 0, head: 0, focused: false });
+	const cursorListeners = useRef(new Set<() => void>());
+	const docVersionRef = useRef(0);
+	const docListeners = useRef(new Set<() => void>());
+	const wordsSnapshotRef = useRef<WordsSnapshot>({ todayWords: 0, chapterWords: {} });
+	const notifyDocs = () => {
+		docVersionRef.current++;
+		docListeners.current.forEach((listener) => listener());
+	};
+	const notifyCursor = (next: CursorInfo) => {
+		const prev = cursorRef.current;
+		if (prev.path === next.path && prev.anchor === next.anchor && prev.head === next.head && prev.focused === next.focused) {
+			return;
+		}
+		cursorRef.current = next;
+		cursorListeners.current.forEach((listener) => listener());
+	};
+	const setWordsSnapshot = (words: WordsSnapshot) => {
+		wordsSnapshotRef.current = words;
+		notifyDocs();
+	};
 	const load = (path: string) => {
 		const existing = documents.current.get(path);
 		if (existing) {
@@ -37,6 +64,7 @@ export function useDocuments() {
 			pending = (kind ? window.novel.reports.get(kind).then((text) => ({ path, text })) : window.novel.book.read(path))
 				.then((file) => {
 					const model = new DocumentModel(path, file.text, window.novel, kind !== undefined);
+					model.onChanged = notifyDocs;
 
 					documents.current.set(path, model);
 
@@ -200,9 +228,18 @@ export function useDocuments() {
 			handles.current.get(file.path)?.reload();
 		}
 	};
-	const cursor = (path: string, anchor: number, head: number) => {
+	const cursor = (path: string, anchor: number, head: number, focused?: boolean) => {
 		const current = sessionRef.current;
 		sessionRef.current = { ...current, tabs: current.tabs.map((tab) => (tab.path === path ? { ...tab, anchor, head } : tab)) };
+		const viewFocused =
+			focused ??
+			(() => {
+				const view = handles.current.get(path)?.view;
+				return view ? view.root.activeElement === view.contentDOM : false;
+			})();
+		if (current.active === path) {
+			notifyCursor({ path, anchor, head, focused: viewFocused });
+		}
 		scheduleSession();
 	};
 	const moveTab = (step: number) => {
@@ -318,6 +355,22 @@ export function useDocuments() {
 		restore,
 		external,
 		cursor,
+		subscribeCursor: (listener: () => void) => {
+			cursorListeners.current.add(listener);
+			return () => {
+				cursorListeners.current.delete(listener);
+			};
+		},
+		getCursor: () => cursorRef.current,
+		subscribeDocs: (listener: () => void) => {
+			docListeners.current.add(listener);
+			return () => {
+				docListeners.current.delete(listener);
+			};
+		},
+		getDocVersion: () => docVersionRef.current,
+		getWordsSnapshot: () => wordsSnapshotRef.current,
+		setWordsSnapshot,
 		moveTab,
 		blur,
 		current,

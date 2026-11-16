@@ -9,7 +9,9 @@ import { allowOnce, decide, pathsOf } from '../../core/permission';
 import type { StoryNames } from '../../core/scaffold';
 import { titleOf, type Change, type SnapshotRecord } from '../../core/snapshot';
 import { Transcript, type AskOption, type Item } from '../../core/transcript';
+import { assistantUsageKey } from '../../core/usage';
 import { SnapshotStore, type Blocked } from '../../storage/snapshotStore';
+import type { UsageStore } from '../../storage/usageStore';
 import type { Settings } from '../../shared/defaults';
 import type { AssistantDiff, AssistantEvent, AssistantOption, AssistantOptionCategory, AssistantState } from '../../shared/assistant';
 import type { StoredAgentOptions } from '../settings/store';
@@ -29,6 +31,7 @@ export interface AssistantOptions {
 	userData: string;
 	settings(): Settings;
 	store?: SnapshotStore;
+	usage?: UsageStore;
 	beforeTurn?<T>(work: () => Promise<T>): Promise<T>;
 	beforeHistory?(): Promise<void>;
 	assistantOptions?(agent: string): StoredAgentOptions | undefined;
@@ -199,6 +202,13 @@ export class AssistantService {
 			command: settings['assistant.command'],
 			args: settings['assistant.args'],
 		});
+	}
+	private currentModelName(client: AgentClient): string {
+		const modelOption = extractOptions(client.configOptions).find((option) => option.category === 'model');
+		if (modelOption) {
+			return modelOption.values.find((entry) => entry.value === modelOption.value)?.name ?? modelOption.value;
+		}
+		return this.options.settings()['assistant.agent'] === 'custom' ? 'custom' : 'Claude Code';
 	}
 	private currentAgent(): string | undefined {
 		const command = this.currentCommand();
@@ -695,13 +705,18 @@ export class AssistantService {
 		await this.save();
 		this.setStatus(m.working);
 		let stop = 'failed';
+		let turnUsage: Awaited<ReturnType<AgentClient['promptTurn']>>['usage'];
+		let turnCost: number | undefined;
 		try {
 			if (this.stopped || this.disposed) {
 				stop = 'cancelled';
 			} else {
 				const blocks = [...(this.briefPending ? [workspaceBrief(names)] : []), ...(block ? [block] : []), text];
 				this.briefPending = false;
-				stop = await client.prompt(blocks);
+				const turn = await client.promptTurn(blocks);
+				stop = turn.stopReason;
+				turnUsage = turn.usage;
+				turnCost = turn.cost;
 			}
 		} catch (error) {
 			if (this.disposed) {
@@ -709,6 +724,9 @@ export class AssistantService {
 			} else {
 				this.explain(error, command, 'turn');
 			}
+		}
+		if (stop !== 'refusal' && (turnUsage || turnCost !== undefined)) {
+			await this.options.usage?.add(assistantUsageKey(this.currentModelName(client)), turnUsage ?? { input: 0, output: 0 }, turnCost);
 		}
 		for (const settle of this.asks.values()) {
 			settle();

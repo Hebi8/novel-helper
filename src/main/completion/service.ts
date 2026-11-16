@@ -78,6 +78,7 @@ export class CompletionService {
 	}
 	status(): UsageStatus {
 		const model = this.settings.model();
+		const today = this.usage.today();
 		return {
 			state: !this.settings.get().enabled
 				? 'off'
@@ -90,8 +91,8 @@ export class CompletionService {
 							: 'on',
 			problem: this.problem,
 			missingKey: this.missingKey,
-			priced: ratesFor(model.model, new Date(), model.pricing, this.settings.prices()) !== undefined,
-			today: this.usage.today(),
+			priced: today.cost > 0 || ratesFor(model.model, new Date(), model.pricing, this.settings.prices()) !== undefined,
+			today,
 		};
 	}
 	publish(): void {

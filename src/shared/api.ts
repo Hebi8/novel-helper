@@ -40,7 +40,21 @@ export interface DiskFile {
 	path: string;
 	text: string;
 }
+export interface WordsSnapshot {
+	todayWords: number;
+	chapterWords: Record<string, number>;
+}
 export type SaveResult = { saved: true } | { saved: false; disk: string };
+export interface AppInfo {
+	appName: string;
+	version: string;
+	icloudAvailable: boolean;
+	icloudFolderName: string;
+	icloudBooksPath: string;
+}
+export interface WordsUpdate extends WordsSnapshot {
+	root: string;
+}
 export interface CompletionInput {
 	id: number;
 	path: string;
@@ -98,6 +112,7 @@ export interface Bootstrap {
 	session: SessionState;
 	settings: Settings;
 	usage: UsageStatus;
+	words: WordsSnapshot;
 }
 export interface AppAPI {
 	structure: import('./structure').StructureAPI;
@@ -117,6 +132,7 @@ export interface AppAPI {
 		onOpenResult(listener: (result: OpenResult) => void): () => void;
 		onChanged(listener: (book: Book) => void): () => void;
 		onFileChanged(listener: (file: DiskFile) => void): () => void;
+		onWordsChanged(listener: (update: WordsUpdate) => void): () => void;
 	};
 	completion: {
 		request(input: CompletionInput): Promise<CompletionResult>;
@@ -126,6 +142,8 @@ export interface AppAPI {
 		get(): Promise<Settings>;
 		set<K extends SettingKey>(key: K, value: Settings[K]): Promise<void>;
 		open(): Promise<void>;
+		info(): Promise<AppInfo>;
+		revealICloud(): Promise<void>;
 		onChanged(listener: (settings: Settings) => void): () => void;
 	};
 	secrets: {
@@ -188,11 +206,14 @@ export const channels = {
 	bookConflictResolve: 'book:conflictResolve',
 	bookChanged: 'book:changed',
 	fileChanged: 'book:fileChanged',
+	wordsChanged: 'book:wordsChanged',
 	completionRequest: 'completion:request',
 	completionCancel: 'completion:cancel',
 	settingsGet: 'settings:get',
 	settingsSet: 'settings:set',
 	settingsOpen: 'settings:open',
+	settingsInfo: 'settings:info',
+	settingsRevealICloud: 'settings:revealICloud',
 	settingsChanged: 'settings:changed',
 	secretsHas: 'secrets:has',
 	secretsSet: 'secrets:set',

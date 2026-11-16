@@ -16,9 +16,16 @@ import type {
 	SessionUpdate,
 	StopReason,
 	SystemPrompt,
-} from '@agentclientprotocol/sdk' with { 'resolution-mode': 'import' };
+} from '@agentclientprotocol/sdk/unstable' with { 'resolution-mode': 'import' };
+import type { Usage } from '../core/usage';
 
 export type { ContentBlock, RequestPermissionRequest, SessionConfigOption, SessionUpdate, StopReason };
+
+export interface PromptTurn {
+	stopReason: StopReason;
+	usage?: Usage;
+	cost?: number;
+}
 
 /**
  * The Claude adapter the preset starts. A fixed version, not the latest:
@@ -95,6 +102,9 @@ export class AgentClient {
 	private stopped = false;
 	/** While a session is loaded, the agent replays its history; the panel has its own copy. */
 	private replaying = false;
+	private lastSessionCost = 0;
+	private latestSessionCost = 0;
+	private turnSawCost = false;
 	private readonly exited: Promise<AgentFailure>;
 
 	private constructor(
@@ -123,7 +133,7 @@ export class AgentClient {
 	 * answers; aborting `signal` ends it.
 	 */
 	static async start(command: AgentCommand, cwd: string, handlers: AgentHandlers, signal?: AbortSignal): Promise<AgentClient> {
-		const acp = await import('@agentclientprotocol/sdk');
+		const acp = await import('@agentclientprotocol/sdk/unstable');
 		// On Windows npx is a .cmd file, which only a shell can run.
 		const child = spawn(command.command, command.args, { cwd, shell: process.platform === 'win32' });
 		const client = new AgentClient(child, command, handlers);
@@ -141,6 +151,13 @@ export class AgentClient {
 				if (mine(params.sessionId)) {
 					if (params.update.sessionUpdate === 'config_option_update') {
 						client.configOptions = params.update.configOptions;
+					} else if (
+						params.update.sessionUpdate === 'usage_update' &&
+						typeof params.update.cost?.amount === 'number' &&
+						(!params.update.cost.currency || params.update.cost.currency === 'USD')
+					) {
+						client.latestSessionCost = params.update.cost.amount;
+						client.turnSawCost = true;
 					}
 					handlers.update(params.update);
 				}
@@ -215,13 +232,16 @@ export class AgentClient {
 	 * for: when that fails, there is none, and the next call starts over.
 	 */
 	async open(cwd: string, brief: string, previous?: string): Promise<{ resumed: boolean; briefed: boolean }> {
-		const acp = await import('@agentclientprotocol/sdk');
+		const acp = await import('@agentclientprotocol/sdk/unstable');
 		const session = this.capabilities.sessionCapabilities;
 		const systemPrompt: SystemPrompt | undefined = session?.systemPrompt ? { mode: 'append', content: [text(brief)] } : undefined;
 		const base: NewSessionRequest = { cwd, mcpServers: [], ...(systemPrompt && { systemPrompt }) };
 		const briefed = systemPrompt !== undefined;
 		this.sessionId = undefined;
 		this.configOptions = [];
+		this.lastSessionCost = 0;
+		this.latestSessionCost = 0;
+		this.turnSawCost = false;
 		if (previous !== undefined && (session?.resume || this.capabilities.loadSession)) {
 			this.replaying = true;
 			try {
@@ -252,14 +272,14 @@ export class AgentClient {
 	private async enterMode(sessionId: string, modes: SessionModeState | null | undefined): Promise<void> {
 		const mode = this.command.mode;
 		if (mode !== undefined && modes && modes.currentModeId !== mode && modes.availableModes.some((available) => available.id === mode)) {
-			const acp = await import('@agentclientprotocol/sdk');
+			const acp = await import('@agentclientprotocol/sdk/unstable');
 			await this.ask(this.connection.agent.request(acp.methods.agent.session.setMode, { sessionId, modeId: mode }));
 		}
 	}
 
 	/** Sets a session configuration option and updates `configOptions` with what the agent reports back. */
 	async setConfigOption(configId: string, value: string): Promise<SessionConfigOption[]> {
-		const acp = await import('@agentclientprotocol/sdk');
+		const acp = await import('@agentclientprotocol/sdk/unstable');
 		const response = await this.ask(
 			this.connection.agent.request(acp.methods.agent.session.setConfigOption, {
 				sessionId: this.sessionId!,
@@ -276,22 +296,44 @@ export class AgentClient {
 		const sessionId = this.sessionId;
 		this.sessionId = undefined;
 		this.configOptions = [];
+		this.lastSessionCost = 0;
+		this.latestSessionCost = 0;
+		this.turnSawCost = false;
 		if (sessionId !== undefined && this.capabilities.sessionCapabilities?.close) {
-			const acp = await import('@agentclientprotocol/sdk');
+			const acp = await import('@agentclientprotocol/sdk/unstable');
 			await this.connection.agent.request(acp.methods.agent.session.close, { sessionId }).catch(() => undefined);
 		}
 	}
 
+	/** Sends a message and resolves with the stop reason and any reported token usage / session cost delta. */
+	async promptTurn(blocks: string[]): Promise<PromptTurn> {
+		this.turnSawCost = false;
+		const acp = await import('@agentclientprotocol/sdk/unstable');
+		const response = await this.ask(this.connection.agent.request(acp.methods.agent.session.prompt, { sessionId: this.sessionId!, prompt: blocks.map(text) }));
+		let cost: number | undefined;
+		if (this.turnSawCost) {
+			cost = Math.max(0, this.latestSessionCost - this.lastSessionCost);
+			this.lastSessionCost = this.latestSessionCost;
+		}
+		const usage = response.usage
+			? {
+					input: response.usage.inputTokens,
+					output: response.usage.outputTokens,
+					cacheRead: response.usage.cachedReadTokens ?? 0,
+					cacheWrite: response.usage.cachedWriteTokens ?? 0,
+				}
+			: undefined;
+		return { stopReason: response.stopReason, usage, cost };
+	}
+
 	/** Sends a message and resolves when the agent's turn is over. What the agent does meanwhile arrives through the handlers. */
 	async prompt(blocks: string[]): Promise<StopReason> {
-		const acp = await import('@agentclientprotocol/sdk');
-		const response = await this.ask(this.connection.agent.request(acp.methods.agent.session.prompt, { sessionId: this.sessionId!, prompt: blocks.map(text) }));
-		return response.stopReason;
+		return (await this.promptTurn(blocks)).stopReason;
 	}
 
 	/** Asks the agent to stop the turn that is running; `prompt` then resolves with `cancelled`. */
 	async cancel(): Promise<void> {
-		const acp = await import('@agentclientprotocol/sdk');
+		const acp = await import('@agentclientprotocol/sdk/unstable');
 		await this.connection.agent.notify(acp.methods.agent.session.cancel, { sessionId: this.sessionId! }).catch(() => undefined);
 	}
 

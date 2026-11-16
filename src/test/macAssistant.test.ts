@@ -12,6 +12,8 @@ import { cachedLoginPath } from '../main/assistant/environment';
 import { bookNames } from '../main/book/names';
 import { BookIndex } from '../main/book/indexer';
 import { SettingsStore } from '../main/settings/store';
+import { UsageStore } from '../storage/usageStore';
+import { assistantUsageKey, dayKey, totalsFor } from '../core/usage';
 import { changeKind, MAX_FILE_BYTES, type Change } from '../core/snapshot';
 import type { Item } from '../core/transcript';
 import type { StoryNames } from '../core/scaffold';
@@ -56,12 +58,14 @@ async function fixture(t: TestContext, flags: string[] = []) {
 	settings.set('assistant.args', [fakeAgent, ...flags]);
 	const index = new BookIndex(book);
 	await index.load();
+	const usage = new UsageStore(userData);
 	const services: AssistantService[] = [];
 	const open = async (root = book, names: () => Promise<StoryNames> = async () => bookNames(index), store: SettingsStore = settings) => {
 		const service = new AssistantService({
 			root,
 			userData,
 			settings: () => store.get(),
+			usage,
 			assistantOptions: (agent) => store.assistantOptions(agent),
 			selectAssistantOption: (agent, id, value, options) => store.setAssistantSelection(agent, id, value, options),
 			syncAssistantOptions: (agent, options) => store.syncAssistantOptions(agent, options),
@@ -80,7 +84,7 @@ async function fixture(t: TestContext, flags: string[] = []) {
 		await rm(root, { recursive: true, force: true });
 	});
 	const service = await open();
-	return { root, book, userData, service, settings, index, open };
+	return { root, book, userData, service, settings, index, open, usage };
 }
 async function manuscript(book: string): Promise<Record<string, Buffer>> {
 	const entries = await Promise.all(
@@ -1192,4 +1196,39 @@ test('switching from agent A to agent B while A is opening its session stops A a
 
 	await service.send('session');
 	assert.match(said(service), new RegExp(`^fake-${pidB}-1\\b`));
+});
+
+test('assistant turns record selected model, four token counts, cumulative cost delta, session reset, and token-only turns', async (t) => {
+	const { service, usage } = await fixture(t, ['--options', '--close', '--models=fable:Fable 5.2,opus:Opus 4.6']);
+	await service.probe();
+	assert.equal(await service.setOption('model', 'opus'), true);
+
+	await service.send('cost 0.12\nusage 100 40 500 80\nsay 第一轮');
+	await service.send('cost 0.30\nusage 150 60 700 20\nsay 第二轮');
+
+	// Switch to Fable 5.2 and send a turn without cost (token-only).
+	assert.equal(await service.setOption('model', 'fable'), true);
+	await service.send('usage 80 30 200 10\nsay 无金额轮');
+
+	// Reopening session resets cumulative session cost baseline to 0.
+	await service.newSession();
+	await service.send('cost 0.05\nusage 50 20 100 0\nsay 新会话轮');
+
+	const byModel = totalsFor(await usage.load(), dayKey(new Date()));
+	const opus = byModel[assistantUsageKey('Opus 4.6')];
+	assert.equal(opus.requests, 2);
+	assert.equal(opus.input, 250);
+	assert.equal(opus.output, 100);
+	assert.equal(opus.cacheRead, 1200);
+	assert.equal(opus.cacheWrite, 100);
+	assert.ok(Math.abs(opus.cost - 0.3) < 1e-9);
+
+	const fable = byModel[assistantUsageKey('Fable 5.2')];
+	assert.equal(fable.requests, 2);
+	assert.equal(fable.input, 130);
+	assert.equal(fable.output, 50);
+	assert.equal(fable.cacheRead, 300);
+	assert.equal(fable.cacheWrite, 10);
+	assert.equal(fable.unpriced, 1);
+	assert.ok(Math.abs(fable.cost - 0.05) < 1e-9);
 });

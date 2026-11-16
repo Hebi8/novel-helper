@@ -3,6 +3,7 @@ import { readConflictDiff, resolveConflictCopy } from './conflicts';
 import { currentICloudRoot } from './files';
 import { copyBookToICloud, listICloudBooks, watchICloudBooks } from './icloud';
 import { bookPath } from './paths';
+import { bookWords } from './words';
 import { ipcMain, dialog, shell } from 'electron';
 import { channels, type ConflictResolveInput } from '../../shared/api';
 import { zh } from '../../renderer/strings';
@@ -76,8 +77,9 @@ export function registerBook(ctx: MainContext): void {
 		return selected ? ctx.open(selected, window, chosen) : { kind: 'cancelled' };
 	});
 	ipcMain.handle(channels.bookRead, (event, path: string) => ctx.bookFor(event)!.read(bookPath(path)));
-	ipcMain.handle(channels.bookSave, (event, path: string, text: string, base: string, force?: boolean) => {
+	ipcMain.handle(channels.bookSave, async (event, path: string, text: string, base: string, force?: boolean) => {
 		const book = ctx.bookFor(event)!;
+		bookWords.ensure(book, ctx);
 		return ctx.snapshots.write(
 			book.root,
 			() => book.save(bookPath(path), text, base, force),
