@@ -15,15 +15,17 @@ async function withConflictBook(
 	run: (fixture: {
 		app: ElectronApplication;
 		page: Page;
+		root: string;
 		book: string;
 		trash: string;
 		originalChapterText: string;
 		trashed(): Promise<string[]>;
 	}) => Promise<void>,
-	setupBook?: (book: string) => Promise<void>,
+	setupBook?: (book: string, root: string) => Promise<void>,
 ) {
 	const root = await mkdtemp(join(tmpdir(), 'novel-conflicts-e2e-'));
-	const book = join(root, 'book');
+	const icloud = join(root, 'icloud');
+	const book = join(icloud, 'book');
 	const data = join(root, 'data');
 	const trash = join(root, 'trash');
 	await cp(resolve('examples'), book, { recursive: true });
@@ -32,7 +34,7 @@ async function withConflictBook(
 
 	const originalChapterText = await readFile(join(book, chapterOriginal), 'utf8');
 	if (setupBook) {
-		await setupBook(book);
+		await setupBook(book, root);
 	} else {
 		await writeFile(join(book, chapterCopy), originalChapterText + '\n另一台 Mac 上的灯塔续段。\n');
 		await writeFile(join(book, outlineCopy), '# 第一卷 雾港\n\n## 冲突副本大纲节点\n');
@@ -52,7 +54,10 @@ async function withConflictBook(
 	let app: ElectronApplication | undefined;
 	let exited: Promise<void> | undefined;
 	try {
-		app = await electron.launch({ env: launchEnv, args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`] });
+		app = await electron.launch({
+			env: launchEnv,
+			args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`, `--icloud-dir=${icloud}`],
+		});
 		exited = new Promise((resolve) => app!.process().once('exit', () => resolve()));
 
 		const welcome = await app.firstWindow();
@@ -74,6 +79,7 @@ async function withConflictBook(
 		await run({
 			app,
 			page,
+			root,
 			book,
 			trash,
 			originalChapterText,
@@ -88,8 +94,8 @@ async function withConflictBook(
 	}
 }
 
-test('identifies .md conflict copies across trees and status bar, blocks on unsaved edits, snapshots before replace, and trashes copies', async () => {
-	await withConflictBook(async ({ page, book, trash, originalChapterText, trashed }) => {
+test('identifies .md conflict copies in iCloud books, validates hashes and >5MB limits, snapshots before replace, and trashes copies', async () => {
+	await withConflictBook(async ({ app, page, root, book, trash, originalChapterText, trashed }) => {
 		// Status bar shows exact count of .md conflict copies (>= 2 with original present).
 		const statusButton = page.getByRole('button', { name: '有 3 个冲突副本', exact: true });
 		await expect(statusButton).toBeVisible();
@@ -141,11 +147,22 @@ test('identifies .md conflict copies across trees and status bar, blocks on unsa
 		await page.getByRole('button', { name: '用磁盘的', exact: true }).click();
 		await page.getByRole('button', { name: '关闭提示', exact: true }).click();
 
-		// Click status bar conflict button again -> replace original with conflict copy after confirmation.
-		const preReplaceDisk = await readFile(join(book, chapterOriginal), 'utf8');
+		// Open diff, modify original externally while diff is open -> refuses with '文件刚被改过' and refreshes the diff in place.
 		const copyText = await readFile(join(book, chapterCopy), 'utf8');
 		await statusButton.click();
 		await expect(diffDialog).toContainText('另一台 Mac 上的灯塔续段。');
+		const updatedOriginalDisk = originalChapterText + '差异打开期间 iCloud 同步进来的新文字。';
+		await writeFile(join(book, chapterOriginal), updatedOriginalDisk);
+		await expect(activeEditor).toContainText('差异打开期间 iCloud 同步进来的新文字。');
+
+		await diffDialog.getByRole('button', { name: '用副本替换原文', exact: true }).click();
+		await page.getByRole('dialog', { name: '用副本替换原文', exact: true }).getByRole('button', { name: '确认替换', exact: true }).click();
+		await expect(page.locator('.notice[role="alert"]').filter({ hasText: '文件刚被改过' })).toBeVisible();
+		await expect(diffDialog).toContainText('差异打开期间 iCloud 同步进来的新文字。');
+		expect(await readFile(join(book, chapterOriginal), 'utf8')).toBe(updatedOriginalDisk);
+		expect(existsSync(join(book, chapterCopy))).toBe(true);
+
+		// Confirm replacement again from the refreshed diff -> now succeeds with updated hash.
 		await diffDialog.getByRole('button', { name: '用副本替换原文', exact: true }).click();
 		await page.getByRole('dialog', { name: '用副本替换原文', exact: true }).getByRole('button', { name: '确认替换', exact: true }).click();
 
@@ -162,18 +179,24 @@ test('identifies .md conflict copies across trees and status bar, blocks on unsa
 		await expect(snapshotsDialog).toContainText(`冲突替换 · ${chapterOriginal}`);
 		await snapshotsDialog.getByRole('button', { name: '退回到这个时间点', exact: true }).click();
 		await page.getByRole('button', { name: '确认退回', exact: true }).click();
-		await expect.poll(() => readFile(join(book, chapterOriginal), 'utf8')).toBe(preReplaceDisk);
-		// Reverting also restores the pre-replacement copy; Undo revert to return to post-replacement state.
+		await expect.poll(() => readFile(join(book, chapterOriginal), 'utf8')).toBe(updatedOriginalDisk);
 		await page.getByRole('button', { name: '快照', exact: true }).click();
 		await page.getByRole('dialog', { name: '快照', exact: true }).getByRole('button', { name: '撤销这次退回', exact: true }).click();
 		await page.getByRole('button', { name: '确认退回', exact: true }).click();
 		await expect.poll(() => readFile(join(book, chapterOriginal), 'utf8')).toBe(copyText);
 
-		// Trash the second conflict copy (`大纲/第一卷 雾港 2.md`) via confirmation.
+		// Trash the second conflict copy (`大纲/第一卷 雾港 2.md`): external edit to copy blocks deletion and refreshes diff first.
 		const originalOutlineText = await readFile(join(book, outlineOriginal), 'utf8');
 		await page.getByRole('button', { name: '有 2 个冲突副本', exact: true }).click();
 		const outlineDiff = page.getByRole('dialog', { name: `看差异 · ${outlineCopy}`, exact: true });
 		await expect(outlineDiff).toBeVisible();
+		await writeFile(join(book, outlineCopy), '# 第一卷 雾港\n\n## 刚从云端追进来的大纲副本\n');
+		await outlineDiff.getByRole('button', { name: '删除副本', exact: true }).click();
+		await page.getByRole('dialog', { name: '删除副本', exact: true }).getByRole('button', { name: '确认删除', exact: true }).click();
+		await expect(page.locator('.notice[role="alert"]').filter({ hasText: '文件刚被改过' })).toBeVisible();
+		await expect(outlineDiff).toContainText('刚从云端追进来的大纲副本');
+		expect(existsSync(join(book, outlineCopy))).toBe(true);
+
 		await outlineDiff.getByRole('button', { name: '删除副本', exact: true }).click();
 		await page.getByRole('dialog', { name: '删除副本', exact: true }).getByRole('button', { name: '确认删除', exact: true }).click();
 
@@ -182,8 +205,24 @@ test('identifies .md conflict copies across trees and status bar, blocks on unsa
 		await expect(page.getByRole('button', { name: '有 1 个冲突副本', exact: true })).toBeVisible();
 		expect((await trashed()).map((item) => basename(item))).toEqual(['第2章 灯塔 2.md', '第一卷 雾港 2.md']);
 
-		// Unsaved edit in loreOriginal blocks trashing loreCopy before autosave flushes.
+		// Oversized original (> 5 MB) skipped by SnapshotStore refuses replacement and keeps both files.
+		await page.getByRole('button', { name: '关闭提示', exact: true }).click();
+		const hugeLine = `${'雾'.repeat(1000)}\n`;
+		const hugeBody = hugeLine.repeat(1750); // > 5.25 MB in UTF-8
+		await writeFile(join(book, loreOriginal), `---\naliases: [小满]\n---\n${hugeBody}`);
+		await writeFile(join(book, loreCopy), `---\naliases: [冲突别名]\n---\n${hugeBody}多一行\n`);
 		await page.locator('.sidebar.left .segments').getByRole('button', { name: '设定', exact: true }).click();
+		await loreTree.locator('.conflict-copy-row').click();
+		const hugeDiff = page.getByRole('dialog', { name: `看差异 · ${loreCopy}`, exact: true });
+		await expect(hugeDiff).toBeVisible();
+		await hugeDiff.getByRole('button', { name: '用副本替换原文', exact: true }).click();
+		await page.getByRole('dialog', { name: '用副本替换原文', exact: true }).getByRole('button', { name: '确认替换', exact: true }).click();
+		await expect(page.locator('.notice[role="alert"]').filter({ hasText: '原文太大或无法存快照，不替换' })).toBeVisible();
+		expect(existsSync(join(book, loreCopy))).toBe(true);
+		await page.getByRole('button', { name: '关闭提示', exact: true }).click();
+
+		// Restore normal-sized loreOriginal; unsaved edit in loreOriginal blocks trashing loreCopy before autosave flushes.
+		await writeFile(join(book, loreOriginal), '---\naliases: [小满]\n---\n林小满每天天不亮就出门。\n');
 		await loreTree.locator('.lore-row:not(.conflict-copy-row)').filter({ hasText: '林小满' }).click();
 		await expect(activeEditor).toContainText('林小满每天天不亮就出门');
 		await activeEditor.click();
@@ -200,6 +239,20 @@ test('identifies .md conflict copies across trees and status bar, blocks on unsa
 		// Move the remaining lore conflict copy away -> status bar conflict indicator disappears completely.
 		await rename(join(book, loreCopy), join(trash, 'manual-lore-copy.md'));
 		await expect(page.locator('.status-conflict')).toHaveCount(0);
+
+		// A local book outside `--icloud-dir` treats `<name> 2.md` next to `<name>.md` as an ordinary chapter.
+		const localBook = join(root, 'local-book');
+		await cp(resolve('examples'), localBook, { recursive: true });
+		await writeFile(join(localBook, chapterCopy), '本地书里合法的第2章 灯塔 2');
+		const nextLocal = app.waitForEvent('window');
+		await page.evaluate((target) => window.novel.book.open(target), localBook);
+		const localPage = await nextLocal;
+		await localPage.waitForLoadState('domcontentloaded');
+		await expect(
+			localPage.getByRole('tree', { name: '章节', exact: true }).getByRole('button', { name: '第2章 灯塔 2', exact: true }),
+		).toBeVisible();
+		await expect(localPage.locator('.conflict-copy-row')).toHaveCount(0);
+		await expect(localPage.locator('.status-conflict')).toHaveCount(0);
 	});
 });
 

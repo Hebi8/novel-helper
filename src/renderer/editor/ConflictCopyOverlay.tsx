@@ -9,12 +9,14 @@ export function ConflictCopyOverlay({
 	diff,
 	close,
 	blockReason,
+	onRefresh,
 	onResolved,
 	onError,
 }: {
 	diff: ConflictDiff;
 	close(): void;
 	blockReason(paths: readonly string[]): string | undefined;
+	onRefresh(path: string): Promise<void>;
 	onResolved(path: string): void;
 	onError(message: string): void;
 }) {
@@ -30,7 +32,21 @@ export function ConflictCopyOverlay({
 		}
 		setBusy(true);
 		try {
-			await window.novel.book.resolveConflict(diff.path, action);
+			const result = await window.novel.book.resolveConflict(
+				action === 'replace'
+					? { path: diff.path, action, beforeHash: diff.beforeHash, afterHash: diff.afterHash }
+					: { path: diff.path, action, afterHash: diff.afterHash },
+			);
+			if (!result.ok) {
+				onError(result.message);
+				if (result.reason === 'changed') {
+					setConfirming(undefined);
+					await onRefresh(diff.path);
+				} else {
+					close();
+				}
+				return;
+			}
 			onResolved(diff.path);
 			close();
 		} catch (error) {

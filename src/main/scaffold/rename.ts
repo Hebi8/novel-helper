@@ -12,7 +12,7 @@ import { info, safePath } from './disk';
 import { findNode } from './structure';
 import { zh } from '../../renderer/strings';
 import type { RenameResult } from '../../shared/structure';
-async function jsonFiles(root: string, path: string): Promise<string[]> {
+async function jsonFiles(root: string, path: string, inICloud: boolean): Promise<string[]> {
 	if (!(await info(join(root, path)))) {
 		return [];
 	}
@@ -25,9 +25,9 @@ async function jsonFiles(root: string, path: string): Promise<string[]> {
 				const file = `${path}/${entry.name}`;
 				await safePath(root, file);
 				if (entry.isDirectory()) {
-					return jsonFiles(root, file);
+					return jsonFiles(root, file, inICloud);
 				}
-				return entry.isFile() && entry.name.endsWith('.json') && !conflictOriginal(file, siblings, ['.json']) ? [file] : [];
+				return entry.isFile() && entry.name.endsWith('.json') && !conflictOriginal(file, siblings, inICloud, ['.json']) ? [file] : [];
 			}),
 		)
 	).flat();
@@ -72,7 +72,7 @@ export async function renamePlan(index: BookIndex, path: string, name: string): 
 }
 async function readBuoys(index: BookIndex) {
 	const records: { path: string; file: BuoyFile }[] = [];
-	for (const path of await jsonFiles(index.root, BUOY_FOLDER)) {
+	for (const path of await jsonFiles(index.root, BUOY_FOLDER, index.inICloud)) {
 		const raw = (await readOptional(join(index.root, path)))!;
 		const chapter = path.slice(BUOY_FOLDER.length + 1, -'.json'.length);
 		const text = hasOpenMarks(raw) ? (await index.read(chapter)).text : '';

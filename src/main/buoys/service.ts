@@ -81,7 +81,7 @@ export class Buoys {
 		});
 	}
 	private async load(chapter: string, currentText?: string): Promise<BuoyFile | undefined> {
-		const raw = await readAuxiliaryOptional(this.index.root, buoyPath(bookPath(chapter)));
+		const raw = await readAuxiliaryOptional(this.index.root, buoyPath(bookPath(chapter)), this.index.inICloud);
 		if (raw === undefined) {
 			return undefined;
 		}

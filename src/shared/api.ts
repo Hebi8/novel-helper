@@ -18,8 +18,13 @@ export interface ConflictDiff {
 	original: string;
 	before: string;
 	after: string;
+	beforeHash: string;
+	afterHash: string;
 }
 export type ConflictResolution = 'replace' | 'trash';
+export type ConflictResolveInput =
+	{ path: string; action: 'replace'; beforeHash: string; afterHash: string } | { path: string; action: 'trash'; afterHash: string };
+export type ConflictResolveResult = { ok: true } | { ok: false; reason: 'changed' | 'unbacked'; message: string };
 export interface TabState {
 	path: string;
 	anchor: number;
@@ -99,7 +104,7 @@ export interface AppAPI {
 		read(path: string): Promise<DiskFile>;
 		save(path: string, text: string, base: string, force?: boolean): Promise<SaveResult>;
 		conflictDiff(path: string): Promise<ConflictDiff>;
-		resolveConflict(path: string, action: ConflictResolution): Promise<void>;
+		resolveConflict(input: ConflictResolveInput): Promise<ConflictResolveResult>;
 		onOpenResult(listener: (result: OpenResult) => void): () => void;
 		onChanged(listener: (book: Book) => void): () => void;
 		onFileChanged(listener: (file: DiskFile) => void): () => void;

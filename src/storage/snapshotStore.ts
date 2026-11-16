@@ -396,6 +396,17 @@ export class SnapshotStore {
 		);
 	}
 
+	/** Drops an unfinished record created by `begin` when the caller aborts without writing. */
+	discard(id: number): Promise<void> {
+		return this.exclusive(
+			async () => undefined,
+			async () => {
+				await fs.rm(this.recordFile(id), { force: true });
+				await this.prune();
+			},
+		);
+	}
+
 	/** What is at the place of a file of the story folder, or on the way to it, that no snapshot holds; undefined when the place is free or holds a file a snapshot would keep. */
 	private async inTheWay(file: string): Promise<Blocked['why'] | undefined> {
 		const parts = file.split('/');

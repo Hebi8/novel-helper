@@ -12,6 +12,8 @@ import { defaults, type Settings } from '../../shared/defaults';
 import type { Book, DiskFile, SaveResult } from '../../shared/api';
 import {
 	atomicWrite,
+	currentICloudRoot,
+	isBookInICloud,
 	isDiskConflictCopy,
 	readAuxiliaryOptional,
 	readOptional,
@@ -59,12 +61,12 @@ export async function scanFiles(root: string, relative: string): Promise<string[
 		)
 	).flat();
 }
-export async function findStories(root: string): Promise<string[]> {
+export async function findStories(root: string, icloudRoot = currentICloudRoot()): Promise<string[]> {
 	const markers: string[] = [];
 	async function visit(relative: string, depth: number): Promise<void> {
 		const marker = relative ? `${relative}/${MARKER_FILE}` : MARKER_FILE;
 		try {
-			const text = await readAuxiliaryOptional(root, marker);
+			const text = await readAuxiliaryOptional(root, marker, isBookInICloud(join(root, relative), icloudRoot));
 			if (text !== undefined && parseMarker(text)) {
 				markers.push(marker);
 			}
@@ -135,16 +137,19 @@ export class BookIndex {
 	private fileChanged(file: DiskFile): void {
 		this.fileListeners.forEach((listener) => listener(file));
 	}
+	readonly inICloud: boolean;
 	constructor(
 		readonly root: string,
 		settings: Settings = defaults,
+		icloudRoot = currentICloudRoot(),
 	) {
 		this.settings = settings;
+		this.inICloud = isBookInICloud(root, icloudRoot);
 		this.library = new Library(settings['files.bookNames']);
 	}
 	async load(): Promise<void> {
 		try {
-			const marker = await readAuxiliaryOptional(this.root, MARKER_FILE);
+			const marker = await readAuxiliaryOptional(this.root, MARKER_FILE, this.inICloud);
 			const metadata = marker !== undefined ? parseMarker(marker) : undefined;
 			this.marker = metadata;
 			if (metadata?.book && this.library.empty) {
@@ -191,11 +196,11 @@ export class BookIndex {
 			}
 			const path = filename.toString();
 			if (path.startsWith('.novel-helper/buoys/')) {
-				if (conflictCandidate(path, ['.json']) === undefined) {
+				if (conflictCandidate(path, this.inICloud, ['.json']) === undefined) {
 					this.buoyVersion++;
 					this.notify();
 				} else {
-					void isDiskConflictCopy(this.root, path)
+					void isDiskConflictCopy(this.root, path, this.inICloud)
 						.then((conflict) => {
 							if (!conflict && !this.disposed) {
 								this.buoyVersion++;
@@ -291,7 +296,7 @@ export class BookIndex {
 		}
 	}
 	private syncConflicts(): void {
-		const next = new Map(findConflictCopies(this.files).map((item) => [item.path, item.original]));
+		const next = new Map(findConflictCopies(this.files, this.inICloud).map((item) => [item.path, item.original]));
 		for (const previous of [...this.conflicts.keys()]) {
 			if (!next.has(previous)) {
 				this.conflicts.delete(previous);

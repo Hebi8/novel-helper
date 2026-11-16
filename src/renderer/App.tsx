@@ -44,6 +44,14 @@ export function App() {
 			})
 			.catch((error) => setError(errorMessage(error)));
 	};
+	const refreshConflict = async (path: string) => {
+		try {
+			setConflictDiff(await window.novel.book.conflictDiff(path));
+		} catch (error) {
+			setConflictDiff(undefined);
+			setError(errorMessage(error));
+		}
+	};
 	const showStructure = (action: StructureAction, path?: string) => {
 		if (book) {
 			setStructure({ action, path: path ?? docs.sessionRef.current.active });
@@ -304,6 +312,7 @@ export function App() {
 									docs.focus();
 								}}
 								blockReason={docs.conflictBlockReason}
+								onRefresh={refreshConflict}
 								onResolved={docs.closeRemoved}
 								onError={setError}
 							/>

@@ -148,6 +148,8 @@ export const zh = {
 	conflictDeleteConfirm: (copy: string) => `将把「${copy}」移到废纸篓，原文件保持不变。`,
 	conflictBlockedUnsaved: '原文件或冲突副本在编辑器里有未保存内容，未执行操作。',
 	conflictBlockedConflict: '原文件或冲突副本在编辑器里有尚未解决的冲突，未执行操作。',
+	conflictChanged: '文件刚被改过',
+	conflictUnbacked: '原文太大或无法存快照，不替换',
 	assistantBlocked: '无法退回',
 	assistantBlockedDetail: '以下文件挡住了退回。这次没有改动任何文件。',
 	assistantBlockReasons: {

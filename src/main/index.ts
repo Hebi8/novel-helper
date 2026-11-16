@@ -11,6 +11,7 @@ import { SecretStore } from './secrets/store';
 import { UsageStore } from '../storage/usageStore';
 import { CompletionService } from './completion/service';
 import { WindowStore } from './window/state';
+import { parseTestICloudArg, setTestICloudRoot } from './book/files';
 import { type BookIndex } from './book/indexer';
 import { registerFeatures } from './register';
 import { installMenu } from './window/menu';
@@ -20,6 +21,10 @@ const testing = process.argv.includes('--test-mode');
 const userData = process.argv.find((arg) => arg.startsWith('--user-data-dir='))?.slice('--user-data-dir='.length);
 if (userData) {
 	app.setPath('userData', userData);
+}
+const icloudDir = parseTestICloudArg(process.argv);
+if (icloudDir) {
+	setTestICloudRoot(icloudDir);
 }
 app.setName('Novel Helper');
 if (!app.requestSingleInstanceLock()) {
