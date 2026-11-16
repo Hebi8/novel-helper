@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { cp, mkdtemp, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { firstContentPage, waitForContentPage } from './helpers';
 
 const chapterOriginal = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 const chapterCopy = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔 2.md';
@@ -61,7 +62,7 @@ async function withConflictBook(
 		});
 		exited = new Promise((resolve) => app!.process().once('exit', () => resolve()));
 
-		const welcome = await app.firstWindow();
+		const welcome = await firstContentPage(app);
 		await expect(welcome.getByRole('button', { name: '打开文件夹', exact: true })).toBeVisible();
 		await app.evaluate(({ shell }, trashDir) => {
 			const fs = process.getBuiltinModule('node:fs/promises')!;
@@ -73,7 +74,7 @@ async function withConflictBook(
 				await fs.rename(fullPath, path.join(trashDir, `${state.trashedPaths!.length}-${path.basename(fullPath)}`));
 			};
 		}, trash);
-		const next = app.waitForEvent('window');
+		const next = waitForContentPage(app);
 		await welcome.evaluate((target) => window.novel.book.open(target), book);
 		const page = await next;
 		await page.waitForLoadState('domcontentloaded');
@@ -249,7 +250,7 @@ test('identifies .md conflict copies in iCloud books, validates hashes and >5MB 
 		const localBook = join(root, 'local-book');
 		await cp(resolve('examples'), localBook, { recursive: true });
 		await writeFile(join(localBook, chapterCopy), '本地书里合法的第2章 灯塔 2');
-		const nextLocal = app.waitForEvent('window');
+		const nextLocal = waitForContentPage(app);
 		await page.evaluate((target) => window.novel.book.open(target), localBook);
 		const localPage = await nextLocal;
 		await localPage.waitForLoadState('domcontentloaded');

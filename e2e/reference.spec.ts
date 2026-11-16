@@ -3,6 +3,8 @@ import { cp, mkdtemp, mkdir, writeFile, readFile, realpath, rm, stat } from 'nod
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fakeServer, stream, openaiText, openaiUsage, OPENAI_END } from '../src/test/fakeServer';
+import type { MenuCommand } from '../src/shared/api';
+import { firstContentPage, sendCommand } from './helpers';
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 async function withReferenceBook(
 	run: (fixture: {
@@ -44,10 +46,9 @@ async function withReferenceBook(
 	const app = await electron.launch({ env, args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`] });
 	const exited = new Promise<void>((resolve) => app.process().once('exit', () => resolve()));
 	try {
-		const page = await app.firstWindow();
+		const page = await firstContentPage(app);
 		// Menu shortcuts are handled by the system menu, which synthetic key presses do not reach.
-		const menu = (command: string) =>
-			app.evaluate(({ BrowserWindow }, command) => BrowserWindow.getAllWindows()[0].webContents.send('window:command', command), command);
+		const menu = (command: string) => sendCommand(app, command as MenuCommand);
 		await page.waitForLoadState('domcontentloaded');
 		await expect(page.locator('.status-buoy')).toContainText('周伯收信');
 		await run({ page, app, book, menu, server });

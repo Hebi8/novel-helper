@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { cp, mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { firstContentPage, waitForContentPage, waitForSettingsPage } from './helpers';
 
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 
@@ -38,9 +39,9 @@ async function withApp(
 	try {
 		app = await electron.launch({ env: launchEnv, args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`] });
 		exited = new Promise((resolve) => app!.process().once('exit', () => resolve()));
-		const welcome = await app.firstWindow();
+		const welcome = await firstContentPage(app);
 		await expect(welcome.getByRole('button', { name: '打开文件夹', exact: true })).toBeVisible();
-		const next = app.waitForEvent('window');
+		const next = waitForContentPage(app);
 		await welcome.evaluate((target) => window.novel.book.open(target), book);
 		const page = await next;
 		await page.waitForLoadState('domcontentloaded');
@@ -61,7 +62,7 @@ async function withApp(
 
 test('timed snapshots configure in settings, record manual saves, show diffs, block on conflicts, revert, and undo', async () => {
 	await withApp(async ({ app, page, book, original }) => {
-		const settingsOpened = app.waitForEvent('window');
+		const settingsOpened = waitForSettingsPage(app);
 		await page.evaluate(() => window.novel.settings.open());
 		const settingsPage = await settingsOpened;
 		await settingsPage.waitForLoadState('domcontentloaded');
@@ -155,7 +156,7 @@ test('closing a book window saves a timed snapshot under userData while ignoring
 	});
 	await withApp(
 		async ({ app, page, book, snapshotDir, original }) => {
-			const settingsOpened = app.waitForEvent('window');
+			const settingsOpened = waitForSettingsPage(app);
 			await page.evaluate(() => window.novel.settings.open());
 			const settingsPage = await settingsOpened;
 			await settingsPage.waitForLoadState('domcontentloaded');
@@ -172,7 +173,7 @@ test('closing a book window saves a timed snapshot under userData while ignoring
 			await page.evaluate(() => window.novel.window.close());
 			await closed;
 
-			const reopened = app.waitForEvent('window');
+			const reopened = waitForContentPage(app);
 			await settingsPage.evaluate((dir) => window.novel.book.open(dir), book);
 			const nextPage = await reopened;
 			await nextPage.waitForLoadState('domcontentloaded');

@@ -7,6 +7,7 @@ import { ICLOUD_BOOKS_FOLDER } from '../src/main/book/icloud';
 import { zh } from '../src/renderer/strings';
 import { settingGroups } from '../src/shared/settings';
 import { fakeServer, stream, openaiText, openaiUsage, OPENAI_END } from '../src/test/fakeServer';
+import { firstContentPage, waitForSettingsPage } from './helpers';
 
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 
@@ -63,7 +64,7 @@ async function withApp(
 	const child = app.process();
 	const exited = new Promise<void>((resolveExit) => child.once('exit', () => resolveExit()));
 	try {
-		const page = await app.firstWindow();
+		const page = await firstContentPage(app);
 		await page.waitForLoadState('domcontentloaded');
 		await expect(page.locator('.editor:visible .cm-content')).toContainText('林小满');
 		await run({ app, page, book, data, server });
@@ -232,9 +233,9 @@ test('settings window switches all 7 categories, loads legacy settings.json, pre
 			'snapshots.intervalMinutes': 15,
 		},
 		async ({ page, app, data }) => {
+			const settingsOpened = waitForSettingsPage(app);
 			await page.evaluate(() => window.novel.settings.open());
-			await expect.poll(() => app.windows().length).toBe(2);
-			const settings = app.windows().find((win) => win !== page)!;
+			const settings = await settingsOpened;
 			await settings.waitForLoadState('domcontentloaded');
 
 			// Legacy settings.json values were loaded and applied immediately.

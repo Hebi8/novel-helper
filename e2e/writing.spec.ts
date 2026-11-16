@@ -3,6 +3,7 @@ import { cp, mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fakeServer, stream, openaiText, OPENAI_END } from '../src/test/fakeServer';
+import { firstContentPage, waitForContentPage } from './helpers';
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 const continuation = (n: number) => `门后传来第${n}声脚步，灯光照亮了潮湿的石阶。`;
 async function withBook(
@@ -39,9 +40,9 @@ async function withBook(
 		app = await electron.launch({ env: launchEnv, args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`] });
 		const child = app.process();
 		exited = new Promise((resolve) => child.once('exit', () => resolve()));
-		const welcome = await app.firstWindow();
+		const welcome = await firstContentPage(app);
 		await expect(welcome.getByRole('button', { name: '打开文件夹', exact: true })).toBeVisible();
-		const next = app.waitForEvent('window');
+		const next = waitForContentPage(app);
 		await welcome.evaluate((root) => window.novel.book.open(root), book);
 		page = await next;
 		await page.waitForLoadState('domcontentloaded');
@@ -129,12 +130,18 @@ test('selection and search focus do not request, and a crashed renderer can clos
 		await page.keyboard.press('Meta+f');
 		await page.waitForTimeout(900);
 		expect(server.received).toHaveLength(1);
-		const closed = await app.evaluate(async ({ BrowserWindow }) => {
+		const closed = await app.evaluate(async ({ BrowserWindow, webContents }) => {
 			const window = BrowserWindow.getAllWindows()[0];
 			new BrowserWindow({ show: false });
+			const bookWc = webContents
+				.getAllWebContents()
+				.find(
+					(wc) =>
+						!wc.isDestroyed() && wc.getURL().includes('index.html') && !wc.getURL().includes('tabbar') && !wc.getURL().includes('settings'),
+				)!;
 			await new Promise<void>((resolve) => {
-				window.webContents.once('render-process-gone', () => resolve());
-				window.webContents.forcefullyCrashRenderer();
+				bookWc.once('render-process-gone', () => resolve());
+				bookWc.forcefullyCrashRenderer();
 			});
 			const closed = new Promise<boolean>((resolve) => window.once('closed', () => resolve(true)));
 			window.close();

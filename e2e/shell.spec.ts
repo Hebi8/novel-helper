@@ -4,6 +4,7 @@ import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { resolveUserDataPath } from '../src/main/window/paths';
+import { firstContentPage, sendCommand, waitForContentPage } from './helpers';
 
 const chapter1 = '正文/第一卷 雾港/第一幕 来信/第1章 雾里来信.md';
 const chapter2 = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
@@ -46,7 +47,7 @@ test('hebi8L branding, Novel Helper userData, lossless project.json book title, 
 		});
 		exited = new Promise((done) => app!.process().once('exit', () => done()));
 
-		const welcome = await app.firstWindow();
+		const welcome = await firstContentPage(app);
 		await expect(welcome.getByRole('heading', { name: 'hebi8L', exact: true })).toBeVisible();
 		await expect(welcome).toHaveTitle('hebi8L');
 
@@ -81,7 +82,7 @@ test('hebi8L branding, Novel Helper userData, lossless project.json book title, 
 			welcome.getByRole('region', { name: 'iCloud 里的书', exact: true }).getByRole('button', { name: '北境来信', exact: true }),
 		).toBeVisible();
 
-		const nextWin = app.waitForEvent('window');
+		const nextWin = waitForContentPage(app);
 		await welcome.getByRole('region', { name: '最近打开', exact: true }).getByRole('button', { name: 'fog-harbor', exact: true }).click();
 		const page = await nextWin;
 		await page.waitForLoadState('domcontentloaded');
@@ -124,9 +125,7 @@ test('hebi8L branding, Novel Helper userData, lossless project.json book title, 
 		await expect(page.getByRole('tree', { name: '大纲', exact: true }).getByRole('button', { name: '全书', exact: true })).toBeVisible();
 
 		// File → 重命名书… switches back to 章节 and edits title in place.
-		await app.evaluate(({ BrowserWindow }) => {
-			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'renameBook');
-		});
+		await sendCommand(app, 'renameBook');
 		await expect(titleInput).toHaveValue('雾港纪事');
 		await titleInput.fill('雾港终章');
 		await titleInput.press('Enter');
@@ -251,7 +250,7 @@ test('moves chapters, volumes and lore entries to Trash via shell.trashItem, clo
 		};
 		const clearTrashed = () => app!.evaluate(() => (globalThis as { clearTrashed?: () => void }).clearTrashed?.());
 
-		const page = await app.firstWindow();
+		const page = await firstContentPage(app);
 		await page.waitForLoadState('domcontentloaded');
 		const editor = page.locator('.editor:visible .cm-content');
 		await expect(editor).toContainText('林小满');
@@ -415,7 +414,7 @@ test('single confirmation dialog rule and blocking overlay lock shortcuts and ty
 		});
 		exited = new Promise((done) => app!.process().once('exit', () => done()));
 
-		const page = await app.firstWindow();
+		const page = await firstContentPage(app);
 		await page.waitForLoadState('domcontentloaded');
 		const chap2Editor = page.locator(`.cm-content[aria-label="${chapter2}"]`);
 		const chap1Editor = page.locator(`.cm-content[aria-label="${chapter1}"]`);
@@ -432,10 +431,8 @@ test('single confirmation dialog rule and blocking overlay lock shortcuts and ty
 		await expect(dialog).toBeVisible();
 		await expect(page.locator('.topbar button.topbar-book')).toBeDisabled();
 
-		await app.evaluate(({ BrowserWindow }) => {
-			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'saveToICloud');
-			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'newChapter');
-		});
+		await sendCommand(app, 'saveToICloud');
+		await sendCommand(app, 'newChapter');
 		await expect(page.getByRole('dialog', { name: '存到 iCloud', exact: true })).toHaveCount(0);
 		await expect(page.getByRole('dialog', { name: '新建章', exact: true })).toHaveCount(0);
 		await expect(page.getByRole('dialog')).toHaveCount(1);
@@ -473,11 +470,9 @@ test('single confirmation dialog rule and blocking overlay lock shortcuts and ty
 
 		// Attempt focus mode, tab switch, new chapter, and typing while Move to Trash is suspended.
 		await page.keyboard.press('Control+Meta+f');
-		await app.evaluate(({ BrowserWindow }) => {
-			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'focus');
-			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'previousTab');
-			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'newChapter');
-		});
+		await sendCommand(app, 'focus');
+		await sendCommand(app, 'previousTab');
+		await sendCommand(app, 'newChapter');
 		await page.keyboard.type('BlockedTyping');
 		await page.keyboard.insertText('挂起期间打字');
 

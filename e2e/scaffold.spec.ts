@@ -2,6 +2,8 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { cp, mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import type { MenuCommand } from '../src/shared/api';
+import { contentPages, firstContentPage, sendCommand, sendOpenResult, waitForSettingsPage } from './helpers';
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 async function withBook(
 	run: (fixture: {
@@ -36,13 +38,12 @@ async function withBook(
 	const child = app.process();
 	const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
 	try {
-		const page = await app.firstWindow();
+		const page = await firstContentPage(app);
 		await page.waitForLoadState('domcontentloaded');
 		if (!welcome) {
 			await expect(page.locator('.editor:visible .cm-content')).toBeVisible();
 		}
-		const menu = (command: string) =>
-			app.evaluate(({ BrowserWindow }, command) => BrowserWindow.getAllWindows()[0].webContents.send('window:command', command), command);
+		const menu = (command: string) => sendCommand(app, command as MenuCommand);
 		await run({ page, app, book, root, data, menu });
 	} finally {
 		if (child.exitCode === null) {
@@ -57,7 +58,7 @@ async function bookWindow(app: ElectronApplication, name: string): Promise<Page>
 	let found: Page | undefined;
 	await expect
 		.poll(async () => {
-			for (const page of app.windows()) {
+			for (const page of contentPages(app)) {
 				const title = await page.evaluate(() => document.querySelector('.topbar strong')?.textContent).catch(() => undefined);
 				if (title === name) {
 					found = page;
@@ -81,10 +82,7 @@ test('welcome initializes selected items, opens the book, and discovers nested m
 			return result;
 		}, target);
 		// book.open returns the result to its caller, just as the welcome button does.
-		await app.evaluate(
-			({ BrowserWindow }, root) => BrowserWindow.getAllWindows()[0].webContents.send('book:openResult', { kind: 'empty', root }),
-			target,
-		);
+		await sendOpenResult(app, { kind: 'empty', root: target });
 		const dialog = page.getByRole('dialog', { name: '初始化这本书', exact: true });
 		await expect(dialog.getByRole('combobox', { name: '目录名称', exact: true })).toHaveValue('zh');
 		await expect(dialog.getByRole('checkbox', { name: /^正文 / })).toBeChecked();
@@ -180,9 +178,9 @@ test('whole-book search saves edits, counts all matches, limits rows, respects I
 
 test('settings edit in place, JSON errors do not save, editor preferences update and theme follows the system', async () => {
 	await withBook(async ({ page, app, data }) => {
+		const settingsOpened = waitForSettingsPage(app);
 		await page.evaluate(() => window.novel.settings.open());
-		await expect.poll(() => app.windows().length).toBe(2);
-		const settings = app.windows().find((window) => window !== page)!;
+		const settings = await settingsOpened;
 		await settings.waitForLoadState('domcontentloaded');
 		await settings.getByRole('combobox', { name: '字体', exact: true }).selectOption('__other__');
 		await settings.getByRole('textbox', { name: '自定义字体', exact: true }).fill('serif');
@@ -293,7 +291,7 @@ test('a renamed open chapter can still save edits and close its window normally'
 		await page.keyboard.press('Meta+ArrowDown');
 		await page.keyboard.insertText('AfterRename');
 		await expect.poll(() => readFile(join(book, path), 'utf8').catch(() => '')).toContain('AfterRename');
-		await page.evaluate(() => window.novel.window.close());
+		await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
 		await expect.poll(() => child.exitCode).toBe(0);
 	});
 });
@@ -303,6 +301,6 @@ test('double-clicking a recent book opens only one book window', async () => {
 		await page.getByRole('button', { name: 'book', exact: true }).dblclick();
 		const opened = await bookWindow(app, 'book');
 		await expect(opened.locator('.editor:visible .cm-content')).toBeVisible();
-		await expect.poll(() => app.windows().length).toBe(1);
+		await expect.poll(() => contentPages(app).length).toBe(1);
 	}, true);
 });

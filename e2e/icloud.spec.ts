@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { chmod, cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { contentPages, firstContentPage, sendCommand, waitForContentPage } from './helpers';
 
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 
@@ -61,13 +62,13 @@ test('hides all iCloud entry points when com~apple~CloudDocs does not exist', as
 		});
 		exited = new Promise((done) => app!.process().once('exit', () => done()));
 
-		const welcome = await app.firstWindow();
+		const welcome = await firstContentPage(app);
 		await expect(welcome.getByRole('button', { name: '打开文件夹', exact: true })).toBeVisible();
 		await expect(welcome.getByRole('region', { name: '最近打开', exact: true })).toBeVisible();
 		await expect(welcome.getByRole('heading', { name: 'iCloud 里的书', exact: true })).toHaveCount(0);
 		expect(await fileMenuLabels(app)).not.toContain('存到 iCloud');
 
-		const next = app.waitForEvent('window');
+		const next = waitForContentPage(app);
 		await welcome.getByRole('region', { name: '最近打开', exact: true }).getByRole('button', { name: '雾港', exact: true }).click();
 		const page = await next;
 		await page.waitForLoadState('domcontentloaded');
@@ -142,7 +143,7 @@ test('saves a book to iCloud after checking conflicts, busy assistant, existing 
 		}, trash);
 		const trashed = () => app!.evaluate(() => (globalThis as typeof globalThis & { trashedPaths?: string[] }).trashedPaths ?? []);
 
-		const page = await app.firstWindow();
+		const page = await firstContentPage(app);
 		await page.waitForLoadState('domcontentloaded');
 		await expect(page.locator('.topbar strong')).toHaveText('雾港');
 		expect(await fileMenuLabels(app)).toContain('存到 iCloud');
@@ -267,12 +268,10 @@ test('saves a book to iCloud after checking conflicts, busy assistant, existing 
 			expect(await saveMenuEnabled(app)).toBe(false);
 
 			// Triggering Save to iCloud command again while running does not revert state to confirmation dialog.
-			await app.evaluate(({ BrowserWindow }) => {
-				BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'saveToICloud');
-				BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'newChapter');
-				BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'closeTab');
-				BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'assistant:focus');
-			});
+			await sendCommand(app, 'saveToICloud');
+			await sendCommand(app, 'newChapter');
+			await sendCommand(app, 'closeTab');
+			await sendCommand(app, 'assistant:focus');
 			await expect(page.getByRole('dialog', { name: '存到 iCloud', exact: true })).toHaveCount(0);
 			await expect(page.getByRole('dialog', { name: '新建章', exact: true })).toHaveCount(0);
 			await expect(page.locator('.icloud-saving-backdrop')).toHaveText('正在存到 iCloud…');
@@ -315,14 +314,14 @@ test('saves a book to iCloud after checking conflicts, busy assistant, existing 
 		await page.keyboard.press('Meta+ArrowDown');
 		await page.keyboard.insertText('存进 iCloud 前刚写下的一句。');
 
-		const nextWindow = app.waitForEvent('window');
+		const nextWindow = waitForContentPage(app);
 		const okDialog = await openSaveDialog();
 		await okDialog.getByRole('button', { name: '确定', exact: true }).click();
 		const icloudPage = await nextWindow;
 		await icloudPage.waitForLoadState('domcontentloaded');
 
-		// Old window closes; only the new iCloud book window remains.
-		await expect.poll(() => app!.windows().length).toBe(1);
+		// Old book tab closes; only the new iCloud book tab remains.
+		await expect.poll(() => contentPages(app!).length).toBe(1);
 
 		const expectedTarget = join(booksDir, '雾港');
 		expect(existsSync(join(booksDir, '雾港.partial'))).toBe(false);
@@ -406,7 +405,7 @@ test('welcome page lists iCloud books without deduplicating recent, watches for 
 		});
 		exited = new Promise((done) => app!.process().once('exit', () => done()));
 
-		const welcome = await app.firstWindow();
+		const welcome = await firstContentPage(app);
 		await expect(welcome.getByRole('button', { name: '打开文件夹', exact: true })).toBeVisible();
 
 		// Initially Novel Helper/ has no books -> iCloud section is hidden while Recent still shows firstBook.
@@ -431,7 +430,7 @@ test('welcome page lists iCloud books without deduplicating recent, watches for 
 		await expect(icloudSection.getByRole('button', { name: '北境来信', exact: true })).toBeVisible();
 
 		// Clicking the synced book in iCloud 里的书 opens it directly.
-		const next = app.waitForEvent('window');
+		const next = waitForContentPage(app);
 		await icloudSection.getByRole('button', { name: '北境来信', exact: true }).click();
 		const opened = await next;
 		await opened.waitForLoadState('domcontentloaded');
@@ -475,8 +474,8 @@ test('blocks window close while initial saveAll is pending during Save to iCloud
 		});
 		exited = new Promise((done) => app!.process().once('exit', () => done()));
 
-		await expect.poll(() => app!.windows().length).toBe(2);
-		const initialWindows = app.windows();
+		await expect.poll(() => contentPages(app!).length).toBe(2);
+		const initialWindows = contentPages(app);
 		for (const win of initialWindows) {
 			await win.waitForLoadState('domcontentloaded');
 			await expect(win.locator('.topbar strong')).toBeVisible();
@@ -602,7 +601,7 @@ test('blocks window close while initial saveAll is pending during Save to iCloud
 			await otherPage.keyboard.press('Meta+ArrowDown');
 			await otherPage.keyboard.insertText('迁移完成才关窗的字。');
 
-			const nextWindow = app.waitForEvent('window');
+			const nextWindow = waitForContentPage(app);
 			await otherPage.locator('.topbar button.topbar-book').click();
 			await otherPage.getByRole('menuitem', { name: '存到 iCloud', exact: true }).click();
 			await otherPage.getByRole('dialog', { name: '存到 iCloud', exact: true }).getByRole('button', { name: '确定', exact: true }).click();

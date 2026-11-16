@@ -3,6 +3,7 @@ import { cp, mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { firstContentPage, waitForContentPage } from './helpers';
 
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 const command = (...parts: string[]) => JSON.stringify(parts);
@@ -63,9 +64,9 @@ async function withBook(
 	try {
 		app = await electron.launch({ env: launchEnv, args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`] });
 		exited = new Promise((resolve) => app!.process().once('exit', () => resolve()));
-		const welcome = await app.firstWindow();
+		const welcome = await firstContentPage(app);
 		await expect(welcome.getByRole('button', { name: '打开文件夹', exact: true })).toBeVisible();
-		const next = app.waitForEvent('window');
+		const next = waitForContentPage(app);
 		await welcome.evaluate((root) => window.novel.book.open(root), book);
 		const page = await next;
 		await page.waitForLoadState('domcontentloaded');
@@ -395,7 +396,7 @@ test('assistant model and effort popover fetches options on first show, sizes si
 			});
 			const secondExited = new Promise<void>((resolveExit) => secondApp.process().once('exit', () => resolveExit()));
 			try {
-				const secondPage = await secondApp.firstWindow();
+				const secondPage = await firstContentPage(secondApp);
 				await secondPage.waitForLoadState('domcontentloaded');
 				await secondPage.getByRole('button', { name: '助手', exact: true }).click();
 				const secondTrigger = secondPage.locator('.assistant-composer .assistant-option-trigger');
