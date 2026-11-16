@@ -387,7 +387,7 @@ export function App() {
 											limited={initial.usage.state === 'limit'}
 											nextRequestId={docs.nextRequestId}
 											ready={(handle) => docs.registerHandle(tab.path, handle)}
-											cursor={(anchor, head, isFocused) => docs.cursor(tab.path, anchor, head, isFocused)}
+											cursor={(anchor, head, isFocused, counts) => docs.cursor(tab.path, anchor, head, isFocused, counts)}
 										/>
 									);
 								})}
@@ -427,7 +427,6 @@ export function App() {
 						subscribeDocs={docs.subscribeDocs}
 						getDocVersion={docs.getDocVersion}
 						getWordsSnapshot={docs.getWordsSnapshot}
-						openDocuments={() => docs.documents.current}
 						toggle={() => {
 							if (initial.usage.missingKey) {
 								void window.novel.settings.open();

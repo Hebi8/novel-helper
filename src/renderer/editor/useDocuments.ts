@@ -6,11 +6,15 @@ import { useRef, useState } from 'react';
 import type { DiskFile, SessionState, OpenOptions, ReportKind, WordsSnapshot } from '../../shared/api';
 import type { EditorHandle } from './Editor';
 import { DocumentModel } from './document';
+import { wordCountsAt, type EditorWordCounts } from './prose';
 export interface CursorInfo {
 	path?: string;
 	anchor: number;
 	head: number;
 	focused: boolean;
+	totalWords: number;
+	beforeWords: number;
+	selectedWords: number;
 }
 export const reportPaths: Record<ReportKind, string> = { report: 'report:last-request', usageReport: 'report:usage' };
 export const reportKind = (path: string) => (Object.keys(reportPaths) as ReportKind[]).find((key) => reportPaths[key] === path);
@@ -32,7 +36,7 @@ export function useDocuments() {
 	const opening = useRef(new Map<string, Promise<DocumentModel>>());
 	const serial = useRef(0);
 	const nextRequestId = () => ++serial.current;
-	const cursorRef = useRef<CursorInfo>({ anchor: 0, head: 0, focused: false });
+	const cursorRef = useRef<CursorInfo>({ anchor: 0, head: 0, focused: false, totalWords: 0, beforeWords: 0, selectedWords: 0 });
 	const cursorListeners = useRef(new Set<() => void>());
 	const docVersionRef = useRef(0);
 	const docListeners = useRef(new Set<() => void>());
@@ -43,7 +47,15 @@ export function useDocuments() {
 	};
 	const notifyCursor = (next: CursorInfo) => {
 		const prev = cursorRef.current;
-		if (prev.path === next.path && prev.anchor === next.anchor && prev.head === next.head && prev.focused === next.focused) {
+		if (
+			prev.path === next.path &&
+			prev.anchor === next.anchor &&
+			prev.head === next.head &&
+			prev.focused === next.focused &&
+			prev.totalWords === next.totalWords &&
+			prev.beforeWords === next.beforeWords &&
+			prev.selectedWords === next.selectedWords
+		) {
 			return;
 		}
 		cursorRef.current = next;
@@ -228,17 +240,22 @@ export function useDocuments() {
 			handles.current.get(file.path)?.reload();
 		}
 	};
-	const cursor = (path: string, anchor: number, head: number, focused?: boolean) => {
+	const cursor = (path: string, anchor: number, head: number, focused?: boolean, counts?: EditorWordCounts) => {
 		const current = sessionRef.current;
 		sessionRef.current = { ...current, tabs: current.tabs.map((tab) => (tab.path === path ? { ...tab, anchor, head } : tab)) };
-		const viewFocused =
-			focused ??
-			(() => {
-				const view = handles.current.get(path)?.view;
-				return view ? view.root.activeElement === view.contentDOM : false;
-			})();
 		if (current.active === path) {
-			notifyCursor({ path, anchor, head, focused: viewFocused });
+			const view = handles.current.get(path)?.view;
+			const viewFocused = focused ?? (view ? view.root.activeElement === view.contentDOM : false);
+			const resolved = counts ?? (view ? wordCountsAt(view.state) : { total: 0, beforeHead: 0, selected: 0 });
+			notifyCursor({
+				path,
+				anchor,
+				head,
+				focused: viewFocused,
+				totalWords: resolved.total,
+				beforeWords: resolved.beforeHead,
+				selectedWords: resolved.selected,
+			});
 		}
 		scheduleSession();
 	};
@@ -313,6 +330,9 @@ export function useDocuments() {
 				left: panesRef.current.left && move(panesRef.current.left),
 				right: panesRef.current.right && move(panesRef.current.right),
 			});
+		}
+		if (cursorRef.current.path) {
+			cursorRef.current = { ...cursorRef.current, path: move(cursorRef.current.path) };
 		}
 		persist({ tabs: current.tabs.map((tab) => ({ ...tab, path: move(tab.path) })), active: current.active && move(current.active) });
 	};

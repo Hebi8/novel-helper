@@ -1232,3 +1232,117 @@ test('assistant turns record selected model, four token counts, cumulative cost 
 	assert.equal(fable.unpriced, 1);
 	assert.ok(Math.abs(fable.cost - 0.05) < 1e-9);
 });
+
+test('usage write failure happens after snapshot finish, diff recording and turn-end notification and only adds an error notice', async (t) => {
+	const { service, book, userData } = await fixture(t, ['--options', '--models=opus:Opus 4.6']);
+	const original = await readFile(join(book, chapter), 'utf8');
+	// Occupy usage.json with a directory so UsageStore.add fails on disk write.
+	await mkdir(join(userData, 'usage.json'));
+
+	const ended: Change[][] = [];
+	service.onTurnEnded((changes) => ended.push(changes));
+
+	assert.equal(
+		await service.send([command('write', chapter, '助手修改后的正文'), 'cost 0.15', 'usage 120 50 0 0', 'say 修改完毕'].join('\n')),
+		true,
+	);
+
+	assert.equal(ended.length, 1);
+	assert.deepEqual(
+		ended[0].map((change) => change.path),
+		[chapter],
+	);
+	const turns = itemsOf(service, 'turn');
+	assert.equal(turns.length, 1);
+	assert.equal(turns[0].stop, 'end_turn');
+	assert.ok(turns[0].record !== undefined);
+	assert.equal((await service.history()).length, 1);
+	assert.deepEqual(await service.diff(turns[0].record, chapter), {
+		path: chapter,
+		before: original,
+		after: '助手修改后的正文',
+		canOpen: true,
+	});
+	const notices = itemsOf(service, 'notice');
+	assert.equal(notices.length, 1);
+	assert.equal(notices[0].level, 'error');
+});
+
+test('resumed sessions restore settled cumulative cost baseline while non-resumed or new sessions start from zero', async (t) => {
+	const { service, book, userData, usage, open } = await fixture(t, ['--options', '--resume', '--close', '--models=opus:Opus 4.6']);
+	await service.send('session\ncost 0.30\nusage 100 40 0 0\nsay 第一轮');
+	const sessionId = said(service).split(' ')[0];
+	await service.dispose();
+
+	// Reopen and resume the existing session: cumulative $0.35 adds only the $0.05 delta.
+	const reopened = await open();
+	await reopened.send('session\ncost 0.35\nusage 80 20 0 0\nsay 恢复后第二轮');
+	assert.ok(said(reopened).startsWith(`${sessionId} `));
+
+	const key = assistantUsageKey('Opus 4.6');
+	let entry = totalsFor(await usage.load(), dayKey(new Date()))[key];
+	assert.equal(entry.requests, 2);
+	assert.ok(Math.abs(entry.cost - 0.35) < 1e-9);
+
+	// New session resets baseline to 0: $0.10 adds $0.10.
+	await reopened.newSession();
+	await reopened.send('cost 0.10\nusage 50 10 0 0\nsay 新会话从零起算');
+	entry = totalsFor(await usage.load(), dayKey(new Date()))[key];
+	assert.equal(entry.requests, 3);
+	assert.ok(Math.abs(entry.cost - 0.45) < 1e-9);
+	await reopened.dispose();
+
+	// If a saved session id can no longer be resumed ("gone-*"), fallback session/new also starts from 0 instead of saved cost.
+	const stateFile = join(userData, 'assistant', createHash('sha256').update(book).digest('hex') + '.json');
+	const saved = JSON.parse(await readFile(stateFile, 'utf8')) as { session: { agent: string; id: string; cost?: number } };
+	saved.session.id = 'gone-session';
+	saved.session.cost = 0.99;
+	await writeFile(stateFile, JSON.stringify(saved));
+
+	const fallback = await open();
+	await fallback.send('cost 0.12\nusage 40 10 0 0\nsay 旧会话失效自动新开');
+	entry = totalsFor(await usage.load(), dayKey(new Date()))[key];
+	assert.equal(entry.requests, 4);
+	assert.ok(Math.abs(entry.cost - 0.57) < 1e-9);
+});
+
+test('cancelled and failed turns settle partial usage and cost already received and skip recording when nothing arrived', async (t) => {
+	const { service, usage } = await fixture(t, ['--options', '--models=opus:Opus 4.6']);
+	const key = assistantUsageKey('Opus 4.6');
+
+	// Cancelled turn with nothing received -> records nothing.
+	let running = service.send('say 尚未产生用量\nwait');
+	await until(() => said(service) === '尚未产生用量', 'cancel without usage');
+	service.stop();
+	await running;
+	assert.equal(itemsOf(service, 'turn').at(-1)?.stop, 'cancelled');
+	assert.equal(totalsFor(await usage.load(), dayKey(new Date()))[key], undefined);
+
+	// Cancelled turn after receiving cost + usage -> records both.
+	running = service.send('cost 0.08\nusage 90 25 300 40\nsay 半截取消\nwait');
+	await until(() => said(service) === '半截取消', 'cancel with usage');
+	service.stop();
+	await running;
+	assert.equal(itemsOf(service, 'turn').at(-1)?.stop, 'cancelled');
+	let entry = totalsFor(await usage.load(), dayKey(new Date()))[key];
+	assert.equal(entry.requests, 1);
+	assert.equal(entry.input, 90);
+	assert.equal(entry.output, 25);
+	assert.equal(entry.cacheRead, 300);
+	assert.equal(entry.cacheWrite, 40);
+	assert.ok(Math.abs(entry.cost - 0.08) < 1e-9);
+
+	// Failed turn with nothing received -> records nothing.
+	await service.send('fail immediate error');
+	assert.equal(itemsOf(service, 'turn').at(-1)?.stop, 'failed');
+	entry = totalsFor(await usage.load(), dayKey(new Date()))[key];
+	assert.equal(entry.requests, 1);
+	assert.ok(Math.abs(entry.cost - 0.08) < 1e-9);
+
+	// Failed turn after receiving cumulative session cost $0.20 -> settles the $0.12 delta.
+	await service.send('cost 0.20\nsay 半途出错\nfail mid-turn error');
+	assert.equal(itemsOf(service, 'turn').at(-1)?.stop, 'failed');
+	entry = totalsFor(await usage.load(), dayKey(new Date()))[key];
+	assert.equal(entry.requests, 2);
+	assert.ok(Math.abs(entry.cost - 0.2) < 1e-9);
+});

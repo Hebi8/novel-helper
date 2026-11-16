@@ -9,7 +9,7 @@ import { allowOnce, decide, pathsOf } from '../../core/permission';
 import type { StoryNames } from '../../core/scaffold';
 import { titleOf, type Change, type SnapshotRecord } from '../../core/snapshot';
 import { Transcript, type AskOption, type Item } from '../../core/transcript';
-import { assistantUsageKey } from '../../core/usage';
+import { assistantUsageKey, type Usage } from '../../core/usage';
 import { SnapshotStore, type Blocked } from '../../storage/snapshotStore';
 import type { UsageStore } from '../../storage/usageStore';
 import type { Settings } from '../../shared/defaults';
@@ -22,7 +22,7 @@ import { prepareAgentEnvironment } from './environment';
 import { agentError, readForAgent, writeTarget } from './files';
 
 interface Saved {
-	session?: { agent: string; id?: string };
+	session?: { agent: string; id?: string; cost?: number };
 	items: Item[];
 	notes?: string[];
 }
@@ -592,7 +592,8 @@ export class AssistantService {
 					throw new Error(m.denied);
 				}
 				const previous = this.session?.id;
-				const { resumed, briefed } = await client.open(this.options.root, workspaceBrief(names), previous);
+				const previousCost = this.session?.cost ?? 0;
+				const { resumed, briefed } = await client.open(this.options.root, workspaceBrief(names), previous, previousCost);
 				if (signal.aborted) {
 					throw new Error(m.denied);
 				}
@@ -603,7 +604,7 @@ export class AssistantService {
 				this.client = client;
 				this.clientAgent = agent;
 				this.briefPending = !briefed;
-				this.session = { agent, id: client.sessionId };
+				this.session = { agent, id: client.sessionId, ...(resumed && previousCost > 0 ? { cost: previousCost } : {}) };
 				this.probedAgents.add(agent);
 				this.syncStoredOptions(agent, extractOptions(client.configOptions));
 				this.emitOptions();
@@ -705,18 +706,20 @@ export class AssistantService {
 		await this.save();
 		this.setStatus(m.working);
 		let stop = 'failed';
-		let turnUsage: Awaited<ReturnType<AgentClient['promptTurn']>>['usage'];
-		let turnCost: number | undefined;
+		let promptSent = false;
+		let turnUsage: Usage | undefined;
+		const turnSessionId = client.sessionId;
 		try {
 			if (this.stopped || this.disposed) {
 				stop = 'cancelled';
 			} else {
 				const blocks = [...(this.briefPending ? [workspaceBrief(names)] : []), ...(block ? [block] : []), text];
 				this.briefPending = false;
-				const turn = await client.promptTurn(blocks);
+				promptSent = true;
+				client.beginTurn();
+				const turn = await client.promptWithUsage(blocks);
 				stop = turn.stopReason;
 				turnUsage = turn.usage;
-				turnCost = turn.cost;
 			}
 		} catch (error) {
 			if (this.disposed) {
@@ -724,9 +727,6 @@ export class AssistantService {
 			} else {
 				this.explain(error, command, 'turn');
 			}
-		}
-		if (stop !== 'refusal' && (turnUsage || turnCost !== undefined)) {
-			await this.options.usage?.add(assistantUsageKey(this.currentModelName(client)), turnUsage ?? { input: 0, output: 0 }, turnCost);
 		}
 		for (const settle of this.asks.values()) {
 			settle();
@@ -736,6 +736,23 @@ export class AssistantService {
 			.endTurn({ kind: 'turn', ...(changes.length && { record: record.id }), stop, changes })
 			.forEach((index) => this.show(index));
 		this.turnListeners.forEach((listener) => listener(changes));
+		if (promptSent) {
+			const settled = client.settleTurn(turnUsage);
+			if (this.session && this.session.id === turnSessionId && settled.sessionCost > 0) {
+				this.session.cost = settled.sessionCost;
+			}
+			if (settled.usage || settled.cost !== undefined) {
+				try {
+					await this.options.usage?.add(
+						assistantUsageKey(this.currentModelName(client)),
+						settled.usage ?? { input: 0, output: 0 },
+						settled.cost,
+					);
+				} catch (error) {
+					this.notice('error', m.failure(error instanceof Error ? error.message : String(error)));
+				}
+			}
+		}
 		return true;
 	}
 	stop(): void {

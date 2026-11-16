@@ -364,6 +364,8 @@ async function main(): Promise<void> {
 						return { stopReason: 'cancelled' as const, ...(turnUsage && { usage: turnUsage }) };
 					case 'refuse':
 						return { stopReason: 'refusal' as const };
+					case 'fail':
+						throw acp.RequestError.internalError(undefined, [first, ...rest].join(' ') || 'turn failed');
 					case 'stderr':
 						process.stderr.write(`${[first, ...rest].join(' ')}\n`);
 						break;

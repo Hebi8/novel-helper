@@ -231,7 +231,7 @@ export class AgentClient {
 	 * The client has a session only once it is in the mode the command asks
 	 * for: when that fails, there is none, and the next call starts over.
 	 */
-	async open(cwd: string, brief: string, previous?: string): Promise<{ resumed: boolean; briefed: boolean }> {
+	async open(cwd: string, brief: string, previous?: string, previousCost = 0): Promise<{ resumed: boolean; briefed: boolean }> {
 		const acp = await import('@agentclientprotocol/sdk/unstable');
 		const session = this.capabilities.sessionCapabilities;
 		const systemPrompt: SystemPrompt | undefined = session?.systemPrompt ? { mode: 'append', content: [text(brief)] } : undefined;
@@ -252,6 +252,8 @@ export class AgentClient {
 				await this.enterMode(previous, response.modes);
 				this.configOptions = response.configOptions ?? [];
 				this.sessionId = previous;
+				this.lastSessionCost = previousCost;
+				this.latestSessionCost = previousCost;
 				return { resumed: true, briefed: true };
 			} catch (error) {
 				// A session the agent no longer has is no reason to stop: a new one is opened. Anything else is.
@@ -305,16 +307,15 @@ export class AgentClient {
 		}
 	}
 
-	/** Sends a message and resolves with the stop reason and any reported token usage / session cost delta. */
-	async promptTurn(blocks: string[]): Promise<PromptTurn> {
+	/** Marks the start of a prompt turn before sending `session/prompt`. */
+	beginTurn(): void {
 		this.turnSawCost = false;
+	}
+
+	/** Sends a message and resolves with the stop reason and any reported token usage. */
+	async promptWithUsage(blocks: string[]): Promise<{ stopReason: StopReason; usage?: Usage }> {
 		const acp = await import('@agentclientprotocol/sdk/unstable');
 		const response = await this.ask(this.connection.agent.request(acp.methods.agent.session.prompt, { sessionId: this.sessionId!, prompt: blocks.map(text) }));
-		let cost: number | undefined;
-		if (this.turnSawCost) {
-			cost = Math.max(0, this.latestSessionCost - this.lastSessionCost);
-			this.lastSessionCost = this.latestSessionCost;
-		}
 		const usage = response.usage
 			? {
 					input: response.usage.inputTokens,
@@ -323,7 +324,26 @@ export class AgentClient {
 					cacheWrite: response.usage.cachedWriteTokens ?? 0,
 				}
 			: undefined;
-		return { stopReason: response.stopReason, usage, cost };
+		return { stopReason: response.stopReason, usage };
+	}
+
+	/** Settles whatever usage and cumulative cost delta arrived during the turn that just ended. */
+	settleTurn(usage?: Usage): { usage?: Usage; cost?: number; sessionCost: number } {
+		let cost: number | undefined;
+		if (this.turnSawCost) {
+			cost = Math.max(0, this.latestSessionCost - this.lastSessionCost);
+			this.lastSessionCost = this.latestSessionCost;
+			this.turnSawCost = false;
+		}
+		return { usage, cost, sessionCost: this.lastSessionCost };
+	}
+
+	/** Sends a message and resolves with the stop reason and any reported token usage / session cost delta. */
+	async promptTurn(blocks: string[]): Promise<PromptTurn> {
+		this.beginTurn();
+		const turn = await this.promptWithUsage(blocks);
+		const settled = this.settleTurn(turn.usage);
+		return { stopReason: turn.stopReason, usage: settled.usage, cost: settled.cost };
 	}
 
 	/** Sends a message and resolves when the agent's turn is over. What the agent does meanwhile arrives through the handlers. */

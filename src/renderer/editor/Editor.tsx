@@ -17,7 +17,7 @@ import { frontmatterLength, stem } from '../../core/text';
 import type { Settings, TabState } from '../../shared/api';
 import { LINE_HEIGHT_VALUES } from '../../shared/settings';
 import type { DocumentModel } from './document';
-import { createProse } from './prose';
+import { createProse, wordCountsAt, type EditorWordCounts } from './prose';
 import { zh } from '../strings';
 
 const formEdit = Annotation.define<boolean>();
@@ -150,7 +150,7 @@ interface Props {
 	limited: boolean;
 	nextRequestId(): number;
 	ready(handle?: EditorHandle): void;
-	cursor(anchor: number, head: number, focused?: boolean): void;
+	cursor(anchor: number, head: number, focused?: boolean, counts?: EditorWordCounts): void;
 }
 export function Editor({
 	document: model,
@@ -201,6 +201,10 @@ export function Editor({
 			end: (text) => model.compositionEnd(text),
 		});
 		const isEditorFocused = (target: EditorView) => target.root.activeElement === target.contentDOM;
+		const emitCursor = (target: EditorView, isFocused = isEditorFocused(target), counts = wordCountsAt(target.state)) => {
+			const sel = target.state.selection.main;
+			callbacks.current.cursor(sel.anchor, sel.head, isFocused, counts);
+		};
 		const extensions = [
 			history(),
 			EditorState.readOnly.of(model.readOnly),
@@ -208,13 +212,11 @@ export function Editor({
 			...(chapter && !model.readOnly ? [drawSelection({ cursorBlinkRate: 1200 })] : []),
 			EditorView.domEventObservers({
 				focus: (_event, target) => {
-					const sel = target.state.selection.main;
-					callbacks.current.cursor(sel.anchor, sel.head, true);
+					emitCursor(target, true);
 				},
 				blur: (_event, target) => {
 					target.dom.classList.remove('cm-composing');
-					const sel = target.state.selection.main;
-					callbacks.current.cursor(sel.anchor, sel.head, false);
+					emitCursor(target, false);
 				},
 				compositionstart: (_event, target) => {
 					target.dom.classList.add('cm-composing');
@@ -238,6 +240,7 @@ export function Editor({
 					sourceModeRef.current = true;
 					setSourceMode(true);
 				}
+				let counts: EditorWordCounts | undefined;
 				if (update.docChanged) {
 					const fromForm = update.transactions.some((tr) => tr.annotation(formEdit));
 					if (!fromForm) {
@@ -252,7 +255,8 @@ export function Editor({
 							setSourceMode(true);
 						}
 					}
-					model.edit(update.state.doc.toString());
+					counts = wordCountsAt(update.state);
+					model.edit(update.state.doc.toString(), counts.total);
 				}
 				const endGuard = hiddenFrontmatterEnd(update.state);
 				if (endGuard > 0 && update.state.selection.ranges.some((range) => range.anchor < endGuard || range.head < endGuard)) {
@@ -271,8 +275,7 @@ export function Editor({
 					});
 				}
 				if (update.selectionSet || update.docChanged || update.focusChanged) {
-					const selection = update.state.selection.main;
-					callbacks.current.cursor(selection.anchor, selection.head, isEditorFocused(update.view));
+					emitCursor(update.view, isEditorFocused(update.view), counts);
 				}
 			}),
 		];
@@ -294,7 +297,7 @@ export function Editor({
 		const initialHide = loreRef.current && !sourceModeRef.current && formDataRef.current !== undefined;
 		const view = new EditorView({ parent: parent.current!, state: stateFor(tab.anchor, tab.head, initialHide) });
 		ghost.attach(view);
-		callbacks.current.cursor(view.state.selection.main.anchor, view.state.selection.main.head, isEditorFocused(view));
+		emitCursor(view);
 		const instance: EditorHandle = {
 			view,
 			ghost,
@@ -321,7 +324,7 @@ export function Editor({
 			view.setState(stateFor(selection.anchor, selection.head, nextHide));
 			setSyncVersion((n) => n + 1);
 			ghost.attach(view);
-			callbacks.current.cursor(view.state.selection.main.anchor, view.state.selection.main.head, isEditorFocused(view));
+			emitCursor(view);
 			if (view.hasFocus) {
 				ghost.send({ type: 'focus' });
 			}
@@ -367,7 +370,7 @@ export function Editor({
 			if (handle.current) {
 				const v = handle.current.view;
 				const sel = v.state.selection.main;
-				callbacks.current.cursor(sel.anchor, sel.head, v.root.activeElement === v.contentDOM);
+				callbacks.current.cursor(sel.anchor, sel.head, v.root.activeElement === v.contentDOM, wordCountsAt(v.state));
 				v.dispatch({ effects: EditorView.scrollIntoView(sel.head) });
 			}
 		} else {

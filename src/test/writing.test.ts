@@ -3,12 +3,12 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Text } from '@codemirror/state';
 import { keymap, type EditorView } from '@codemirror/view';
 import { countWords } from '../core/text';
 import { writingDayKey } from '../core/words';
 import { SettingsStore } from '../main/settings/store';
-import { buildProseDecorations, createProse } from '../renderer/editor/prose';
+import { buildProseDecorations, createProse, wordCountsAt } from '../renderer/editor/prose';
 import { defaults } from '../shared/defaults';
 import { WordCountStore } from '../storage/wordCountStore';
 
@@ -167,6 +167,101 @@ describe('chapter prose decorations and indent backspace', () => {
 		// Non-chapter file -> whole-indent Backspace does not intercept.
 		const nonChapter = pressBackspace('　　大纲项', 2, false);
 		assert.equal(nonChapter.handled, false);
+	});
+
+	test('100,000-character chapter performs 0 full-document reads across 30 cursor moves and updates word counts incrementally', (t) => {
+		const paragraphs: string[] = ['# 第1章 十万字长章'];
+		for (let i = 1; i <= 2800; i++) {
+			paragraphs.push(`　　第${String(i).padStart(4, '0')}段，海雾顺着旧石阶漫上来，灯塔顶上的黄铜透镜在夜风里轻轻作响。`);
+		}
+		const doc = paragraphs.join('\n\n');
+		const expectedTotal = countWords(doc);
+		assert.ok(expectedTotal > 100_000);
+
+		let state = EditorState.create({
+			doc,
+			selection: { anchor: 0 },
+			extensions: [createProse({ chapter: true })],
+		});
+		assert.equal(wordCountsAt(state).total, expectedTotal);
+
+		let fullToStringCalls = 0;
+		let fullIterLinesCalls = 0;
+		let largeSliceCalls = 0;
+		let lineReads = 0;
+
+		const origToString = Text.prototype.toString;
+		const origIterLines = Text.prototype.iterLines;
+		const origLine = Text.prototype.line;
+		const docProto = Object.getPrototypeOf(state.doc) as Text;
+		const origSlice = docProto.sliceString;
+
+		t.mock.method(Text.prototype, 'toString', function (this: Text) {
+			if (this.length > 1000) {
+				fullToStringCalls++;
+			}
+			return origToString.call(this);
+		});
+		t.mock.method(Text.prototype, 'iterLines', function (this: Text, from?: number, to?: number) {
+			if (from === undefined && to === undefined) {
+				fullIterLinesCalls++;
+			}
+			return origIterLines.call(this, from, to);
+		});
+		t.mock.method(docProto, 'sliceString', function (this: Text, from: number, to?: number, lineSep?: string) {
+			const end = to ?? this.length;
+			if (end - from > 1000) {
+				largeSliceCalls++;
+			}
+			return origSlice.call(this, from, to, lineSep);
+		});
+		t.mock.method(Text.prototype, 'line', function (this: Text, n: number) {
+			lineReads++;
+			return origLine.call(this, n);
+		});
+
+		const length = state.doc.length;
+		for (let step = 0; step < 30; step++) {
+			const head = Math.floor(((step + 1) * (length - 1)) / 30);
+			const anchor = step % 5 === 0 ? Math.max(0, head - 120) : head;
+			state = state.update({ selection: { anchor, head } }).state;
+			const vpFrom = Math.max(0, head - 600);
+			const vpTo = Math.min(length, head + 600);
+			buildProseDecorations(state, true, [{ from: vpFrom, to: vpTo }]);
+			const counts = wordCountsAt(state);
+			assert.equal(counts.total, expectedTotal);
+			if (anchor !== head) {
+				assert.equal(counts.selected, countWords(doc.slice(anchor, head)));
+			}
+		}
+
+		assert.equal(fullToStringCalls, 0);
+		assert.equal(fullIterLinesCalls, 0);
+		assert.equal(largeSliceCalls, 0);
+		// Across all 30 cursor moves combined, total line reads stay smaller than even a single 5,600-line full scan.
+		assert.ok(lineReads < state.doc.lines, `expected O(viewport) line reads, got ${lineReads} for ${state.doc.lines} lines`);
+
+		// Check exact cursor-before word count near the end of the 100k document without full-doc reads.
+		const tailPos = length - 25;
+		state = state.update({ selection: { anchor: tailPos } }).state;
+		const tailCounts = wordCountsAt(state);
+		assert.equal(tailCounts.beforeHead, countWords(doc.slice(0, tailPos)));
+		assert.equal(fullToStringCalls, 0);
+		assert.equal(fullIterLinesCalls, 0);
+		assert.equal(largeSliceCalls, 0);
+
+		// Incremental edit (insert + line split + delete) updates total and beforeHead accurately without full-doc reads.
+		state = state.update({
+			changes: { from: tailPos, to: tailPos + 4, insert: '新加的一句\n　　换了一行' },
+			selection: { anchor: tailPos + 12 },
+		}).state;
+		const updatedDoc = doc.slice(0, tailPos) + '新加的一句\n　　换了一行' + doc.slice(tailPos + 4);
+		const afterEdit = wordCountsAt(state);
+		assert.equal(afterEdit.total, countWords(updatedDoc));
+		assert.equal(afterEdit.beforeHead, countWords(updatedDoc.slice(0, tailPos + 12)));
+		assert.equal(fullToStringCalls, 0);
+		assert.equal(fullIterLinesCalls, 0);
+		assert.equal(largeSliceCalls, 0);
 	});
 });
 

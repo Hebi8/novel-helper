@@ -1,5 +1,4 @@
 import { useSyncExternalStore } from 'react';
-import { countWords } from '../../core/text';
 import type { BookNode } from '../../core/library';
 import { dollars } from '../../core/usage';
 import type { UsageStatus, WordsSnapshot } from '../../shared/api';
@@ -13,15 +12,6 @@ function isChapterNode(node: BookNode, path: string): boolean {
 	return (node.kind === 'chapter' && node.path === path) || node.children.some((child) => isChapterNode(child, path));
 }
 
-function collectChapterPaths(node: BookNode, into = new Set<string>()): Set<string> {
-	if (node.kind === 'chapter') {
-		into.add(node.path);
-	} else {
-		node.children.forEach((child) => collectChapterPaths(child, into));
-	}
-	return into;
-}
-
 export function StatusBar({
 	status,
 	document,
@@ -30,7 +20,6 @@ export function StatusBar({
 	subscribeDocs,
 	getDocVersion,
 	getWordsSnapshot,
-	openDocuments,
 	toggle,
 }: {
 	status: UsageStatus;
@@ -40,39 +29,31 @@ export function StatusBar({
 	subscribeDocs: (listener: () => void) => () => void;
 	getDocVersion: () => number;
 	getWordsSnapshot: () => WordsSnapshot;
-	openDocuments: () => ReadonlyMap<string, DocumentModel>;
 	toggle(): void;
 }) {
 	useDocument(document);
 	const cursor = useSyncExternalStore(subscribeCursor, getCursor);
 	useSyncExternalStore(subscribeDocs, getDocVersion);
 	const workspace = useWorkspace();
-	const words = document ? countWords(document.text) : 0;
 	const activePath = workspace.session.active;
+	const cursorMatchesActive = Boolean(activePath && cursor.path === activePath);
+	const words = document ? (cursorMatchesActive ? cursor.totalWords : document.words) : 0;
 	const activeIsChapter = Boolean(document && workspace.book && activePath && isChapterNode(workspace.book.tree, activePath));
 	const conflicts = workspace.book?.conflicts ?? [];
 
 	const snapshot = getWordsSnapshot();
 	let todayNet = snapshot.todayWords;
-	if (workspace.book) {
-		const chapterPaths = collectChapterPaths(workspace.book.tree);
-		for (const [path, model] of openDocuments()) {
-			if (!model.readOnly && chapterPaths.has(path)) {
-				const baseWords = snapshot.chapterWords[path] ?? countWords(model.base);
-				todayNet += countWords(model.text) - baseWords;
-			}
-		}
+	if (activeIsChapter && document && activePath && !document.readOnly) {
+		const baseWords = snapshot.chapterWords[activePath] ?? document.baseWords;
+		todayNet += words - baseWords;
 	}
 
 	let rightWordsText = `${words.toLocaleString()} ${zh.words}`;
-	if (activeIsChapter && document && cursor.path === activePath) {
+	if (activeIsChapter && document && cursorMatchesActive) {
 		if (cursor.anchor !== cursor.head) {
-			const from = Math.min(cursor.anchor, cursor.head);
-			const to = Math.max(cursor.anchor, cursor.head);
-			rightWordsText = zh.selectedWordsLabel(countWords(document.text.slice(from, to)), words);
+			rightWordsText = zh.selectedWordsLabel(cursor.selectedWords, words);
 		} else if (cursor.focused) {
-			const head = Math.max(0, Math.min(cursor.head, document.text.length));
-			rightWordsText = zh.cursorWordsLabel(countWords(document.text.slice(0, head)), words);
+			rightWordsText = zh.cursorWordsLabel(cursor.beforeWords, words);
 		}
 	}
 
