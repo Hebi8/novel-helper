@@ -1,18 +1,32 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
-import { cp, mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { cp, mkdtemp, mkdir, writeFile, readFile, realpath, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const chapter = '正文/第一卷 雾港/第一幕 来信/第2章 灯塔.md';
 
 async function withApp(
-	run: (fixture: { app: ElectronApplication; welcome: Page; page: Page; book: string; original: string }) => Promise<void>,
+	run: (fixture: {
+		app: ElectronApplication;
+		welcome: Page;
+		page: Page;
+		book: string;
+		data: string;
+		snapshotDir: string;
+		original: string;
+	}) => Promise<void>,
+	setupBook?: (book: string) => Promise<void>,
 ) {
 	const root = await mkdtemp(join(tmpdir(), 'novel-snapshots-e2e-'));
 	const book = join(root, 'book');
 	const data = join(root, 'data');
 	await cp(resolve('examples'), book, { recursive: true });
+	await setupBook?.(book);
 	await mkdir(data);
+	const realBook = await realpath(book);
+	const snapshotDir = join(data, 'snapshots', createHash('sha256').update(realBook).digest('hex').slice(0, 16));
 	await writeFile(join(data, 'windows.json'), JSON.stringify({ open: [], recent: [], books: {} }));
 	await writeFile(join(data, 'settings.json'), JSON.stringify({ enabled: false }));
 	const original = await readFile(join(book, chapter), 'utf8');
@@ -35,7 +49,7 @@ async function withApp(
 			.getByRole('button', { name: /第2章 灯塔/ })
 			.click();
 		await expect(page.locator('.writing .cm-content')).toContainText('林小满');
-		await run({ app, welcome, page, book, original });
+		await run({ app, welcome, page, book, data, snapshotDir, original });
 	} finally {
 		if (app) {
 			await app.close();
@@ -131,42 +145,61 @@ test('timed snapshots configure in settings, record manual saves, show diffs, bl
 	});
 });
 
-test('closing a book window saves a timed snapshot when changes exist since the last snapshot', async () => {
-	await withApp(async ({ app, page, book, original }) => {
-		const settingsOpened = app.waitForEvent('window');
-		await page.evaluate(() => window.novel.settings.open());
-		const settingsPage = await settingsOpened;
-		await settingsPage.waitForLoadState('domcontentloaded');
-
-		const editor = page.locator('.writing .cm-content');
-		await editor.click();
-		await page.keyboard.press('Meta+ArrowDown');
-		await page.keyboard.insertText('关窗前手写稿。');
-		await expect.poll(() => readFile(join(book, chapter), 'utf8')).toBe(original + '关窗前手写稿。');
-
-		expect(await page.evaluate(() => window.novel.assistant.history())).toHaveLength(0);
-
-		const closed = page.waitForEvent('close');
-		await page.evaluate(() => window.novel.window.close());
-		await closed;
-
-		const reopened = app.waitForEvent('window');
-		await settingsPage.evaluate((dir) => window.novel.book.open(dir), book);
-		const nextPage = await reopened;
-		await nextPage.waitForLoadState('domcontentloaded');
-
-		await nextPage.getByRole('button', { name: '快照', exact: true }).click();
-		await expect(nextPage.getByRole('dialog', { name: '快照', exact: true })).toContainText('定时 · 1 个文件');
-		const records = await nextPage.evaluate(() => window.novel.assistant.history());
-		expect(records).toHaveLength(1);
-		expect(records[0]?.kind).toBe('timed');
+test('closing a book window saves a timed snapshot under userData while ignoring legacy in-book snapshots', async () => {
+	const legacyRecord = JSON.stringify({
+		id: 1,
+		time: '2026-01-01T00:00:00.000Z',
+		kind: 'turn',
+		title: '扩展旧快照',
+		files: { [chapter]: '0'.repeat(64) },
+		changes: [{ path: chapter, after: '0'.repeat(64) }],
 	});
+	await withApp(
+		async ({ app, page, book, snapshotDir, original }) => {
+			const settingsOpened = app.waitForEvent('window');
+			await page.evaluate(() => window.novel.settings.open());
+			const settingsPage = await settingsOpened;
+			await settingsPage.waitForLoadState('domcontentloaded');
+
+			expect(await page.evaluate(() => window.novel.assistant.history())).toHaveLength(0);
+
+			const editor = page.locator('.writing .cm-content');
+			await editor.click();
+			await page.keyboard.press('Meta+ArrowDown');
+			await page.keyboard.insertText('关窗前手写稿。');
+			await expect.poll(() => readFile(join(book, chapter), 'utf8')).toBe(original + '关窗前手写稿。');
+
+			const closed = page.waitForEvent('close');
+			await page.evaluate(() => window.novel.window.close());
+			await closed;
+
+			const reopened = app.waitForEvent('window');
+			await settingsPage.evaluate((dir) => window.novel.book.open(dir), book);
+			const nextPage = await reopened;
+			await nextPage.waitForLoadState('domcontentloaded');
+
+			await nextPage.getByRole('button', { name: '快照', exact: true }).click();
+			await expect(nextPage.getByRole('dialog', { name: '快照', exact: true })).toContainText('定时 · 1 个文件');
+			await expect(nextPage.getByRole('dialog', { name: '快照', exact: true })).not.toContainText('扩展旧快照');
+			const records = await nextPage.evaluate(() => window.novel.assistant.history());
+			expect(records).toHaveLength(1);
+			expect(records[0]?.kind).toBe('timed');
+			expect(Object.keys(records[0]?.files ?? {}).some((file) => file.startsWith('.novel-helper/snapshots'))).toBe(false);
+			expect(JSON.parse(await readFile(join(snapshotDir, 'book.json'), 'utf8'))).toEqual({ root: await realpath(book) });
+			expect(existsSync(join(snapshotDir, 'timed.json'))).toBe(true);
+			expect(await readFile(join(book, '.novel-helper/snapshots/turns/000001.json'), 'utf8')).toBe(legacyRecord);
+		},
+		async (book) => {
+			await mkdir(join(book, '.novel-helper/snapshots/turns'), { recursive: true });
+			await writeFile(join(book, '.novel-helper/snapshots/turns/000001.json'), legacyRecord);
+		},
+	);
 });
 
 test('timed snapshot failure surfaces a top notice once without failing save or rename', async () => {
-	await withApp(async ({ page, book, original }) => {
+	await withApp(async ({ page, snapshotDir, original }) => {
 		await page.evaluate(() => window.novel.settings.set('snapshots.intervalMinutes', 0.01));
-		await mkdir(join(book, '.novel-helper', 'snapshots', 'timed.json'), { recursive: true });
+		await mkdir(join(snapshotDir, 'timed.json'), { recursive: true });
 		await page.waitForTimeout(700);
 
 		const saveResult = await page.evaluate(({ file, text, base }) => window.novel.book.save(file, text, base), {

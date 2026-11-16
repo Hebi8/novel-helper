@@ -100,6 +100,7 @@ export class AssistantService {
 			options.store ??
 			new SnapshotStore(
 				options.root,
+				options.userData,
 				() => options.settings()['assistant.snapshots.keep'],
 				() => options.settings()['snapshots.keep'],
 			);
@@ -782,7 +783,7 @@ export class AssistantService {
 			before: await text(change.before),
 			after: await text(change.after),
 			canOpen,
-			...(record?.kind === 'timed' && { timed: true }),
+			...((record?.kind === 'timed' || record?.kind === 'conflict') && { timed: true }),
 		};
 	}
 	async revert(id: number): Promise<{ blocked: Blocked[] }> {
@@ -806,7 +807,7 @@ export class AssistantService {
 					return { target, record, blocked, noop: false };
 				});
 				if (outcome.noop) {
-					this.notice('info', outcome.target.kind === 'timed' ? m.noSnapshotRevert : m.noRevert);
+					this.notice('info', outcome.target.kind === 'timed' || outcome.target.kind === 'conflict' ? m.noSnapshotRevert : m.noRevert);
 					return { blocked: [] };
 				}
 				const { target, record, blocked } = outcome;
@@ -815,7 +816,7 @@ export class AssistantService {
 						kind: 'turn',
 						record: record.id,
 						stop: 'reverted',
-						...(target.kind !== 'timed' && { target: id }),
+						...((target.kind === 'turn' || target.kind === 'revert') && { target: id }),
 						changes: record.changes,
 					});
 					this.notes.push(

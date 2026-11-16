@@ -15,6 +15,7 @@ export interface Workspace {
 	session: SessionState;
 	current(): EditorSnapshot | undefined;
 	open(path: string, options?: OpenOptions): Promise<void>;
+	openConflict(path: string): void;
 	reference: ReferenceData;
 	buoy?: BuoyStatus;
 	chapter?: string;

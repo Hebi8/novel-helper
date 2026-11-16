@@ -39,7 +39,7 @@ import type { BuoyAction, BuoyStatus } from '../../shared/api';
 import type { UsageStore } from '../../storage/usageStore';
 import type { SettingsStore } from '../settings/store';
 import type { BookIndex } from '../book/indexer';
-import { atomicWrite, readOptional } from '../book/files';
+import { atomicWrite, readAuxiliaryOptional } from '../book/files';
 import { bookPath } from '../book/paths';
 import { zh } from '../../renderer/strings';
 const bodyLength = (text: string) => text.length - frontmatterLength(text);
@@ -81,7 +81,7 @@ export class Buoys {
 		});
 	}
 	private async load(chapter: string, currentText?: string): Promise<BuoyFile | undefined> {
-		const raw = await readOptional(join(this.index.root, buoyPath(bookPath(chapter))));
+		const raw = await readAuxiliaryOptional(this.index.root, buoyPath(bookPath(chapter)), this.index.inICloud);
 		if (raw === undefined) {
 			return undefined;
 		}

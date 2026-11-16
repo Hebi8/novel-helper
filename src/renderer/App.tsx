@@ -6,8 +6,9 @@ import { QuickOpen } from './reference/QuickOpen';
 import { useReferences } from './reference/useReferences';
 import { errorMessage } from './errors';
 import { useEffect, useRef, useState } from 'react';
-import type { Bootstrap, Book, OpenResult } from '../shared/api';
+import type { Bootstrap, Book, ConflictDiff, OpenResult } from '../shared/api';
 import { defaults } from '../shared/defaults';
+import { ConflictCopyOverlay } from './editor/ConflictCopyOverlay';
 import { LeftSidebar } from './left/LeftSidebar';
 import { RightSidebar } from './right/RightSidebar';
 import { Tabs } from './tabs/Tabs';
@@ -34,6 +35,24 @@ export function App() {
 	const [search, setSearch] = useState(false);
 	const [focus, setFocus] = useState(false);
 	const [structure, setStructure] = useState<{ action: StructureAction; path?: string }>();
+	const [conflictDiff, setConflictDiff] = useState<ConflictDiff>();
+	const openConflict = (path: string) => {
+		void window.novel.book
+			.conflictDiff(path)
+			.then((diff) => {
+				setError('');
+				setConflictDiff(diff);
+			})
+			.catch((error) => setError(errorMessage(error)));
+	};
+	const refreshConflict = async (path: string) => {
+		try {
+			setConflictDiff(await window.novel.book.conflictDiff(path));
+		} catch (error) {
+			setConflictDiff(undefined);
+			setError(errorMessage(error));
+		}
+	};
 	const showStructure = (action: StructureAction, path?: string) => {
 		if (book) {
 			setStructure({ action, path: path ?? docs.sessionRef.current.active });
@@ -151,6 +170,7 @@ export function App() {
 				report: docs.openReport,
 				showOutline: actions['right:0'],
 				open: docs.open,
+				openConflict,
 				saveAll: docs.saveAll,
 				fail: setError,
 			}}
@@ -286,6 +306,19 @@ export function App() {
 							</div>
 						</main>
 						{book ? <RightSidebar hidden={focus || !rightOpen} section={right} select={setRight} /> : null}
+						{conflictDiff && book ? (
+							<ConflictCopyOverlay
+								diff={conflictDiff}
+								close={() => {
+									setConflictDiff(undefined);
+									docs.focus();
+								}}
+								blockReason={docs.conflictBlockReason}
+								onRefresh={refreshConflict}
+								onResolved={docs.closeRemoved}
+								onError={setError}
+							/>
+						) : null}
 					</div>
 				) : (
 					<Welcome recent={initial?.recent ?? []} result={openResult} open={openBook} dismiss={() => setOpenResult(undefined)} />

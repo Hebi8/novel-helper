@@ -1,16 +1,30 @@
+import type { ConflictCopy } from '../core/conflict';
 import type { BookNode } from '../core/library';
 import type { Totals } from '../core/usage';
 import type { ProviderId } from '../llm/providers';
 import type { Settings, SettingKey } from './defaults';
 import type { AssistantAPI } from './assistant';
-export type { Settings, SettingKey };
+export type { ConflictCopy, Settings, SettingKey };
 export interface Book {
 	referenceVersion?: number;
 	buoyVersion?: number;
 	root: string;
 	name: string;
 	tree: BookNode;
+	conflicts: ConflictCopy[];
 }
+export interface ConflictDiff {
+	path: string;
+	original: string;
+	before: string;
+	after: string;
+	beforeHash: string;
+	afterHash: string;
+}
+export type ConflictResolution = 'replace' | 'trash';
+export type ConflictResolveInput =
+	{ path: string; action: 'replace'; beforeHash: string; afterHash: string } | { path: string; action: 'trash'; afterHash: string };
+export type ConflictResolveResult = { ok: true } | { ok: false; reason: 'changed' | 'unbacked'; message: string };
 export interface TabState {
 	path: string;
 	anchor: number;
@@ -89,6 +103,8 @@ export interface AppAPI {
 		open(root?: string, selected?: boolean): Promise<OpenResult>;
 		read(path: string): Promise<DiskFile>;
 		save(path: string, text: string, base: string, force?: boolean): Promise<SaveResult>;
+		conflictDiff(path: string): Promise<ConflictDiff>;
+		resolveConflict(input: ConflictResolveInput): Promise<ConflictResolveResult>;
 		onOpenResult(listener: (result: OpenResult) => void): () => void;
 		onChanged(listener: (book: Book) => void): () => void;
 		onFileChanged(listener: (file: DiskFile) => void): () => void;
@@ -155,6 +171,8 @@ export const channels = {
 	openResult: 'book:openResult',
 	bookRead: 'book:read',
 	bookSave: 'book:save',
+	bookConflictDiff: 'book:conflictDiff',
+	bookConflictResolve: 'book:conflictResolve',
 	bookChanged: 'book:changed',
 	fileChanged: 'book:fileChanged',
 	completionRequest: 'completion:request',

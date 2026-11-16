@@ -1,16 +1,17 @@
-// The snapshots of one story folder, on disk below `.novel-helper/snapshots`:
+// The snapshots of one story folder, on disk below `<userData>/snapshots/<id>`:
 //
 //   objects/ab/cdef…        the content of a file kept for assistant turns, named by its SHA-256
 //   timed-objects/ab/cdef…  the content kept for timed snapshots (hard-linked with `objects` when shared)
 //   turns/000012.json       a SnapshotRecord: the files right before a turn, and what the turn changed
-//   timed.json              timed SnapshotRecords, kept separate so VS Code extension 0.4.0 never misreads or prunes them
-//   .gitignore              `*`, so that a story kept in git does not pick the snapshots up
+//   timed.json              timed SnapshotRecords, kept separate from `turns/`
+//   book.json               the real path of the story folder this directory belongs to
 //   lock                    there while a window reads the folder into a snapshot or changes the records
 //
 // Changes are found by reading the folder again and comparing, not by
 // watching what the agent says it wrote: an agent can write to disk itself.
 
 import { createHash, randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {
@@ -26,7 +27,6 @@ import {
 	restorePlan,
 	type RestorePlan,
 	skipsFolder,
-	SNAPSHOT_DIR,
 	type SnapshotRecord,
 } from '../core/snapshot';
 import { FileLock } from './fileLock';
@@ -61,25 +61,40 @@ export interface SnapshotSeed {
 
 const byTime = (a: SnapshotRecord, b: SnapshotRecord) => Date.parse(a.time) - Date.parse(b.time) || a.id - b.id;
 
+/** First 16 hex digits of the SHA-256 of a book's canonical `realpath`. */
+export function snapshotBookId(realRoot: string): string {
+	return createHash('sha256').update(realRoot).digest('hex').slice(0, 16);
+}
+
+/** Where a book's snapshots live inside the application data directory. */
+export function snapshotDirectory(userData: string, realRoot: string): string {
+	return path.join(userData, 'snapshots', snapshotBookId(realRoot));
+}
+
 export class SnapshotStore {
-	private readonly dir: string;
+	readonly dir: string;
+	private readonly realStory: string;
 	private readonly objects: string;
 	private readonly timedObjects: string;
 	private readonly turns: string;
 	private readonly timedFile: string;
+	private readonly bookFile: string;
 	private readonly lock: FileLock;
 
-	/** `story` is the story folder; `keep` and `timedKeep` say how many assistant and timed records to keep. */
+	/** `story` is the story folder; `userData` is the app data directory; `keep` and `timedKeep` say how many assistant and timed records to keep. */
 	constructor(
 		readonly story: string,
+		userData: string,
 		private readonly keep: () => number,
 		private readonly timedKeep: () => number = () => 100,
 	) {
-		this.dir = path.join(story, ...SNAPSHOT_DIR.split('/'));
+		this.realStory = realpathSync(story);
+		this.dir = snapshotDirectory(userData, this.realStory);
 		this.objects = path.join(this.dir, 'objects');
 		this.timedObjects = path.join(this.dir, 'timed-objects');
 		this.turns = path.join(this.dir, 'turns');
 		this.timedFile = path.join(this.dir, 'timed.json');
+		this.bookFile = path.join(this.dir, 'book.json');
 		this.lock = new FileLock(path.join(this.dir, 'lock'), STALE_LOCK_MS);
 	}
 
@@ -200,7 +215,7 @@ export class SnapshotStore {
 		}
 	}
 
-	/** Reads the current text files in memory without creating `.novel-helper/snapshots`. */
+	/** Reads the current text files in memory without creating the snapshot directory. */
 	async seed(): Promise<SnapshotSeed> {
 		const files: Manifest = {};
 		const contents = new Map<string, Buffer>();
@@ -224,7 +239,7 @@ export class SnapshotStore {
 
 	private async scanAll(dir = this.objects): Promise<Manifest> {
 		await fs.mkdir(this.dir, { recursive: true });
-		await fs.writeFile(path.join(this.dir, '.gitignore'), '*\n', { flag: 'wx' }).catch(() => undefined);
+		await fs.writeFile(this.bookFile, `${JSON.stringify({ root: this.realStory }, null, 2)}\n`, { flag: 'wx' }).catch(() => undefined);
 		const manifest: Manifest = {};
 		await this.walk(this.story, '', async (child, content) => {
 			manifest[child] = await this.put(content, dir);
@@ -256,7 +271,7 @@ export class SnapshotStore {
 		}
 		return parsed
 			.map((item) => parseRecord(JSON.stringify(item)))
-			.filter((record): record is SnapshotRecord => record?.kind === 'timed')
+			.filter((record): record is SnapshotRecord => record?.kind === 'timed' || record?.kind === 'conflict')
 			.sort((a, b) => a.id - b.id);
 	}
 
@@ -296,12 +311,19 @@ export class SnapshotStore {
 		return new Date(Math.max(now, latest + 1)).toISOString();
 	}
 
-	/** Takes the snapshot that a turn, or a going back, starts from. */
+	/** Takes the snapshot that a turn, a going back, or a conflict replacement starts from. */
 	begin(about: Pick<SnapshotRecord, 'kind' | 'title' | 'target'>): Promise<SnapshotRecord> {
+		const timedTrack = about.kind === 'conflict';
 		return this.exclusive(
-			() => this.scanAll(),
+			() => this.scanAll(timedTrack ? this.timedObjects : this.objects),
 			async (files) => {
 				const [turns, timed] = await Promise.all([this.listTurns(), this.listTimed()]);
+				if (timedTrack) {
+					const last = timed.at(-1)?.id ?? TIMED_ID_START;
+					const record: SnapshotRecord = { id: last + 1, time: this.nextTime([...turns, ...timed]), ...about, files };
+					await this.writeTimed([...timed, record]);
+					return record;
+				}
 				const last = turns.at(-1)?.id ?? 0;
 				const record: SnapshotRecord = { id: last + 1, time: this.nextTime([...turns, ...timed]), ...about, files };
 				await this.write(record);
@@ -363,20 +385,49 @@ export class SnapshotStore {
 		return this.exclusive(
 			async () => {
 				const record = await this.get(id);
-				return record && { record, after: await this.scanAll() };
+				if (!record) {
+					return undefined;
+				}
+				const dir = record.kind === 'conflict' ? this.timedObjects : this.objects;
+				return { record, after: await this.scanAll(dir) };
 			},
 			async (found) => {
 				if (!found) {
 					return [];
 				}
 				const changes = diff(found.record.files, found.after);
-				if (changes.length) {
+				if (found.record.kind === 'conflict') {
+					const timed = await this.listTimed();
+					await this.writeTimed(
+						changes.length
+							? timed.map((item) => (item.id === id ? { ...found.record, changes } : item))
+							: timed.filter((item) => item.id !== id),
+					);
+				} else if (changes.length) {
 					await this.write({ ...found.record, changes });
 				} else {
 					await fs.rm(this.recordFile(id), { force: true });
 				}
 				await this.prune();
 				return changes;
+			},
+		);
+	}
+
+	/** Drops an unfinished record created by `begin` when the caller aborts without writing. */
+	discard(id: number): Promise<void> {
+		return this.exclusive(
+			async () => undefined,
+			async () => {
+				if (id > TIMED_ID_START) {
+					const timed = await this.listTimed();
+					if (timed.some((item) => item.id === id)) {
+						await this.writeTimed(timed.filter((item) => item.id !== id));
+					}
+				} else {
+					await fs.rm(this.recordFile(id), { force: true });
+				}
+				await this.prune();
 			},
 		);
 	}
@@ -444,7 +495,7 @@ export class SnapshotStore {
 		if (!target) {
 			return { blocked: [] };
 		}
-		const record = await this.begin({ kind: 'revert', ...(target.kind !== 'timed' && { target: id }) });
+		const record = await this.begin({ kind: 'revert', ...((target.kind === 'turn' || target.kind === 'revert') && { target: id }) });
 		const plan = restorePlan(target.files, record.files);
 		const blocked = await this.blocked(plan, record.files);
 		if (!blocked.length) {

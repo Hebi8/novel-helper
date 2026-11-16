@@ -6,7 +6,7 @@
 import { comparePaths } from './naturalSort';
 import { leadsOut } from './story';
 
-/** Where the snapshots of a story folder are kept, relative to it. */
+/** Legacy in-book snapshot folder from the VS Code extension, still excluded from scans, snapshots, and unprompted agent edits. */
 export const SNAPSHOT_DIR = '.novel-helper/snapshots';
 /** A file larger than this is not kept: no chapter is, and a snapshot is taken before every turn. */
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -58,7 +58,7 @@ export interface SnapshotRecord {
 	id: number;
 	/** ISO time of the snapshot. */
 	time: string;
-	kind: 'turn' | 'revert' | 'timed';
+	kind: 'turn' | 'revert' | 'timed' | 'conflict';
 	/** Of a turn: how the writer's message starts. */
 	title?: string;
 	/** Of going back: the record whose `files` were restored. */

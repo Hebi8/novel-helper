@@ -9,6 +9,7 @@ export function StatusBar({ status, document, toggle }: { status: UsageStatus; d
 	useDocument(document);
 	const workspace = useWorkspace();
 	const words = document ? Array.from(document.text.replace(/\s/gu, '')).length : 0;
+	const conflicts = workspace.book?.conflicts ?? [];
 	return (
 		<footer className="statusbar">
 			<button onClick={toggle} title={status.missingKey ? zh.missingKey : status.problem}>
@@ -25,6 +26,11 @@ export function StatusBar({ status, document, toggle }: { status: UsageStatus; d
 			{workspace.chapter ? (
 				<button className="status-buoy" onClick={workspace.showOutline}>
 					{describeBuoy(workspace.buoy?.state, workspace.buoy?.lost, workspace.buoy?.unreadable)}
+				</button>
+			) : null}
+			{conflicts.length ? (
+				<button className="status-conflict" onClick={() => workspace.openConflict(conflicts[0].path)}>
+					{zh.conflictCount(conflicts.length)}
 				</button>
 			) : null}
 			<span className="grow" />

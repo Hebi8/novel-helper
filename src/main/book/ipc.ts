@@ -1,7 +1,8 @@
 import { safePath } from '../scaffold/disk';
+import { readConflictDiff, resolveConflictCopy } from './conflicts';
 import { bookPath } from './paths';
 import { ipcMain, dialog, shell } from 'electron';
-import { channels } from '../../shared/api';
+import { channels, type ConflictResolveInput } from '../../shared/api';
 import type { MainContext } from '../context';
 export function registerBook(ctx: MainContext): void {
 	ipcMain.handle(channels.bookReveal, async (event, path: string) => {
@@ -22,4 +23,8 @@ export function registerBook(ctx: MainContext): void {
 			(result) => result.saved,
 		);
 	});
+	ipcMain.handle(channels.bookConflictDiff, (event, path: string) => readConflictDiff(ctx.bookFor(event)!, path));
+	ipcMain.handle(channels.bookConflictResolve, (event, input: ConflictResolveInput) =>
+		resolveConflictCopy(ctx.bookFor(event)!, ctx.snapshots, input, (fullPath) => shell.trashItem(fullPath)),
+	);
 }

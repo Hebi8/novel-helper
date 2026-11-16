@@ -823,8 +823,18 @@ select:focus-visible {
 	font-size: 20px;
 }
 .assistant-dialog footer {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 	padding: 10px 16px;
 	border-top: 1px solid var(--line);
+}
+.conflict-copy-row {
+	color: var(--soft);
+}
+.tree-row small.conflict-badge,
+.statusbar button.status-conflict {
+	color: var(--accent);
 }
 .assistant-history,
 .assistant-confirm {

@@ -1,5 +1,7 @@
 import { movedPath } from '../../shared/paths';
 import { dirname } from 'node:path';
+import { conflictCandidate, findConflictCopies, type ConflictCopy } from '../../core/conflict';
+import { comparePaths } from '../../core/naturalSort';
 import { buildOutline, type OutlineGraph } from '../../core/outline';
 import { readdir, stat, mkdir } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
@@ -8,7 +10,17 @@ import { Library, globRootDepth, globFolders, type FileKind, type Rename } from 
 import { MARKER_FILE, SCAN_DEPTH, SCAN_EXCLUDE, parseMarker, type Marker, storiesFromMarkers } from '../../core/story';
 import { defaults, type Settings } from '../../shared/defaults';
 import type { Book, DiskFile, SaveResult } from '../../shared/api';
-import { atomicWrite, readOptional, readDocument, FileFormatError, type LineEnding } from './files';
+import {
+	atomicWrite,
+	currentICloudRoot,
+	isBookInICloud,
+	isDiskConflictCopy,
+	readAuxiliaryOptional,
+	readOptional,
+	readDocument,
+	FileFormatError,
+	type LineEnding,
+} from './files';
 const groupsFor = (settings: Settings) =>
 	[
 		['lore', settings['files.lore']],
@@ -49,12 +61,12 @@ export async function scanFiles(root: string, relative: string): Promise<string[
 		)
 	).flat();
 }
-export async function findStories(root: string): Promise<string[]> {
+export async function findStories(root: string, icloudRoot = currentICloudRoot()): Promise<string[]> {
 	const markers: string[] = [];
 	async function visit(relative: string, depth: number): Promise<void> {
 		const marker = relative ? `${relative}/${MARKER_FILE}` : MARKER_FILE;
 		try {
-			const text = await readOptional(join(root, marker));
+			const text = await readAuxiliaryOptional(root, marker, isBookInICloud(join(root, relative), icloudRoot));
 			if (text !== undefined && parseMarker(text)) {
 				markers.push(marker);
 			}
@@ -98,6 +110,7 @@ export class BookIndex {
 	private unreadableOutlines = new Set<string>();
 	private graph?: { key: string; value: OutlineGraph & { unreadable: string[] } };
 	private files = new Set<string>();
+	private conflicts = new Map<string, string>();
 	private contents = new Map<string, string>();
 	private lineEndings = new Map<string, LineEnding>();
 	private opened = new Set<string>();
@@ -124,16 +137,19 @@ export class BookIndex {
 	private fileChanged(file: DiskFile): void {
 		this.fileListeners.forEach((listener) => listener(file));
 	}
+	readonly inICloud: boolean;
 	constructor(
 		readonly root: string,
 		settings: Settings = defaults,
+		icloudRoot = currentICloudRoot(),
 	) {
 		this.settings = settings;
+		this.inICloud = isBookInICloud(root, icloudRoot);
 		this.library = new Library(settings['files.bookNames']);
 	}
 	async load(): Promise<void> {
 		try {
-			const marker = await readOptional(join(this.root, MARKER_FILE));
+			const marker = await readAuxiliaryOptional(this.root, MARKER_FILE, this.inICloud);
 			const metadata = marker !== undefined ? parseMarker(marker) : undefined;
 			this.marker = metadata;
 			if (metadata?.book && this.library.empty) {
@@ -145,13 +161,27 @@ export class BookIndex {
 			}
 		}
 		const paths = (await Promise.all(this.roots.map((root) => scanFiles(this.root, root)))).flat();
+		paths.forEach((path) => this.files.add(path));
+		this.syncConflicts();
 		await Promise.all(paths.map((path) => this.updateFile(path, false)));
+	}
+	conflictOriginalOf(path: string): string | undefined {
+		return this.conflicts.get(path);
+	}
+	private conflictList(): ConflictCopy[] {
+		const outlines = new Set(this.library.outlines().files.map((file) => file.path));
+		const rank = (original: string) =>
+			this.library.isChapter(original) ? 0 : outlines.has(original) ? 1 : this.library.entry(original) ? 2 : 3;
+		return [...this.conflicts.entries()]
+			.map(([path, original]) => ({ path, original }))
+			.sort((a, b) => rank(a.original) - rank(b.original) || comparePaths(a.path, b.path));
 	}
 	get book(): Book {
 		return {
 			root: this.root,
 			name: basename(this.root),
 			tree: this.library.tree(),
+			conflicts: this.conflictList(),
 			referenceVersion: this.referenceVersion,
 			buoyVersion: this.buoyVersion,
 		};
@@ -166,8 +196,19 @@ export class BookIndex {
 			}
 			const path = filename.toString();
 			if (path.startsWith('.novel-helper/buoys/')) {
-				this.buoyVersion++;
-				this.notify();
+				if (conflictCandidate(path, this.inICloud, ['.json']) === undefined) {
+					this.buoyVersion++;
+					this.notify();
+				} else {
+					void isDiskConflictCopy(this.root, path, this.inICloud)
+						.then((conflict) => {
+							if (!conflict && !this.disposed) {
+								this.buoyVersion++;
+								this.notify();
+							}
+						})
+						.catch(() => {});
+				}
 				return;
 			}
 			if (!this.roots.some((root) => path === root || path.startsWith(root + '/')) && !this.opened.has(path)) {
@@ -225,8 +266,7 @@ export class BookIndex {
 			return { saved: true };
 		});
 	}
-	private add(path: string, text?: string): void {
-		this.files.add(path);
+	private indexFile(path: string, text?: string): void {
 		for (const [kind, patterns] of this.groups) {
 			for (const pattern of patterns) {
 				if (!matchesGlob(path, pattern)) {
@@ -246,16 +286,47 @@ export class BookIndex {
 			}
 		}
 	}
-	private remove(path: string): void {
+	private unindexFile(path: string): void {
 		if (this.referenceContents.delete(path)) {
 			this.referenceVersion++;
 		}
-		this.files.delete(path);
 		this.library.deleteLore(path);
 		for (const kind of ['chapter', 'outline', 'summary'] as const) {
 			this.library.deleteFile(kind, path);
 		}
+	}
+	private syncConflicts(): void {
+		const next = new Map(findConflictCopies(this.files, this.inICloud).map((item) => [item.path, item.original]));
+		for (const previous of [...this.conflicts.keys()]) {
+			if (!next.has(previous)) {
+				this.conflicts.delete(previous);
+				if (this.files.has(previous)) {
+					this.indexFile(previous, this.contents.get(previous));
+				}
+			}
+		}
+		for (const [copy, original] of next) {
+			if (!this.conflicts.has(copy)) {
+				this.unindexFile(copy);
+			}
+			this.conflicts.set(copy, original);
+		}
+	}
+	private add(path: string, text?: string): void {
+		const added = !this.files.has(path);
+		this.files.add(path);
+		if (added) {
+			this.syncConflicts();
+		}
+		if (!this.conflicts.has(path)) {
+			this.indexFile(path, text);
+		}
+	}
+	private remove(path: string): void {
+		this.files.delete(path);
+		this.unindexFile(path);
 		this.contents.delete(path);
+		this.syncConflicts();
 	}
 	private async updateFile(path: string, notify: boolean): Promise<void> {
 		let content;
@@ -404,6 +475,7 @@ export class BookIndex {
 			} finally {
 				this.library = new Library(this.settings['files.bookNames']);
 				this.files.clear();
+				this.conflicts.clear();
 				this.contents.clear();
 				this.lineEndings.clear();
 				this.referenceContents.clear();

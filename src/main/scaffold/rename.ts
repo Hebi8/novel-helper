@@ -1,6 +1,7 @@
 import { movedPath } from '../../shared/paths';
 import { join, dirname } from 'node:path';
 import { readdir, mkdir, link, unlink, rename } from 'node:fs/promises';
+import { conflictOriginal } from '../../core/conflict';
 import type { Rename } from '../../core/library';
 import { nameProblem } from '../../core/book';
 import { BUOY_FOLDER, hasOpenMarks, markAt, parseBuoyFile, renameState, serializeBuoyFile, type BuoyFile } from '../../core/buoy';
@@ -11,18 +12,22 @@ import { info, safePath } from './disk';
 import { findNode } from './structure';
 import { zh } from '../../renderer/strings';
 import type { RenameResult } from '../../shared/structure';
-async function jsonFiles(root: string, path: string): Promise<string[]> {
+async function jsonFiles(root: string, path: string, inICloud: boolean): Promise<string[]> {
 	if (!(await info(join(root, path)))) {
 		return [];
 	}
 	await safePath(root, path);
 	const entries = await readdir(join(root, path), { withFileTypes: true });
+	const siblings = new Set(entries.filter((entry) => entry.isFile()).map((entry) => `${path}/${entry.name}`));
 	return (
 		await Promise.all(
 			entries.map(async (entry) => {
 				const file = `${path}/${entry.name}`;
 				await safePath(root, file);
-				return entry.isDirectory() ? jsonFiles(root, file) : entry.name.endsWith('.json') ? [file] : [];
+				if (entry.isDirectory()) {
+					return jsonFiles(root, file, inICloud);
+				}
+				return entry.isFile() && entry.name.endsWith('.json') && !conflictOriginal(file, siblings, inICloud, ['.json']) ? [file] : [];
 			}),
 		)
 	).flat();
@@ -67,7 +72,7 @@ export async function renamePlan(index: BookIndex, path: string, name: string): 
 }
 async function readBuoys(index: BookIndex) {
 	const records: { path: string; file: BuoyFile }[] = [];
-	for (const path of await jsonFiles(index.root, BUOY_FOLDER)) {
+	for (const path of await jsonFiles(index.root, BUOY_FOLDER, index.inICloud)) {
 		const raw = (await readOptional(join(index.root, path)))!;
 		const chapter = path.slice(BUOY_FOLDER.length + 1, -'.json'.length);
 		const text = hasOpenMarks(raw) ? (await index.read(chapter)).text : '';

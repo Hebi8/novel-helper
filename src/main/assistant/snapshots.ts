@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import type { SnapshotRecord } from '../../core/snapshot';
 import { errorMessage } from '../../renderer/errors';
 import { zh } from '../../renderer/strings';
@@ -12,26 +13,40 @@ interface OpenBook {
 }
 
 export class BookSnapshots {
+	private readonly realRoots = new Map<string, string>();
 	private readonly stores = new Map<string, SnapshotStore>();
 	private readonly openBooks = new Map<string, OpenBook>();
 	private readonly queues = new Map<string, Promise<void>>();
 	private readonly warned = new Set<string>();
 
 	constructor(
+		private readonly userData: string,
 		private readonly settings: () => Settings,
 		private readonly busy: (root: string) => boolean | Promise<boolean> = () => false,
 		private readonly onError?: (root: string, message: string) => void,
 	) {}
 
+	private real(root: string): string {
+		let resolved = this.realRoots.get(root);
+		if (!resolved) {
+			resolved = realpathSync(root);
+			this.realRoots.set(root, resolved);
+			this.realRoots.set(resolved, resolved);
+		}
+		return resolved;
+	}
+
 	store(root: string): SnapshotStore {
-		let store = this.stores.get(root);
+		const key = this.real(root);
+		let store = this.stores.get(key);
 		if (!store) {
 			store = new SnapshotStore(
 				root,
+				this.userData,
 				() => this.settings()['assistant.snapshots.keep'],
 				() => this.settings()['snapshots.keep'],
 			);
-			this.stores.set(root, store);
+			this.stores.set(key, store);
 		}
 		return store;
 	}
@@ -84,6 +99,8 @@ export class BookSnapshots {
 	}
 
 	open(root: string, now = Date.now()): Promise<void> {
+		this.store(root);
+		root = this.real(root);
 		this.warned.delete(root);
 		const enabled = this.settings()['snapshots.intervalMinutes'] > 0;
 		const entry: OpenBook = { generation: 1, openedAt: enabled ? now : undefined, ready: false };
@@ -114,6 +131,7 @@ export class BookSnapshots {
 	}
 
 	beforeWrite<T = void>(root: string, work: () => Promise<T> = async () => undefined as T, now = Date.now()): Promise<T> {
+		root = this.real(root);
 		return this.enqueue(root, async () => {
 			const entry = this.openBooks.get(root);
 			if (entry && !entry.ready && this.settings()['snapshots.intervalMinutes'] > 0) {
@@ -125,10 +143,12 @@ export class BookSnapshots {
 	}
 
 	schedule(root: string, now = Date.now()): void {
+		root = this.real(root);
 		void this.afterSave(root, now).catch((error) => this.fail(root, error));
 	}
 
 	write<T>(root: string, work: () => Promise<T>, shouldSchedule: (result: T) => boolean = () => true, now = Date.now()): Promise<T> {
+		root = this.real(root);
 		return this.beforeWrite(
 			root,
 			async () => {
@@ -143,6 +163,7 @@ export class BookSnapshots {
 	}
 
 	afterSave(root: string, now = Date.now()): Promise<SnapshotRecord | undefined> {
+		root = this.real(root);
 		const entry = this.openBooks.get(root);
 		return this.enqueue(root, async () => {
 			const interval = this.settings()['snapshots.intervalMinutes'];
@@ -168,6 +189,7 @@ export class BookSnapshots {
 	}
 
 	close(root: string, now = Date.now(), skip?: Promise<boolean>): Promise<SnapshotRecord | undefined> {
+		root = this.real(root);
 		const entry = this.openBooks.get(root);
 		this.openBooks.delete(root);
 		return this.enqueue(root, async () => {
@@ -185,6 +207,7 @@ export class BookSnapshots {
 	}
 
 	async flush(root: string): Promise<void> {
+		root = this.real(root);
 		while (this.queues.has(root)) {
 			await this.queues.get(root);
 		}
