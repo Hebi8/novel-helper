@@ -154,7 +154,7 @@ summary: 十七岁，雾港邮局的送信员。
 
 ## 两台 Mac 同步
 
-- 在一台 Mac 上点顶栏书名菜单（或 **文件 → 存到 iCloud**）里的 **存到 iCloud**，确认后应用先保存全部更改，把书复制到 `~/Library/Mobile Documents/com~apple~CloudDocs/Novel Helper/<书名>/`（先复制到同目录的 `<书名>.partial`，跳过 `.git`、`node_modules` 和书里旧的 `.novel-helper/snapshots`，逐个文件比对字节一致后再改名成 `<书名>`，中途失败则把 `.partial` 移入废纸篓；有未解决冲突、助手正在运行或 iCloud 里已有同名的书时不执行），原文件夹保留不动，随后关掉原窗口、打开 iCloud 里的这一份，并把「最近打开」里的原路径换成新路径。
+- 在一台 Mac 上点顶栏书名菜单（或 **文件 → 存到 iCloud**）里的 **存到 iCloud**，确认后应用先保存全部更改、在窗口盖上「正在存到 iCloud…」遮罩挡住编辑与修改操作，把书复制到 `~/Library/Mobile Documents/com~apple~CloudDocs/Novel Helper/<书名>/`（先记下原书各文件的路径、大小与修改时间并复制到同目录的 `<书名>.partial`，跳过 `.git`、`node_modules` 和书里旧的 `.novel-helper/snapshots`，逐个文件比对字节一致且复核原书未变后，先独占创建 `<书名>` 再将 `<书名>.partial` 改名过去；原书在复制期间被改动、目标已存在或中途失败时都不会覆盖目标，并将 `.partial` 移入废纸篓；有未解决冲突、助手正在运行或 iCloud 里已有同名的书时不执行），原文件夹保留不动，随后关掉原窗口、打开 iCloud 里的这一份，并把「最近打开」里的原路径换成新路径。
 - 在另一台登录同一 Apple 账户的 Mac 上打开应用，欢迎页的 **iCloud 里的书** 会列出 `Novel Helper/` 下的文件夹（有书时显示，与「最近打开」不去重，并在欢迎页显示期间监听该目录，新同步来的书自动出现），点开即可接着写。本机没有 `~/Library/Mobile Documents/com~apple~CloudDocs` 时不显示 iCloud 入口，书已在 iCloud 里时不显示 **存到 iCloud**。
 - 在访达里对书的文件夹选 **保留下载**，避免章节文件只留在云端而未下载到本机。
 - 快照在每台 Mac 本机的应用数据目录里各存各的，不进 iCloud。存到 iCloud 后，应用按新路径另起快照，旧的快照还在本机但界面里看不到。

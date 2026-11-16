@@ -15,6 +15,9 @@ export interface MainContext {
 	prepareBookRename(root: string): Promise<void>;
 	isBookBusy(root: string): boolean;
 	canSaveFocusedBookToICloud(): boolean;
+	isFocusedBookSavingToICloud(): boolean;
+	setSavingToICloud(senderId: number, state: 'copying' | 'closing' | undefined): void;
+	isSavingToICloud(senderId: number): boolean;
 	settings: SettingsStore;
 	secrets: SecretStore;
 	completion: CompletionService;

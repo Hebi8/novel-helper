@@ -3,9 +3,11 @@ import { channels, type MenuCommand } from '../../shared/api';
 import { zh } from '../../renderer/strings';
 import type { MainContext } from '../context';
 export function installMenu(ctx: MainContext): void {
+	const saving = ctx.isFocusedBookSavingToICloud();
 	const action = (label: string, command: MenuCommand, accelerator?: string): MenuItemConstructorOptions => ({
 		label,
 		accelerator,
+		enabled: !saving,
 		click: () => (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send(channels.command, command),
 	});
 	const openRoot = async (root: string) => {
@@ -62,12 +64,12 @@ export function installMenu(ctx: MainContext): void {
 			{
 				label: zh.edit,
 				submenu: [
-					{ label: zh.undo, role: 'undo' },
-					{ label: zh.redo, role: 'redo' },
+					{ label: zh.undo, role: 'undo', enabled: !saving },
+					{ label: zh.redo, role: 'redo', enabled: !saving },
 					{ type: 'separator' },
-					{ label: zh.cut, role: 'cut' },
+					{ label: zh.cut, role: 'cut', enabled: !saving },
 					{ label: zh.copy, role: 'copy' },
-					{ label: zh.paste, role: 'paste' },
+					{ label: zh.paste, role: 'paste', enabled: !saving },
 					{ label: zh.selectAll, role: 'selectAll' },
 					action(zh.find, 'find', 'Cmd+F'),
 					action(zh.searchBook, 'searchBook', 'Cmd+Shift+F'),

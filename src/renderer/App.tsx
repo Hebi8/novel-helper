@@ -36,30 +36,40 @@ export function App() {
 	const [search, setSearch] = useState(false);
 	const [focus, setFocus] = useState(false);
 	const [structure, setStructure] = useState<{ action: StructureAction; path?: string }>();
-	const [savingICloud, setSavingICloud] = useState<'confirm' | 'running'>();
+	const [savingICloud, setSavingICloudState] = useState<'confirm' | 'running'>();
+	const savingICloudRef = useRef<'confirm' | 'running' | undefined>(undefined);
+	const setSavingICloud = (value: 'confirm' | 'running' | undefined) => {
+		savingICloudRef.current = value;
+		setSavingICloudState(value);
+	};
 	const [conflictDiff, setConflictDiff] = useState<ConflictDiff>();
 	const canSaveToICloud = Boolean(book && !book.inICloud && initial?.icloudAvailable);
 	const requestSaveToICloud = () => {
-		if (canSaveToICloud) {
+		if (canSaveToICloud && !savingICloudRef.current) {
 			setSavingICloud('confirm');
 		}
 	};
 	const confirmSaveToICloud = async () => {
-		if (!book || savingICloud === 'running') {
+		if (!book || savingICloudRef.current === 'running') {
 			return;
 		}
+		setStructure(undefined);
+		setSearch(false);
+		setQuick(false);
+		setConflictDiff(undefined);
 		setSavingICloud('running');
 		try {
 			if (!(await docs.saveAll())) {
 				setSavingICloud(undefined);
 				setError(zh.assistantSaveFailed);
+				requestAnimationFrame(() => docs.focus());
 				return;
 			}
 			await window.novel.book.saveToICloud();
-			setSavingICloud(undefined);
 		} catch (error) {
 			setSavingICloud(undefined);
 			setError(errorMessage(error));
+			requestAnimationFrame(() => docs.focus());
 		}
 	};
 	const openConflict = (path: string) => {
@@ -162,14 +172,27 @@ export function App() {
 			window.novel.book.onFileChanged(docs.external),
 			window.novel.settings.onChanged((settings) => setInitial((value) => (value ? { ...value, settings } : value))),
 			window.novel.usage.onChanged((usage) => setInitial((value) => (value ? { ...value, usage } : value))),
-			window.novel.window.onCommand((command) => actionRef.current[command]()),
+			window.novel.window.onCommand((command) => {
+				if (savingICloudRef.current === 'running') {
+					if (command === 'flush') {
+						window.novel.window.flushed();
+					}
+					return;
+				}
+				actionRef.current[command]();
+			}),
 			window.novel.window.onNotice(setError),
 		];
-		window.addEventListener('blur', docs.blur);
+		const onBlur = () => {
+			if (savingICloudRef.current !== 'running') {
+				docs.blur();
+			}
+		};
+		window.addEventListener('blur', onBlur);
 		return () => {
 			alive = false;
 			unsubscribes.forEach((unsubscribe) => unsubscribe());
-			window.removeEventListener('blur', docs.blur);
+			window.removeEventListener('blur', onBlur);
 			docs.dispose();
 		};
 	}, []);
@@ -234,23 +257,28 @@ export function App() {
 						}}
 					/>
 				) : null}
-				{savingICloud && book ? (
+				{savingICloud === 'confirm' && book ? (
 					<Popover
 						title={zh.saveToICloud}
-						pending={savingICloud === 'running'}
-						close={() => setSavingICloud(undefined)}
+						close={() => {
+							setSavingICloud(undefined);
+							docs.focus();
+						}}
 						submit={() => {
 							void confirmSaveToICloud();
 						}}
 					>
 						<p>{zh.saveToICloudConfirm(book.name)}</p>
 					</Popover>
+				) : savingICloud === 'running' ? (
+					<SavingICloudOverlay />
 				) : null}
 				{search && book ? <Search close={() => setSearch(false)} /> : null}
 				{quick && book ? <QuickOpen close={() => setQuick(false)} /> : null}
 				<TopBar
 					name={book?.name}
 					canSaveToICloud={canSaveToICloud}
+					savingToICloud={Boolean(savingICloud)}
 					saveToICloud={requestSaveToICloud}
 					left={actions['left:toggle']}
 					right={actions['right:toggle']}
@@ -393,6 +421,27 @@ export function App() {
 				) : null}
 			</div>
 		</WorkspaceContext>
+	);
+}
+function SavingICloudOverlay() {
+	const ref = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		(document.activeElement as HTMLElement | null)?.blur();
+		ref.current?.focus();
+		const block = (event: Event) => {
+			event.preventDefault();
+			event.stopPropagation();
+		};
+		const events = ['keydown', 'keypress', 'beforeinput', 'paste', 'drop'] as const;
+		events.forEach((name) => window.addEventListener(name, block, true));
+		return () => {
+			events.forEach((name) => window.removeEventListener(name, block, true));
+		};
+	}, []);
+	return (
+		<div ref={ref} className="popover-backdrop icloud-saving-backdrop" role="status" aria-live="polite" tabIndex={-1}>
+			<div className="icloud-saving-card">{zh.savingToICloud}</div>
+		</div>
 	);
 }
 function isChapter(node: Book['tree'], path: string): boolean {

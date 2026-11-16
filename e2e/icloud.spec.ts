@@ -34,6 +34,13 @@ async function fileMenuLabels(app: ElectronApplication): Promise<string[]> {
 	});
 }
 
+async function saveMenuEnabled(app: ElectronApplication): Promise<boolean | undefined> {
+	return app.evaluate(({ Menu }) => {
+		const fileItem = Menu.getApplicationMenu()?.items.find((item) => item.label === '文件');
+		return fileItem?.submenu?.items.find((item) => item.label === '存到 iCloud')?.enabled;
+	});
+}
+
 test('hides all iCloud entry points when com~apple~CloudDocs does not exist', async () => {
 	const root = await realpath(await mkdtemp(join(tmpdir(), 'novel-icloud-absent-e2e-')));
 	const icloud = join(root, 'Mobile Documents');
@@ -220,6 +227,80 @@ test('saves a book to iCloud after checking conflicts, busy assistant, existing 
 		} finally {
 			await chmod(lockedFile, 0o644);
 			await rm(lockedDir, { recursive: true, force: true });
+		}
+		await page.getByRole('button', { name: '关闭提示', exact: true }).click();
+
+		// 5b. While copying is in progress: overlay blocks editor & menu actions, repeated Save to iCloud does not revert state,
+		// and a target folder created after the initial check is not overwritten while failure removes the overlay and restores editing.
+		await app.evaluate(() => {
+			const fs = process.getBuiltinModule('node:fs/promises')!;
+			const realCopyFile = fs.copyFile.bind(fs);
+			const state = globalThis as typeof globalThis & {
+				copyPaused?: boolean;
+				releaseCopy?: () => void;
+				restoreCopy?: () => void;
+			};
+			state.copyPaused = false;
+			const gate = new Promise<void>((resolve) => {
+				state.releaseCopy = resolve;
+			});
+			fs.copyFile = (async (...args: Parameters<typeof fs.copyFile>) => {
+				if (String(args[1]).includes('雾港.partial') && !state.copyPaused) {
+					state.copyPaused = true;
+					await gate;
+				}
+				return realCopyFile(...args);
+			}) as typeof fs.copyFile;
+			state.restoreCopy = () => {
+				fs.copyFile = realCopyFile;
+			};
+		});
+		try {
+			const pausedDialog = await openSaveDialog();
+			await pausedDialog.getByRole('button', { name: '确定', exact: true }).click();
+			await expect.poll(() => app!.evaluate(() => (globalThis as { copyPaused?: boolean }).copyPaused)).toBe(true);
+
+			// Confirmation dialog is gone; blocking overlay shows only '正在存到 iCloud…'; both entry points are disabled.
+			await expect(page.getByRole('dialog', { name: '存到 iCloud', exact: true })).toHaveCount(0);
+			await expect(page.locator('.icloud-saving-backdrop')).toHaveText('正在存到 iCloud…');
+			await expect(page.locator('.topbar button.topbar-book')).toBeDisabled();
+			expect(await saveMenuEnabled(app)).toBe(false);
+
+			// Triggering Save to iCloud command again while running does not revert state to confirmation dialog.
+			await app.evaluate(({ BrowserWindow }) => {
+				BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'saveToICloud');
+				BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'newChapter');
+				BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'closeTab');
+				BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'assistant:focus');
+			});
+			await expect(page.getByRole('dialog', { name: '存到 iCloud', exact: true })).toHaveCount(0);
+			await expect(page.getByRole('dialog', { name: '新建章', exact: true })).toHaveCount(0);
+			await expect(page.locator('.icloud-saving-backdrop')).toHaveText('正在存到 iCloud…');
+
+			// Editor cannot be typed into while the overlay is up.
+			await page.keyboard.insertText('遮罩期间不该写进去的字');
+			await page.keyboard.type('BlockedText');
+			await page.keyboard.press('Meta+n');
+			await expect(page.getByRole('dialog', { name: '新建章', exact: true })).toHaveCount(0);
+			await expect(editor).not.toContainText('遮罩期间不该写进去的字');
+			await expect(editor).not.toContainText('BlockedText');
+			expect(await readFile(join(localBook, chapter), 'utf8')).toBe(originalChapter);
+
+			// Simulate iCloud creating an empty same-named folder after the initial pre-copy check; release copy -> refuses without overwriting it.
+			await mkdir(join(booksDir, '雾港'));
+			await app.evaluate(() => (globalThis as { releaseCopy?: () => void }).releaseCopy?.());
+
+			await expect(page.locator('.icloud-saving-backdrop')).toHaveCount(0);
+			await expect(page.locator('.notice[role="alert"]')).toContainText('iCloud 里已有同名的书');
+			expect(await readdir(join(booksDir, '雾港'))).toEqual([]);
+			expect(existsSync(join(booksDir, '雾港.partial'))).toBe(false);
+			expect((await trashed()).map((item) => basename(item))).toEqual(['雾港.partial', '雾港.partial']);
+			await expect(page.locator('.topbar button.topbar-book')).toBeEnabled();
+			expect(await saveMenuEnabled(app)).toBe(true);
+			await expect(editor).toBeFocused();
+		} finally {
+			await app.evaluate(() => (globalThis as { restoreCopy?: () => void }).restoreCopy?.());
+			await rm(join(booksDir, '雾港'), { recursive: true, force: true });
 		}
 		await page.getByRole('button', { name: '关闭提示', exact: true }).click();
 

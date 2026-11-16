@@ -98,6 +98,11 @@ select:focus-visible {
 	padding: 3px 7px;
 	color: var(--ink);
 }
+.topbar button.topbar-book:disabled {
+	opacity: 0.5;
+	cursor: default;
+	background: none;
+}
 .topbar-caret {
 	font-size: 11px;
 	color: var(--faint);
@@ -1730,6 +1735,21 @@ select:focus-visible {
 	max-height: min(400px, calc(100vh - 160px));
 }
 
+.icloud-saving-backdrop {
+	z-index: 100;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	outline: none;
+}
+.icloud-saving-card {
+	padding: 16px 24px;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	box-shadow: 0 12px 48px #0003;
+	color: var(--ink);
+}
 .notice {
 	white-space: pre-line;
 }

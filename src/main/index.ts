@@ -71,6 +71,7 @@ if (!app.requestSingleInstanceLock()) {
 		const openings = new BookOpenings();
 		const initialResults = new Map<number, OpenResult>();
 		const initialNotices = new Map<number, string>();
+		const savingToICloud = new Map<number, 'copying' | 'closing'>();
 		let settingsWindow: BrowserWindow | undefined;
 		let quitting = false;
 		const createWindow = (index?: BookIndex, settingsOnly = false, notice?: string) => {
@@ -114,6 +115,10 @@ if (!app.requestSingleInstanceLock()) {
 			};
 			ipcMain.on(channels.flushed, onFlushed);
 			window.on('close', (event) => {
+				if (savingToICloud.get(senderId) === 'copying') {
+					event.preventDefault();
+					return;
+				}
 				if (!settingsOnly && closeGate.needsFlush()) {
 					event.preventDefault();
 					window.webContents.send(channels.command, 'flush');
@@ -125,6 +130,7 @@ if (!app.requestSingleInstanceLock()) {
 				books.delete(senderId);
 				initialResults.delete(senderId);
 				initialNotices.delete(senderId);
+				savingToICloud.delete(senderId);
 				index?.dispose();
 				if (index) {
 					bookClosed.forEach((cleanup) => {
@@ -165,6 +171,19 @@ if (!app.requestSingleInstanceLock()) {
 				const book = active ? books.get(active.webContents.id) : undefined;
 				return Boolean(book && !book.inICloud);
 			},
+			isFocusedBookSavingToICloud: () => {
+				const active = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+				return Boolean(active && savingToICloud.has(active.webContents.id));
+			},
+			setSavingToICloud: (senderId, state) => {
+				if (state) {
+					savingToICloud.set(senderId, state);
+				} else {
+					savingToICloud.delete(senderId);
+				}
+				installMenu(context);
+			},
+			isSavingToICloud: (senderId) => savingToICloud.has(senderId),
 			reindexBooks: async () => {
 				await Promise.all([...books.values()].map((book) => book.reconfigure(settings.get())));
 			},

@@ -1,6 +1,7 @@
 import * as assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import fsPromises = require('node:fs/promises');
+import { copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { describe, test } from 'node:test';
@@ -222,6 +223,138 @@ describe('iCloud Drive books', () => {
 		for (const file of originalFiles) {
 			assert.deepEqual(await readFile(join(source, file)), originalSnapshot.get(file));
 		}
+	});
+
+	test('aborts and trashes .partial if a source file changes after its own byte comparison finishes', async (t) => {
+		const root = await mkdtemp(join(tmpdir(), 'novel-icloud-race-src-'));
+		t.after(() => rm(root, { recursive: true, force: true }));
+
+		const mobileDocs = join(root, 'Mobile Documents');
+		const booksDir = icloudBooksRoot(mobileDocs);
+		await mkdir(icloudDriveRoot(mobileDocs), { recursive: true });
+		const trashDir = join(root, 'trash');
+		await mkdir(trashDir, { recursive: true });
+
+		const source = join(root, '雾港');
+		await cp(resolve('examples'), source, { recursive: true });
+		const originalFiles = await listAllRelativeFiles(source);
+		const originalBytes = new Map<string, Buffer>();
+		for (const file of originalFiles) {
+			originalBytes.set(file, await readFile(join(source, file)));
+		}
+
+		const trashed: string[] = [];
+		const trashItem = async (fullPath: string) => {
+			trashed.push(basename(fullPath));
+			await rename(fullPath, join(trashDir, `${trashed.length}-${basename(fullPath)}`));
+		};
+
+		// Touch mtime of the first verified source file while a later file is being verified (bytes stay identical).
+		const realOpen = fsPromises.open;
+		const verifiedSources: string[] = [];
+		let touched = false;
+		const openSpy = t.mock.method(fsPromises, 'open', async (...args: Parameters<typeof fsPromises.open>) => {
+			const filePath = String(args[0]);
+			if (filePath.startsWith(`${source}/`)) {
+				verifiedSources.push(filePath);
+				if (!touched && verifiedSources.length === 3) {
+					touched = true;
+					const future = new Date(Date.now() + 2000);
+					await utimes(verifiedSources[0], future, future);
+				}
+			}
+			return realOpen(...args);
+		});
+
+		await assert.rejects(
+			copyBookToICloud(source, {
+				icloudRoot: mobileDocs,
+				trashItem,
+			}),
+			/复制期间书被改动了，没有存到 iCloud，请再试一次/,
+		);
+		openSpy.mock.restore();
+
+		assert.equal(touched, true);
+		assert.deepEqual(trashed, ['雾港.partial']);
+		assert.equal(existsSync(join(booksDir, '雾港.partial')), false);
+		assert.equal(existsSync(join(booksDir, '雾港')), false);
+
+		// Source book contents are completely unchanged.
+		assert.deepEqual(await listAllRelativeFiles(source), originalFiles);
+		for (const file of originalFiles) {
+			assert.deepEqual(await readFile(join(source, file)), originalBytes.get(file));
+		}
+	});
+
+	test('does not overwrite a target created after the initial check and leaves target untouched if rename fails', async (t) => {
+		const root = await mkdtemp(join(tmpdir(), 'novel-icloud-race-dst-'));
+		t.after(() => rm(root, { recursive: true, force: true }));
+
+		const mobileDocs = join(root, 'Mobile Documents');
+		const booksDir = icloudBooksRoot(mobileDocs);
+		await mkdir(icloudDriveRoot(mobileDocs), { recursive: true });
+		const trashDir = join(root, 'trash');
+		await mkdir(trashDir, { recursive: true });
+
+		const source = join(root, '雾港');
+		await cp(resolve('examples'), source, { recursive: true });
+		const targetDir = join(booksDir, '雾港');
+
+		const trashed: string[] = [];
+		const trashItem = async (fullPath: string) => {
+			trashed.push(basename(fullPath));
+			await rename(fullPath, join(trashDir, `${trashed.length}-${basename(fullPath)}`));
+		};
+
+		// 1. Sync creates an empty target folder right after verification finishes, right before mkdir(targetDir).
+		const realMkdir = fsPromises.mkdir;
+		let syncedEmptyIno = 0;
+		const mkdirSpy = t.mock.method(fsPromises, 'mkdir', async (...args: Parameters<typeof fsPromises.mkdir>) => {
+			if (String(args[0]) === targetDir && args[1] === undefined) {
+				await realMkdir(targetDir);
+				syncedEmptyIno = (await stat(targetDir)).ino;
+			}
+			return realMkdir(...args);
+		});
+
+		await assert.rejects(
+			copyBookToICloud(source, {
+				icloudRoot: mobileDocs,
+				trashItem,
+			}),
+			/iCloud 里已有同名的书/,
+		);
+		mkdirSpy.mock.restore();
+
+		assert.notEqual(syncedEmptyIno, 0);
+		assert.deepEqual(trashed, ['雾港.partial']);
+		assert.equal(existsSync(join(booksDir, '雾港.partial')), false);
+		assert.equal((await stat(targetDir)).ino, syncedEmptyIno);
+		assert.deepEqual(await readdir(targetDir), []);
+		await rm(targetDir, { recursive: true, force: true });
+
+		// 2. Sync places a file inside targetDir between mkdir(targetDir) and rename(partialDir, targetDir).
+		const realRename = fsPromises.rename;
+		const renameSpy = t.mock.method(fsPromises, 'rename', async (...args: Parameters<typeof fsPromises.rename>) => {
+			if (String(args[0]) === `${targetDir}.partial` && String(args[1]) === targetDir) {
+				await writeFile(join(targetDir, 'synced.md'), '同步进来的内容');
+			}
+			return realRename(...args);
+		});
+
+		await assert.rejects(
+			copyBookToICloud(source, {
+				icloudRoot: mobileDocs,
+				trashItem,
+			}),
+		);
+		renameSpy.mock.restore();
+
+		assert.deepEqual(trashed, ['雾港.partial', '雾港.partial']);
+		assert.equal(existsSync(join(booksDir, '雾港.partial')), false);
+		assert.equal(await readFile(join(targetDir, 'synced.md'), 'utf8'), '同步进来的内容');
+		assert.deepEqual(await readdir(targetDir), ['synced.md']);
 	});
 
 	test('lists iCloud book folders and watches for newly synced books while ignoring .partial and hidden items', async (t) => {

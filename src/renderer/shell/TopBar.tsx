@@ -7,12 +7,14 @@ import { assistantEvents } from '../assistant/events';
 export function TopBar({
 	name,
 	canSaveToICloud = false,
+	savingToICloud = false,
 	saveToICloud,
 	left,
 	right,
 }: {
 	name?: string;
 	canSaveToICloud?: boolean;
+	savingToICloud?: boolean;
 	saveToICloud?(): void;
 	left(): void;
 	right(): void;
@@ -29,8 +31,9 @@ export function TopBar({
 				<button
 					type="button"
 					className="topbar-book"
+					disabled={savingToICloud}
 					aria-haspopup="menu"
-					aria-expanded={Boolean(menu)}
+					aria-expanded={Boolean(menu && !savingToICloud)}
 					onClick={(event) => {
 						const rect = event.currentTarget.getBoundingClientRect();
 						setMenu({ x: rect.left, y: rect.bottom + 4 });
@@ -44,7 +47,7 @@ export function TopBar({
 			) : (
 				<strong>{name ?? zh.app}</strong>
 			)}
-			{menu && name && canSaveToICloud && saveToICloud ? (
+			{menu && !savingToICloud && name && canSaveToICloud && saveToICloud ? (
 				<TreeMenu
 					x={menu.x}
 					y={menu.y}

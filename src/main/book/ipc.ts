@@ -33,33 +33,44 @@ export function registerBook(ctx: MainContext): void {
 		stopWatching(event.sender.id);
 	});
 	ipcMain.handle(channels.bookSaveToICloud, async (event) => {
+		const senderId = event.sender.id;
+		if (ctx.isSavingToICloud(senderId)) {
+			return;
+		}
 		const book = ctx.bookFor(event)!;
 		const oldWindow = ctx.windowFor(event);
-		if (ctx.isBookBusy(book.root)) {
-			throw new Error(zh.saveToICloudBusy);
-		}
-		ctx.completion.cancel(String(event.sender.id));
-		await ctx.completion.buoys(book).dispose();
-		ctx.completion.closeBook(book.root);
-		await ctx.completion.drain(String(event.sender.id));
-		const targetDir = await ctx.snapshots.beforeWrite(book.root, async () => {
+		ctx.setSavingToICloud(senderId, 'copying');
+		try {
 			if (ctx.isBookBusy(book.root)) {
 				throw new Error(zh.saveToICloudBusy);
 			}
-			return copyBookToICloud(book.root, { trashItem: (fullPath) => shell.trashItem(fullPath) });
-		});
-		const opened = await ctx.open(targetDir, undefined, true, {
-			notice: zh.savedToICloud(book.root),
-			replaceRecent: book.root,
-		});
-		if (opened.kind !== 'opened') {
-			throw new Error(opened.kind === 'error' ? opened.message : zh.missingBook);
-		}
-		setImmediate(() => {
-			if (!oldWindow.isDestroyed()) {
-				oldWindow.close();
+			ctx.completion.cancel(String(senderId));
+			await ctx.completion.buoys(book).dispose();
+			ctx.completion.closeBook(book.root);
+			await ctx.completion.drain(String(senderId));
+			const targetDir = await ctx.snapshots.beforeWrite(book.root, async () => {
+				if (ctx.isBookBusy(book.root)) {
+					throw new Error(zh.saveToICloudBusy);
+				}
+				return copyBookToICloud(book.root, { trashItem: (fullPath) => shell.trashItem(fullPath) });
+			});
+			const opened = await ctx.open(targetDir, undefined, true, {
+				notice: zh.savedToICloud(book.root),
+				replaceRecent: book.root,
+			});
+			if (opened.kind !== 'opened') {
+				throw new Error(opened.kind === 'error' ? opened.message : zh.missingBook);
 			}
-		});
+			ctx.setSavingToICloud(senderId, 'closing');
+			setImmediate(() => {
+				if (!oldWindow.isDestroyed()) {
+					oldWindow.close();
+				}
+			});
+		} catch (error) {
+			ctx.setSavingToICloud(senderId, undefined);
+			throw error;
+		}
 	});
 	ipcMain.handle(channels.bookReveal, async (event, path: string) => {
 		const book = ctx.bookFor(event)!;
