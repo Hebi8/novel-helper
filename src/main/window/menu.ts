@@ -6,7 +6,7 @@ export function installMenu(ctx: MainContext): void {
 	const action = (label: string, command: MenuCommand, accelerator?: string): MenuItemConstructorOptions => ({
 		label,
 		accelerator,
-		click: () => BrowserWindow.getFocusedWindow()?.webContents.send(channels.command, command),
+		click: () => (BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send(channels.command, command),
 	});
 	const openRoot = async (root: string) => {
 		const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
@@ -50,6 +50,7 @@ export function installMenu(ctx: MainContext): void {
 							},
 						})),
 					},
+					...(ctx.canSaveFocusedBookToICloud() ? [action(zh.saveToICloud, 'saveToICloud')] : []),
 					{ type: 'separator' },
 					action(zh.newChapter, 'newChapter', 'Cmd+N'),
 					action(zh.quickOpen, 'quickOpen', 'Cmd+P'),

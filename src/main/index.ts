@@ -5,6 +5,7 @@ import { prepareOpen } from './scaffold/initialize';
 import { resolveBookRoot, restoreBooks } from './window/reopen';
 import { CloseGate } from './window/closeGate';
 import { app, BrowserWindow, ipcMain, webContents } from 'electron';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SettingsStore } from './settings/store';
 import { SecretStore } from './secrets/store';
@@ -12,6 +13,7 @@ import { UsageStore } from '../storage/usageStore';
 import { CompletionService } from './completion/service';
 import { WindowStore } from './window/state';
 import { parseTestICloudArg, setTestICloudRoot } from './book/files';
+import { isICloudDriveAvailableSync } from './book/icloud';
 import { type BookIndex } from './book/indexer';
 import { registerFeatures } from './register';
 import { installMenu } from './window/menu';
@@ -25,6 +27,8 @@ if (userData) {
 const icloudDir = parseTestICloudArg(process.argv);
 if (icloudDir) {
 	setTestICloudRoot(icloudDir);
+} else if (testing) {
+	setTestICloudRoot(join(userData ?? tmpdir(), '__novel_helper_disabled_icloud__'));
 }
 app.setName('Novel Helper');
 if (!app.requestSingleInstanceLock()) {
@@ -66,9 +70,10 @@ if (!app.requestSingleInstanceLock()) {
 		const bookClosed = new Set<(root: string) => void | Promise<void>>();
 		const openings = new BookOpenings();
 		const initialResults = new Map<number, OpenResult>();
+		const initialNotices = new Map<number, string>();
 		let settingsWindow: BrowserWindow | undefined;
 		let quitting = false;
-		const createWindow = (index?: BookIndex, settingsOnly = false) => {
+		const createWindow = (index?: BookIndex, settingsOnly = false, notice?: string) => {
 			const window = new BrowserWindow({
 				width: settingsOnly ? 540 : 1440,
 				height: settingsOnly ? 430 : 900,
@@ -80,6 +85,9 @@ if (!app.requestSingleInstanceLock()) {
 				backgroundColor: '#fbfaf7',
 				webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
 			});
+			if (notice) {
+				initialNotices.set(window.webContents.id, notice);
+			}
 			if (index) {
 				books.set(window.webContents.id, index);
 				index.onChanged((book) => window.webContents.send(channels.bookChanged, book));
@@ -90,6 +98,7 @@ if (!app.requestSingleInstanceLock()) {
 			}
 			const senderId = window.webContents.id;
 			const closeGate = new CloseGate();
+			window.on('focus', () => installMenu(context));
 			window.on('leave-full-screen', () => window.webContents.send(channels.focusChanged, false));
 			window.webContents.on('render-process-gone', () => closeGate.rendererGone());
 			const onFlushed = async (event: Electron.IpcMainEvent) => {
@@ -115,6 +124,7 @@ if (!app.requestSingleInstanceLock()) {
 				completion.cancel(String(senderId));
 				books.delete(senderId);
 				initialResults.delete(senderId);
+				initialNotices.delete(senderId);
 				index?.dispose();
 				if (index) {
 					bookClosed.forEach((cleanup) => {
@@ -124,6 +134,9 @@ if (!app.requestSingleInstanceLock()) {
 				if (index && !quitting) {
 					windows.value.open = windows.value.open.filter((root) => root !== index.root);
 					windows.save();
+				}
+				if (!quitting) {
+					installMenu(context);
 				}
 			});
 			window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -143,6 +156,15 @@ if (!app.requestSingleInstanceLock()) {
 		};
 		const context: MainContext = {
 			prepareBookRename,
+			isBookBusy: isAssistantBusy,
+			canSaveFocusedBookToICloud: () => {
+				if (!isICloudDriveAvailableSync()) {
+					return false;
+				}
+				const active = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+				const book = active ? books.get(active.webContents.id) : undefined;
+				return Boolean(book && !book.inICloud);
+			},
 			reindexBooks: async () => {
 				await Promise.all([...books.values()].map((book) => book.reconfigure(settings.get())));
 			},
@@ -157,13 +179,22 @@ if (!app.requestSingleInstanceLock()) {
 			bookFor: (event) => books.get(event.sender.id),
 			windowFor: (event) => BrowserWindow.fromWebContents(event.sender)!,
 			broadcast: (channel, data) => BrowserWindow.getAllWindows().forEach((window) => window.webContents.send(channel, data)),
-			open: async (root, source, selected) => {
+			open: async (root, source, selected, options) => {
 				try {
 					root = await resolveBookRoot(root);
 					return await openings.run(root, async () => {
+						if (options?.replaceRecent && !windows.value.books[root]) {
+							const prior = windows.session(options.replaceRecent);
+							if (prior.tabs.length) {
+								windows.setSession(root, prior);
+							}
+						}
 						const existing = [...books].find(([, book]) => book.root === root);
 						if (existing) {
 							const window = BrowserWindow.fromWebContents(webContents.fromId(existing[0])!)!;
+							if (options?.notice) {
+								window.webContents.send(channels.notice, options.notice);
+							}
 							if (!testing) {
 								window.restore();
 								window.show();
@@ -177,7 +208,10 @@ if (!app.requestSingleInstanceLock()) {
 							if (prepared.initialize) {
 								return { kind: 'empty', root };
 							}
-							createWindow(prepared.index!);
+							createWindow(prepared.index!, false, options?.notice);
+						}
+						if (options?.replaceRecent) {
+							windows.replaceRecent(options.replaceRecent, root);
 						}
 						if (source && !books.has(source.webContents.id) && source !== settingsWindow) {
 							source.close();
@@ -190,6 +224,11 @@ if (!app.requestSingleInstanceLock()) {
 				}
 			},
 			initialResult: (event) => initialResults.get(event.sender.id),
+			initialNotice: (event) => {
+				const notice = initialNotices.get(event.sender.id);
+				initialNotices.delete(event.sender.id);
+				return notice;
+			},
 			openWelcome: (result) => {
 				const window = createWindow();
 				initialResults.set(window.webContents.id, result);

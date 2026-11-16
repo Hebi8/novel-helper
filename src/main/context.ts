@@ -6,9 +6,15 @@ import type { BookIndex } from './book/indexer';
 import type { WindowStore } from './window/state';
 import type { BookSnapshots } from './assistant/snapshots';
 import type { OpenResult } from '../shared/api';
+export interface OpenBookOptions {
+	notice?: string;
+	replaceRecent?: string;
+}
 export interface MainContext {
 	reindexBooks(): Promise<void>;
 	prepareBookRename(root: string): Promise<void>;
+	isBookBusy(root: string): boolean;
+	canSaveFocusedBookToICloud(): boolean;
 	settings: SettingsStore;
 	secrets: SecretStore;
 	completion: CompletionService;
@@ -18,8 +24,9 @@ export interface MainContext {
 	onBookClosed(cleanup: (root: string) => void | Promise<void>): void;
 	windowFor(event: Pick<IpcMainInvokeEvent, 'sender'>): BrowserWindow;
 	broadcast(channel: string, data: unknown): void;
-	open(root: string, source?: BrowserWindow, selected?: boolean): Promise<OpenResult>;
+	open(root: string, source?: BrowserWindow, selected?: boolean, options?: OpenBookOptions): Promise<OpenResult>;
 	openSettings(): void;
 	openWelcome(result: OpenResult): void;
 	initialResult(event: IpcMainInvokeEvent): OpenResult | undefined;
+	initialNotice(event: IpcMainInvokeEvent): string | undefined;
 }

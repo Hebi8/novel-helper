@@ -10,6 +10,7 @@ export interface Book {
 	buoyVersion?: number;
 	root: string;
 	name: string;
+	inICloud: boolean;
 	tree: BookNode;
 	conflicts: ConflictCopy[];
 }
@@ -62,6 +63,7 @@ export type OpenResult =
 	| { kind: 'empty'; root?: string }
 	| { kind: 'cancelled' };
 export type MenuCommand =
+	| 'saveToICloud'
 	| 'newChapter'
 	| 'searchBook'
 	| 'focus'
@@ -88,7 +90,10 @@ export type MenuCommand =
 	| 'flush';
 export interface Bootstrap {
 	openResult?: OpenResult;
+	notice?: string;
 	book?: Book;
+	icloudAvailable: boolean;
+	icloudBooks: string[];
 	recent: string[];
 	session: SessionState;
 	settings: Settings;
@@ -101,6 +106,10 @@ export interface AppAPI {
 	book: {
 		reveal(path: string): Promise<void>;
 		open(root?: string, selected?: boolean): Promise<OpenResult>;
+		saveToICloud(): Promise<void>;
+		watchICloud(): Promise<string[]>;
+		unwatchICloud(): void;
+		onICloudChanged(listener: (books: string[]) => void): () => void;
 		read(path: string): Promise<DiskFile>;
 		save(path: string, text: string, base: string, force?: boolean): Promise<SaveResult>;
 		conflictDiff(path: string): Promise<ConflictDiff>;
@@ -168,6 +177,10 @@ export const channels = {
 	reportGet: 'report:get',
 	reportChanged: 'report:changed',
 	bookOpen: 'book:open',
+	bookSaveToICloud: 'book:saveToICloud',
+	icloudWatch: 'book:icloudWatch',
+	icloudUnwatch: 'book:icloudUnwatch',
+	icloudChanged: 'book:icloudChanged',
 	openResult: 'book:openResult',
 	bookRead: 'book:read',
 	bookSave: 'book:save',

@@ -93,6 +93,15 @@ select:focus-visible {
 	font-size: 14px;
 	font-weight: 600;
 }
+.topbar button.topbar-book {
+	gap: 4px;
+	padding: 3px 7px;
+	color: var(--ink);
+}
+.topbar-caret {
+	font-size: 11px;
+	color: var(--faint);
+}
 .grow {
 	flex: 1;
 }
@@ -324,6 +333,8 @@ select:focus-visible {
 	align-items: center;
 	justify-content: center;
 	gap: 18px;
+	overflow: auto;
+	padding: 24px 0;
 }
 .welcome h1 {
 	font-size: 26px;

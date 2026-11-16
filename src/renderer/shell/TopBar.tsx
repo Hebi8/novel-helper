@@ -1,16 +1,58 @@
+import { useState } from 'react';
 import { useWorkspace } from '../workspace';
 import { SplitButton, FindButton } from '../reference/ReferenceTools';
+import { TreeMenu } from '../scaffold/TreeMenu';
 import { zh } from '../strings';
 import { assistantEvents } from '../assistant/events';
-export function TopBar({ name, left, right }: { name?: string; left(): void; right(): void }) {
+export function TopBar({
+	name,
+	canSaveToICloud = false,
+	saveToICloud,
+	left,
+	right,
+}: {
+	name?: string;
+	canSaveToICloud?: boolean;
+	saveToICloud?(): void;
+	left(): void;
+	right(): void;
+}) {
 	const workspace = useWorkspace();
+	const [menu, setMenu] = useState<{ x: number; y: number }>();
 	return (
 		<header className="topbar">
 			<button aria-label={zh.left} onClick={left}>
 				<PanelIcon />
 			</button>
 			<SplitButton />
-			<strong>{name ?? zh.app}</strong>
+			{name && canSaveToICloud && saveToICloud ? (
+				<button
+					type="button"
+					className="topbar-book"
+					aria-haspopup="menu"
+					aria-expanded={Boolean(menu)}
+					onClick={(event) => {
+						const rect = event.currentTarget.getBoundingClientRect();
+						setMenu({ x: rect.left, y: rect.bottom + 4 });
+					}}
+				>
+					<strong>{name}</strong>
+					<span className="topbar-caret" aria-hidden="true">
+						▾
+					</span>
+				</button>
+			) : (
+				<strong>{name ?? zh.app}</strong>
+			)}
+			{menu && name && canSaveToICloud && saveToICloud ? (
+				<TreeMenu
+					x={menu.x}
+					y={menu.y}
+					label={name}
+					close={() => setMenu(undefined)}
+					actions={[{ label: zh.saveToICloud, run: saveToICloud }]}
+				/>
+			) : null}
 			<button aria-label={zh.newChapter} disabled={!name} onClick={() => workspace.structure('chapter')}>
 				＋
 			</button>

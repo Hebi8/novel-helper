@@ -180,6 +180,7 @@ export class BookIndex {
 		return {
 			root: this.root,
 			name: basename(this.root),
+			inICloud: this.inICloud,
 			tree: this.library.tree(),
 			conflicts: this.conflictList(),
 			referenceVersion: this.referenceVersion,

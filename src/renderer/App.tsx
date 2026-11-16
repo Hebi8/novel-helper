@@ -1,4 +1,5 @@
 import { Initialize } from './scaffold/Initialize';
+import { Popover } from './scaffold/Popover';
 import { StructureInput } from './scaffold/StructureInput';
 import { Search } from './scaffold/Search';
 import type { StructureAction } from '../shared/structure';
@@ -35,7 +36,32 @@ export function App() {
 	const [search, setSearch] = useState(false);
 	const [focus, setFocus] = useState(false);
 	const [structure, setStructure] = useState<{ action: StructureAction; path?: string }>();
+	const [savingICloud, setSavingICloud] = useState<'confirm' | 'running'>();
 	const [conflictDiff, setConflictDiff] = useState<ConflictDiff>();
+	const canSaveToICloud = Boolean(book && !book.inICloud && initial?.icloudAvailable);
+	const requestSaveToICloud = () => {
+		if (canSaveToICloud) {
+			setSavingICloud('confirm');
+		}
+	};
+	const confirmSaveToICloud = async () => {
+		if (!book || savingICloud === 'running') {
+			return;
+		}
+		setSavingICloud('running');
+		try {
+			if (!(await docs.saveAll())) {
+				setSavingICloud(undefined);
+				setError(zh.assistantSaveFailed);
+				return;
+			}
+			await window.novel.book.saveToICloud();
+			setSavingICloud(undefined);
+		} catch (error) {
+			setSavingICloud(undefined);
+			setError(errorMessage(error));
+		}
+	};
 	const openConflict = (path: string) => {
 		void window.novel.book
 			.conflictDiff(path)
@@ -86,6 +112,7 @@ export function App() {
 	const { session, documents } = docs;
 	const actions = commands({
 		documents: docs,
+		saveToICloud: requestSaveToICloud,
 		newChapter: () => showStructure('chapter'),
 		searchBook: () => {
 			if (book) {
@@ -118,6 +145,9 @@ export function App() {
 					setBook(data.book);
 					if (data.openResult) {
 						setOpenResult(data.openResult);
+					}
+					if (data.notice) {
+						setError(data.notice);
 					}
 				}
 			})
@@ -204,9 +234,27 @@ export function App() {
 						}}
 					/>
 				) : null}
+				{savingICloud && book ? (
+					<Popover
+						title={zh.saveToICloud}
+						pending={savingICloud === 'running'}
+						close={() => setSavingICloud(undefined)}
+						submit={() => {
+							void confirmSaveToICloud();
+						}}
+					>
+						<p>{zh.saveToICloudConfirm(book.name)}</p>
+					</Popover>
+				) : null}
 				{search && book ? <Search close={() => setSearch(false)} /> : null}
 				{quick && book ? <QuickOpen close={() => setQuick(false)} /> : null}
-				<TopBar name={book?.name} left={actions['left:toggle']} right={actions['right:toggle']} />
+				<TopBar
+					name={book?.name}
+					canSaveToICloud={canSaveToICloud}
+					saveToICloud={requestSaveToICloud}
+					left={actions['left:toggle']}
+					right={actions['right:toggle']}
+				/>
 				{openResult?.kind === 'error' && book ? (
 					<div role="alert" className="notice">
 						{errorMessage(openResult.message)}
@@ -321,7 +369,14 @@ export function App() {
 						) : null}
 					</div>
 				) : (
-					<Welcome recent={initial?.recent ?? []} result={openResult} open={openBook} dismiss={() => setOpenResult(undefined)} />
+					<Welcome
+						ready={Boolean(initial)}
+						recent={initial?.recent ?? []}
+						initialICloudBooks={initial?.icloudBooks ?? []}
+						result={openResult}
+						open={openBook}
+						dismiss={() => setOpenResult(undefined)}
+					/>
 				)}
 				{initial ? (
 					<StatusBar

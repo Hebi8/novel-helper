@@ -1,10 +1,66 @@
 import { safePath } from '../scaffold/disk';
 import { readConflictDiff, resolveConflictCopy } from './conflicts';
+import { currentICloudRoot } from './files';
+import { copyBookToICloud, listICloudBooks, watchICloudBooks } from './icloud';
 import { bookPath } from './paths';
 import { ipcMain, dialog, shell } from 'electron';
 import { channels, type ConflictResolveInput } from '../../shared/api';
+import { zh } from '../../renderer/strings';
 import type { MainContext } from '../context';
 export function registerBook(ctx: MainContext): void {
+	const icloudWatchers = new Map<number, () => void>();
+	const stopWatching = (id: number) => {
+		icloudWatchers.get(id)?.();
+		icloudWatchers.delete(id);
+	};
+	ipcMain.handle(channels.icloudWatch, async (event) => {
+		const id = event.sender.id;
+		stopWatching(id);
+		const onDestroyed = () => stopWatching(id);
+		const stop = watchICloudBooks(currentICloudRoot(), (books) => {
+			if (!event.sender.isDestroyed()) {
+				event.sender.send(channels.icloudChanged, books);
+			}
+		});
+		event.sender.once('destroyed', onDestroyed);
+		icloudWatchers.set(id, () => {
+			event.sender.removeListener('destroyed', onDestroyed);
+			stop();
+		});
+		return listICloudBooks();
+	});
+	ipcMain.on(channels.icloudUnwatch, (event) => {
+		stopWatching(event.sender.id);
+	});
+	ipcMain.handle(channels.bookSaveToICloud, async (event) => {
+		const book = ctx.bookFor(event)!;
+		const oldWindow = ctx.windowFor(event);
+		if (ctx.isBookBusy(book.root)) {
+			throw new Error(zh.saveToICloudBusy);
+		}
+		ctx.completion.cancel(String(event.sender.id));
+		await ctx.completion.buoys(book).dispose();
+		ctx.completion.closeBook(book.root);
+		await ctx.completion.drain(String(event.sender.id));
+		const targetDir = await ctx.snapshots.beforeWrite(book.root, async () => {
+			if (ctx.isBookBusy(book.root)) {
+				throw new Error(zh.saveToICloudBusy);
+			}
+			return copyBookToICloud(book.root, { trashItem: (fullPath) => shell.trashItem(fullPath) });
+		});
+		const opened = await ctx.open(targetDir, undefined, true, {
+			notice: zh.savedToICloud(book.root),
+			replaceRecent: book.root,
+		});
+		if (opened.kind !== 'opened') {
+			throw new Error(opened.kind === 'error' ? opened.message : zh.missingBook);
+		}
+		setImmediate(() => {
+			if (!oldWindow.isDestroyed()) {
+				oldWindow.close();
+			}
+		});
+	});
 	ipcMain.handle(channels.bookReveal, async (event, path: string) => {
 		const book = ctx.bookFor(event)!;
 		shell.showItemInFolder(path ? await safePath(book.root, path) : book.root);

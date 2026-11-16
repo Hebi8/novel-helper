@@ -28,6 +28,11 @@ export class WindowStore {
 		this.value.open = [...new Set([...this.value.open, root])];
 		this.save();
 	}
+	replaceRecent(oldRoot: string, newRoot: string): void {
+		const replaced = this.value.recent.map((path) => (path === oldRoot ? newRoot : path));
+		this.value.recent = [newRoot, ...replaced.filter((path) => path !== newRoot)].slice(0, 10);
+		this.save();
+	}
 	session(root: string): SessionState {
 		return this.value.books[root] ?? { tabs: [] };
 	}
