@@ -336,15 +336,15 @@ export class BookWindow {
 	}
 
 	closeTab(id?: number): Promise<boolean> {
-		return this.runCloseTask(() => this.performCloseTab(id));
-	}
-
-	private async performCloseTab(id?: number): Promise<boolean> {
-		if (this.window.isDestroyed() || this.windowClosingApproved || this.isTransferLocked()) {
-			return false;
-		}
 		const targetId = id ?? this.activeId;
 		if (targetId === undefined) {
+			return Promise.resolve(false);
+		}
+		return this.runCloseTask(() => this.performCloseTab(targetId));
+	}
+
+	private async performCloseTab(targetId: number): Promise<boolean> {
+		if (this.window.isDestroyed() || this.windowClosingApproved || this.isTransferLocked()) {
 			return false;
 		}
 		const tab = this.tabs.find((item) => item.id === targetId);

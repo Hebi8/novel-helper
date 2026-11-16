@@ -718,3 +718,115 @@ test('opening a new book via Cmd+O during focus mode initializes the new view in
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test('queued Cmd+W captures target tab id at request time so switching to C closes B and skips already-closed tabs', async () => {
+	const root = await realpath(await mkdtemp(join(tmpdir(), 'novel-tabs-queued-cmdw-e2e-')));
+	const bookA = join(root, '雾港');
+	const bookB = join(root, '旧稿');
+	const bookC = join(root, '北境');
+	const data = join(root, 'data');
+
+	await cp(resolve('examples'), bookA, { recursive: true });
+	await cp(resolve('examples'), bookB, { recursive: true });
+	await cp(resolve('examples'), bookC, { recursive: true });
+	await mkdir(data, { recursive: true });
+
+	const originalChap2 = await readFile(join(bookA, chapter2), 'utf8');
+
+	await writeFile(
+		join(data, 'windows.json'),
+		JSON.stringify({
+			open: [bookA, bookB, bookC],
+			active: bookA,
+			recent: [bookA, bookB, bookC],
+			books: {
+				[bookA]: { tabs: [{ path: chapter2, anchor: 0, head: 0 }], active: chapter2 },
+				[bookB]: { tabs: [{ path: chapter2, anchor: 0, head: 0 }], active: chapter2 },
+				[bookC]: { tabs: [{ path: chapter2, anchor: 0, head: 0 }], active: chapter2 },
+			},
+		}),
+	);
+	await writeFile(join(data, 'settings.json'), JSON.stringify({ enabled: false, 'snapshots.intervalMinutes': 0 }));
+
+	let app: ElectronApplication | undefined;
+	let exited: Promise<void> | undefined;
+	try {
+		app = await electron.launch({
+			env: cleanEnv(),
+			args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`],
+		});
+		exited = new Promise((done) => app!.process().once('exit', () => done()));
+
+		const tabs = await tabBarPage(app);
+		await tabs.waitForLoadState('domcontentloaded');
+		const pageA = await pageForBook(app, '雾港');
+		const pageB = await pageForBook(app, '旧稿');
+		const pageC = await pageForBook(app, '北境');
+		await expect.poll(() => tabTitles(tabs)).toEqual(['雾港', '旧稿', '北境']);
+
+		const editorA = pageA.locator(`.cm-content[aria-label="${chapter2}"]`);
+		await expect(editorA).toContainText('林小满');
+		await editorA.click();
+		await pageA.keyboard.press('Meta+ArrowDown');
+		await pageA.keyboard.insertText('A慢存。');
+
+		await app.evaluate((_electron, aDir) => {
+			const fs = process.getBuiltinModule('node:fs/promises')!;
+			const origRename = fs.rename.bind(fs);
+			const state = globalThis as typeof globalThis & {
+				aPaused?: boolean;
+				releaseA?: () => void;
+				restoreRename?: () => void;
+			};
+			state.aPaused = false;
+			const gate = new Promise<void>((resolve) => {
+				state.releaseA = resolve;
+			});
+			state.restoreRename = () => {
+				fs.rename = origRename;
+			};
+			fs.rename = (async (...args: Parameters<typeof origRename>) => {
+				if (!state.aPaused && String(args[1]).startsWith(aDir)) {
+					state.aPaused = true;
+					await gate;
+				}
+				return origRename(...args);
+			}) as typeof fs.rename;
+		}, bookA);
+
+		// 1. Start closing A; it pauses waiting for save.
+		await tabs.getByRole('button', { name: '关闭标签 雾港', exact: true }).click();
+		await expect.poll(() => app!.evaluate(() => (globalThis as { aPaused?: boolean }).aPaused)).toBe(true);
+
+		// 2. Switch to B, press Cmd+W (and a duplicate Cmd+W for B), then switch to C before A finishes saving.
+		await tabs.getByRole('tab').filter({ hasText: '旧稿' }).click();
+		await expect.poll(() => activeTabTitle(tabs)).toBe('旧稿');
+		await pageB.locator(`.cm-content[aria-label="${chapter2}"]`).click();
+		await pageB.keyboard.press('Meta+w');
+		await pageB.keyboard.press('Meta+w');
+		await app.evaluate(() => new Promise<void>((resolve) => setImmediate(resolve)));
+
+		await tabs.getByRole('tab').filter({ hasText: '北境' }).click();
+		await expect.poll(() => activeTabTitle(tabs)).toBe('北境');
+		expect(await tabTitles(tabs)).toEqual(['雾港', '旧稿', '北境']);
+
+		// 3. Release A -> A closes, queued Cmd+W closes B (not C), second queued Cmd+W sees B gone and no-ops; C stays open.
+		await app.evaluate(() => {
+			const state = globalThis as { releaseA?: () => void; restoreRename?: () => void };
+			state.restoreRename?.();
+			state.releaseA?.();
+		});
+
+		await expect.poll(() => tabTitles(tabs)).toEqual(['北境']);
+		expect(await activeTabTitle(tabs)).toBe('北境');
+		await expect.poll(() => pageB.isClosed()).toBe(true);
+		expect(pageC.isClosed()).toBe(false);
+		expect(await readFile(join(bookA, chapter2), 'utf8')).toBe(originalChap2 + 'A慢存。');
+	} finally {
+		if (app) {
+			await app.close();
+			await exited;
+		}
+		await rm(root, { recursive: true, force: true });
+	}
+});
