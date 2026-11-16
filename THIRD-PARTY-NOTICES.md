@@ -1,6 +1,6 @@
 # Third-party notices
 
-Production packages distributed with Novel Helper for Mac and their licenses. Electron includes its own license files in the application bundle.
+Production packages distributed with hebi8L and their licenses. Electron includes its own license files in the application bundle.
 
 ## @agentclientprotocol/sdk 2.6.0
 

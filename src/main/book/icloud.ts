@@ -9,7 +9,7 @@ import { info } from '../scaffold/disk';
 import { currentICloudRoot, isBookInICloud } from './files';
 
 export const ICLOUD_DRIVE_FOLDER = 'com~apple~CloudDocs';
-export const ICLOUD_BOOKS_FOLDER = 'Novel Helper';
+export const ICLOUD_BOOKS_FOLDER = 'hebi8L';
 
 export function icloudDriveRoot(icloudRoot = currentICloudRoot()): string {
 	return join(icloudRoot, ICLOUD_DRIVE_FOLDER);

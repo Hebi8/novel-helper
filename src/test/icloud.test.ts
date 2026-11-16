@@ -441,9 +441,9 @@ describe('iCloud Drive books', () => {
 		store.opened('/local/book');
 		assert.deepEqual(store.value.recent, ['/local/book', '/local/other']);
 
-		store.opened('/icloud/Novel Helper/book');
-		store.replaceRecent('/local/book', '/icloud/Novel Helper/book');
-		assert.deepEqual(store.value.recent, ['/icloud/Novel Helper/book', '/local/other']);
-		assert.deepEqual(new WindowStore(root).value.recent, ['/icloud/Novel Helper/book', '/local/other']);
+		store.opened('/icloud/hebi8L/book');
+		store.replaceRecent('/local/book', '/icloud/hebi8L/book');
+		assert.deepEqual(store.value.recent, ['/icloud/hebi8L/book', '/local/other']);
+		assert.deepEqual(new WindowStore(root).value.recent, ['/icloud/hebi8L/book', '/local/other']);
 	});
 });

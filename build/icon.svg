@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#f7f2e7" />
+			<stop offset="1" stop-color="#e8dfcc" />
+		</linearGradient><linearGradient id="snake" x1="0" y1="0" x2="1" y2="1">
+			<stop offset="0" stop-color="#c7643a" />
+			<stop offset="1" stop-color="#8f3d1c" />
+		</linearGradient><linearGradient id="nib" x1="0" y1="0" x2="1" y2="0">
+			<stop offset="0" stop-color="#b8925a" />
+			<stop offset=".5" stop-color="#e2c48d" />
+			<stop offset="1" stop-color="#a47f48" />
+		</linearGradient><linearGradient id="barrel" x1="0" y1="0" x2="1" y2="0">
+			<stop offset="0" stop-color="#1d1c1a" />
+			<stop offset=".45" stop-color="#46433e" />
+			<stop offset="1" stop-color="#1d1c1a" />
+		</linearGradient></defs>
+			<rect x="40" y="40" width="944" height="944" rx="215" fill="url(#paper)" />
+			
+			<path d="M262 512 A250 250 0 0 1 762 512" fill="none" stroke="#7a3418" stroke-width="58" stroke-linecap="round" />
+			
+			<g transform="rotate(45 512 512)">
+				<rect x="466" y="120" width="92" height="520" rx="28" fill="url(#barrel)" />
+				<rect x="466" y="600" width="92" height="36" fill="#b8925a" />
+				<path d="M470 636 L554 636 L540 740 L512 846 L484 740 Z" fill="url(#nib)" />
+				<path d="M512 720 L512 838" stroke="#5b4626" stroke-width="6" />
+				<circle cx="512" cy="714" r="9" fill="#5b4626" />
+			</g>
+			
+			<path d="M762 512 A250 250 0 0 1 318 670" fill="none" stroke="url(#snake)" stroke-width="58" stroke-linecap="round" />
+			<path d="M318 670 Q276 612 266 560" fill="none" stroke="url(#snake)" stroke-width="34" stroke-linecap="round" />
+			<g transform="translate(270 528) rotate(-80)">
+				<ellipse cx="0" cy="0" rx="56" ry="38" fill="#a9481f" />
+				<circle cx="18" cy="-13" r="8" fill="#f7f2e7" />
+				<circle cx="20" cy="-13" r="4" fill="#1d1c1a" />
+			</g>
+		</svg>

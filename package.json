@@ -1,7 +1,7 @@
 {
 	"name": "novel-helper",
 	"version": "0.4.0",
-	"productName": "Novel Helper",
+	"productName": "hebi8L",
 	"description": "A desktop writing space for long fiction.",
 	"license": "MIT",
 	"repository": {
@@ -51,7 +51,7 @@
 	},
 	"build": {
 		"appId": "io.github.hebi8.novelhelper",
-		"productName": "Novel Helper",
+		"productName": "hebi8L",
 		"directories": {
 			"output": "release"
 		},
@@ -64,6 +64,7 @@
 			"THIRD-PARTY-NOTICES.md"
 		],
 		"mac": {
+			"icon": "build/icon.icns",
 			"target": [
 				{
 					"target": "dir",
