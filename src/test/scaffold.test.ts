@@ -591,3 +591,31 @@ test('executeTrash stops without moving anything if files in scope changed after
 	assert.deepEqual(trashed, []);
 	assert.deepEqual(await contents(book), beforeVol);
 });
+
+test('executeTrash succeeds when scan completion order changes target and scope ordering without file changes', async (t) => {
+	const { book, index, root } = await fixture(t);
+	const trashDir = join(root, 'trash');
+	await mkdir(trashDir);
+	await writeFile(join(book, '大纲/第一幕 来信.md'), '# 浅层幕纲\n');
+	await index.refresh('大纲/第一幕 来信.md');
+
+	const plan = await trashPlan(index, { kind: 'structure', path: '正文/第一卷 雾港' });
+	assert.ok(plan.targets.length > 2);
+	assert.ok(plan.scope.length > plan.targets.length);
+
+	const reorderedPlan = {
+		...plan,
+		targets: [...plan.targets].reverse(),
+		scope: [...plan.scope].reverse(),
+	};
+	const trashed: string[] = [];
+	let seq = 0;
+	const result = await index.exclusive(() =>
+		executeTrash(index, reorderedPlan, async (fullPath) => {
+			trashed.push(fullPath.slice(book.length + 1));
+			await renameFile(fullPath, join(trashDir, `${++seq}`));
+		}),
+	);
+	assert.equal(result.error, undefined);
+	assert.deepEqual(trashed, reorderedPlan.targets);
+});

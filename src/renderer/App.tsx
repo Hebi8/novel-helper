@@ -39,6 +39,7 @@ export function App() {
 	const [structure, setStructure] = useState<{ action: StructureAction; path?: string }>();
 	const [renameBookRequest, setRenameBookRequest] = useState(0);
 	const [trashDialog, setTrashDialog] = useState<TrashPreview>();
+	const trashPlanningRef = useRef(false);
 	const [trashing, setTrashingState] = useState(false);
 	const trashingRef = useRef(false);
 	const setTrashing = (value: boolean) => {
@@ -52,13 +53,24 @@ export function App() {
 		setSavingICloudState(value);
 	};
 	const isWindowLocked = () => savingICloudRef.current === 'running' || trashingRef.current;
+	const isRunningOverlay = savingICloud === 'running' || trashing;
+	const hasModal =
+		isRunningOverlay ||
+		Boolean(trashDialog) ||
+		savingICloud === 'confirm' ||
+		Boolean(structure) ||
+		search ||
+		quick ||
+		Boolean(openResult?.kind === 'empty' && openResult.root);
+	const modalOpenRef = useRef(false);
+	modalOpenRef.current = hasModal || trashPlanningRef.current;
 	const [conflictDiff, setConflictDiff] = useState<ConflictDiff>();
 	const canSaveToICloud = Boolean(book && !book.inICloud && initial?.icloudAvailable);
 	useEffect(() => {
 		document.title = book ? book.name : zh.app;
 	}, [book]);
 	const requestRenameBook = () => {
-		if (!book || isWindowLocked()) {
+		if (!book || modalOpenRef.current) {
 			return;
 		}
 		if (focus) {
@@ -69,9 +81,11 @@ export function App() {
 		setRenameBookRequest((count) => count + 1);
 	};
 	const requestTrash = (target: TrashTarget) => {
-		if (!book || isWindowLocked()) {
+		if (!book || modalOpenRef.current) {
 			return;
 		}
+		trashPlanningRef.current = true;
+		modalOpenRef.current = true;
 		void (async () => {
 			try {
 				await Promise.all([...docs.documents.current.values()].map((model) => model.save()));
@@ -82,7 +96,10 @@ export function App() {
 				setError('');
 				setTrashDialog(preview);
 			} catch (err) {
+				modalOpenRef.current = false;
 				setError(errorMessage(err));
+			} finally {
+				trashPlanningRef.current = false;
 			}
 		})();
 	};
@@ -93,6 +110,7 @@ export function App() {
 		const plan = trashDialog;
 		setStructure(undefined);
 		setTrashDialog(undefined);
+		setSavingICloud(undefined);
 		setSearch(false);
 		setQuick(false);
 		(document.activeElement as HTMLElement | null)?.blur();
@@ -132,7 +150,8 @@ export function App() {
 		}
 	};
 	const requestSaveToICloud = () => {
-		if (canSaveToICloud && !savingICloudRef.current && !isWindowLocked()) {
+		if (canSaveToICloud && !modalOpenRef.current) {
+			modalOpenRef.current = true;
 			setSavingICloud('confirm');
 		}
 	};
@@ -180,12 +199,25 @@ export function App() {
 		}
 	};
 	const showStructure = (action: StructureAction, path?: string) => {
-		if (book && !isWindowLocked()) {
+		if (book && !modalOpenRef.current) {
+			modalOpenRef.current = true;
 			setStructure({ action, path: path ?? docs.sessionRef.current.active });
 		}
 	};
+	const openSearch = () => {
+		if (book && !modalOpenRef.current) {
+			modalOpenRef.current = true;
+			setSearch(true);
+		}
+	};
+	const openQuick = () => {
+		if (book && !modalOpenRef.current) {
+			modalOpenRef.current = true;
+			setQuick(true);
+		}
+	};
 	const toggleFocus = () => {
-		if (!book || isWindowLocked()) {
+		if (!book || modalOpenRef.current) {
 			return;
 		}
 		void window.novel.window
@@ -217,13 +249,9 @@ export function App() {
 		renameBook: requestRenameBook,
 		saveToICloud: requestSaveToICloud,
 		newChapter: () => showStructure('chapter'),
-		searchBook: () => {
-			if (book) {
-				setSearch(true);
-			}
-		},
+		searchBook: openSearch,
 		focus: toggleFocus,
-		quickOpen: () => setQuick(true),
+		quickOpen: openQuick,
 		toggleLeft: () => setLeftOpen((value) => !value),
 		toggleRight: () => setRightOpen((value) => !value),
 		left: (section) => {
@@ -269,6 +297,9 @@ export function App() {
 				if (isWindowLocked()) {
 					return;
 				}
+				if (command !== 'flush' && modalOpenRef.current) {
+					return;
+				}
 				actionRef.current[command]();
 			}),
 			window.novel.window.onNotice(setError),
@@ -302,7 +333,7 @@ export function App() {
 				structure: showStructure,
 				renameBook: requestRenameBook,
 				trash: requestTrash,
-				searchBook: () => setSearch(true),
+				searchBook: openSearch,
 				session,
 				current: docs.current,
 				reference,
@@ -311,7 +342,7 @@ export function App() {
 				split: docs.toggleSplit,
 				focusEditor: docs.focus,
 				find: actions.find,
-				quickOpen: () => setQuick(true),
+				quickOpen: openQuick,
 				report: docs.openReport,
 				showOutline: actions['right:0'],
 				open: docs.open,
@@ -321,10 +352,9 @@ export function App() {
 			}}
 		>
 			<div className={`app ${focus ? 'focus-mode' : ''}`}>
-				{openResult?.kind === 'empty' && openResult.root ? (
+				{!isRunningOverlay && openResult?.kind === 'empty' && openResult.root ? (
 					<Initialize root={openResult.root} close={() => setOpenResult(undefined)} opened={setOpenResult} />
-				) : null}
-				{structure && book ? (
+				) : !isRunningOverlay && structure && book ? (
 					<StructureInput
 						{...structure}
 						close={() => {
@@ -348,8 +378,7 @@ export function App() {
 							return true;
 						}}
 					/>
-				) : null}
-				{trashDialog && book ? (
+				) : !isRunningOverlay && trashDialog && book ? (
 					<TrashDialog
 						preview={trashDialog}
 						close={() => {
@@ -360,8 +389,7 @@ export function App() {
 							void confirmTrash();
 						}}
 					/>
-				) : null}
-				{savingICloud === 'confirm' && book ? (
+				) : !isRunningOverlay && savingICloud === 'confirm' && book ? (
 					<Popover
 						title={zh.saveToICloud}
 						close={() => {
@@ -374,17 +402,15 @@ export function App() {
 					>
 						<p>{zh.saveToICloudConfirm(book.root.split('/').pop() ?? book.name)}</p>
 					</Popover>
-				) : savingICloud === 'running' ? (
-					<BlockingOverlay text={zh.savingToICloud} />
-				) : trashing ? (
-					<BlockingOverlay text={zh.movingToTrash} />
+				) : !isRunningOverlay && search && book ? (
+					<Search close={() => setSearch(false)} />
+				) : !isRunningOverlay && quick && book ? (
+					<QuickOpen close={() => setQuick(false)} />
 				) : null}
-				{search && book ? <Search close={() => setSearch(false)} /> : null}
-				{quick && book ? <QuickOpen close={() => setQuick(false)} /> : null}
 				<TopBar
 					name={book?.name}
 					canSaveToICloud={canSaveToICloud}
-					savingToICloud={Boolean(savingICloud) || trashing}
+					savingToICloud={Boolean(savingICloud) || Boolean(trashDialog) || trashing}
 					saveToICloud={requestSaveToICloud}
 					left={actions['left:toggle']}
 					right={actions['right:toggle']}
@@ -525,6 +551,11 @@ export function App() {
 							}
 						}}
 					/>
+				) : null}
+				{savingICloud === 'running' ? (
+					<BlockingOverlay text={zh.savingToICloud} />
+				) : trashing ? (
+					<BlockingOverlay text={zh.movingToTrash} />
 				) : null}
 			</div>
 		</WorkspaceContext>

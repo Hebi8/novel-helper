@@ -72,8 +72,10 @@ async function listTree(root: string, rel: string): Promise<string[]> {
 	return [rel, ...nested.flat()];
 }
 
-function sameList(a: readonly string[], b: readonly string[]): boolean {
-	return a.length === b.length && a.every((item, index) => item === b[index]);
+function samePathSet(a: readonly string[], b: readonly string[]): boolean {
+	const setA = new Set(a);
+	const setB = new Set(b);
+	return setA.size === setB.size && [...setA].every((item) => setB.has(item));
 }
 
 async function snapshotIndex(index: BookIndex): Promise<BookIndex> {
@@ -172,7 +174,7 @@ export async function executeTrash(
 		}
 		throw error;
 	}
-	if (!sameList(current.targets, plan.targets) || !sameList(current.scope, plan.scope)) {
+	if (!samePathSet(current.targets, plan.targets) || !samePathSet(current.scope, plan.scope)) {
 		throw new Error(zh.trashChanged);
 	}
 	const trashed: string[] = [];

@@ -373,12 +373,14 @@ test('moves chapters, volumes and lore entries to Trash via shell.trashItem, clo
 	}
 });
 
-test('blocking overlay locks shortcuts and typing from save start until Move to Trash completes', async () => {
+test('single confirmation dialog rule and blocking overlay lock shortcuts and typing during Move to Trash', async () => {
 	const root = await realpath(await mkdtemp(join(tmpdir(), 'novel-trash-lock-e2e-')));
+	const icloud = join(root, 'Mobile Documents');
 	const book = join(root, 'book');
 	const data = join(root, 'data');
 	const trash = join(root, 'trash');
 
+	await mkdir(join(icloud, 'com~apple~CloudDocs'), { recursive: true });
 	await cp(resolve('examples'), book, { recursive: true });
 	await mkdir(data, { recursive: true });
 	await mkdir(trash, { recursive: true });
@@ -409,7 +411,7 @@ test('blocking overlay locks shortcuts and typing from save start until Move to 
 	try {
 		app = await electron.launch({
 			env: cleanEnv(),
-			args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`],
+			args: [resolve('dist/main/index.js'), '--test-mode', `--user-data-dir=${data}`, `--icloud-dir=${icloud}`],
 		});
 		exited = new Promise((done) => app!.process().once('exit', () => done()));
 
@@ -418,14 +420,25 @@ test('blocking overlay locks shortcuts and typing from save start until Move to 
 		const chap2Editor = page.locator(`.cm-content[aria-label="${chapter2}"]`);
 		const chap1Editor = page.locator(`.cm-content[aria-label="${chapter1}"]`);
 		await expect(chap2Editor).toContainText('林小满');
+		await expect(page.locator('.topbar button.topbar-book')).toBeEnabled();
 
-		// Open Trash confirmation dialog first, then dirty Chapter 1's model or hang both saveAll and trashItem.
+		// Open Trash confirmation dialog, then trigger Save to iCloud from menu -> no second dialog opens.
 		const chapterTree = page.getByRole('tree', { name: '章节', exact: true });
 		const chap2Row = chapterTree.locator('.tree-row').filter({ has: page.getByRole('button', { name: '第2章 灯塔', exact: true }) });
 		await chap2Row.hover();
 		await chap2Row.getByRole('button', { name: '⋯', exact: true }).click();
 		await page.getByRole('menuitem', { name: '移到废纸篓…', exact: true }).click();
 		const dialog = page.getByRole('dialog', { name: '把「第2章 灯塔」移到废纸篓？', exact: true });
+		await expect(dialog).toBeVisible();
+		await expect(page.locator('.topbar button.topbar-book')).toBeDisabled();
+
+		await app.evaluate(({ BrowserWindow }) => {
+			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'saveToICloud');
+			BrowserWindow.getAllWindows()[0].webContents.send('window:command', 'newChapter');
+		});
+		await expect(page.getByRole('dialog', { name: '存到 iCloud', exact: true })).toHaveCount(0);
+		await expect(page.getByRole('dialog', { name: '新建章', exact: true })).toHaveCount(0);
+		await expect(page.getByRole('dialog')).toHaveCount(1);
 		await expect(dialog).toBeVisible();
 
 		await app.evaluate(({ shell }, trashDir) => {
