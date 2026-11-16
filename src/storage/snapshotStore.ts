@@ -271,7 +271,7 @@ export class SnapshotStore {
 		}
 		return parsed
 			.map((item) => parseRecord(JSON.stringify(item)))
-			.filter((record): record is SnapshotRecord => record?.kind === 'timed')
+			.filter((record): record is SnapshotRecord => record?.kind === 'timed' || record?.kind === 'conflict')
 			.sort((a, b) => a.id - b.id);
 	}
 
@@ -311,12 +311,19 @@ export class SnapshotStore {
 		return new Date(Math.max(now, latest + 1)).toISOString();
 	}
 
-	/** Takes the snapshot that a turn, or a going back, starts from. */
+	/** Takes the snapshot that a turn, a going back, or a conflict replacement starts from. */
 	begin(about: Pick<SnapshotRecord, 'kind' | 'title' | 'target'>): Promise<SnapshotRecord> {
+		const timedTrack = about.kind === 'conflict';
 		return this.exclusive(
-			() => this.scanAll(),
+			() => this.scanAll(timedTrack ? this.timedObjects : this.objects),
 			async (files) => {
 				const [turns, timed] = await Promise.all([this.listTurns(), this.listTimed()]);
+				if (timedTrack) {
+					const last = timed.at(-1)?.id ?? TIMED_ID_START;
+					const record: SnapshotRecord = { id: last + 1, time: this.nextTime([...turns, ...timed]), ...about, files };
+					await this.writeTimed([...timed, record]);
+					return record;
+				}
 				const last = turns.at(-1)?.id ?? 0;
 				const record: SnapshotRecord = { id: last + 1, time: this.nextTime([...turns, ...timed]), ...about, files };
 				await this.write(record);
@@ -378,14 +385,25 @@ export class SnapshotStore {
 		return this.exclusive(
 			async () => {
 				const record = await this.get(id);
-				return record && { record, after: await this.scanAll() };
+				if (!record) {
+					return undefined;
+				}
+				const dir = record.kind === 'conflict' ? this.timedObjects : this.objects;
+				return { record, after: await this.scanAll(dir) };
 			},
 			async (found) => {
 				if (!found) {
 					return [];
 				}
 				const changes = diff(found.record.files, found.after);
-				if (changes.length) {
+				if (found.record.kind === 'conflict') {
+					const timed = await this.listTimed();
+					await this.writeTimed(
+						changes.length
+							? timed.map((item) => (item.id === id ? { ...found.record, changes } : item))
+							: timed.filter((item) => item.id !== id),
+					);
+				} else if (changes.length) {
 					await this.write({ ...found.record, changes });
 				} else {
 					await fs.rm(this.recordFile(id), { force: true });
@@ -401,7 +419,14 @@ export class SnapshotStore {
 		return this.exclusive(
 			async () => undefined,
 			async () => {
-				await fs.rm(this.recordFile(id), { force: true });
+				if (id > TIMED_ID_START) {
+					const timed = await this.listTimed();
+					if (timed.some((item) => item.id === id)) {
+						await this.writeTimed(timed.filter((item) => item.id !== id));
+					}
+				} else {
+					await fs.rm(this.recordFile(id), { force: true });
+				}
 				await this.prune();
 			},
 		);

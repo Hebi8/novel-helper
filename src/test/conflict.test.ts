@@ -236,7 +236,7 @@ describe('conflict copy detection', () => {
 		await index.load();
 		const snapshots = new BookSnapshots(
 			userData,
-			() => ({ ...defaults, 'snapshots.intervalMinutes': 0 }),
+			() => ({ ...defaults, 'snapshots.intervalMinutes': 0, 'assistant.snapshots.keep': 1 }),
 			() => false,
 			() => {},
 		);
@@ -275,15 +275,15 @@ describe('conflict copy detection', () => {
 		assert.equal(existsSync(join(book, chapterCopy)), true);
 		assert.deepEqual(trashed, []);
 
-		// 2. Mid-snapshot external edit on original right as `store.begin` finishes scanning.
+		// 2a. Mid-snapshot external edit on original right as `store.begin` finishes scanning.
 		const midDiff = await readConflictDiff(index, chapterCopy);
 		const store = snapshots.store(book);
 		const realBegin = store.begin.bind(store);
-		let injectedOnce = false;
+		let injectedOrig = false;
 		store.begin = async (about) => {
 			const record = await realBegin(about);
-			if (!injectedOnce) {
-				injectedOnce = true;
+			if (!injectedOrig) {
+				injectedOrig = true;
 				await writeFile(join(book, chapterOriginal), '扫描快照期间 iCloud 改写了原文\r\n');
 			}
 			return record;
@@ -304,6 +304,38 @@ describe('conflict copy detection', () => {
 		assert.equal(await readFile(join(book, chapterOriginal), 'utf8'), '扫描快照期间 iCloud 改写了原文\r\n');
 		assert.equal(existsSync(join(book, chapterCopy)), true);
 		assert.deepEqual(await store.list(), []);
+		assert.equal(existsSync(join(store.dir, 'timed.json')), false);
+
+		// 2b. Mid-snapshot external edit on conflict copy (V1 -> V2) right as `store.begin` finishes scanning.
+		const midCopyDiff = await readConflictDiff(index, chapterCopy);
+		let injectedCopy = false;
+		store.begin = async (about) => {
+			const record = await realBegin(about);
+			if (!injectedCopy) {
+				injectedCopy = true;
+				await writeFile(join(book, chapterCopy), '扫描快照期间 iCloud 把副本更新成了 V2\n');
+			}
+			return record;
+		};
+		const midCopyMismatch = await resolveConflictCopy(
+			index,
+			snapshots,
+			{
+				path: chapterCopy,
+				action: 'replace',
+				beforeHash: midCopyDiff.beforeHash,
+				afterHash: midCopyDiff.afterHash,
+			},
+			trashItem,
+		);
+		store.begin = realBegin;
+		assert.deepEqual(midCopyMismatch, { ok: false, reason: 'changed', message: '文件刚被改过' });
+		assert.equal(await readFile(join(book, chapterOriginal), 'utf8'), '扫描快照期间 iCloud 改写了原文\r\n');
+		assert.equal(await readFile(join(book, chapterCopy), 'utf8'), '扫描快照期间 iCloud 把副本更新成了 V2\n');
+		assert.deepEqual(trashed, []);
+		assert.deepEqual(await store.list(), []);
+		assert.equal(existsSync(join(store.dir, 'timed.json')), false);
+		assert.equal((await readConflictDiff(index, chapterCopy)).after, '扫描快照期间 iCloud 把副本更新成了 V2\n');
 
 		// 3. Original > 5 MB skipped by snapshot: refuses replacement and leaves both files untouched.
 		const largeDiff = await readConflictDiff(index, largeCopy);
@@ -323,7 +355,7 @@ describe('conflict copy detection', () => {
 		assert.equal(existsSync(join(book, largeCopy)), true);
 		assert.deepEqual(await store.list(), []);
 
-		// 4. Fresh diff with matching hashes succeeds, stores original in snapshot, and reverts cleanly.
+		// 4. Fresh diff with matching hashes succeeds and writes `conflict` snapshot to `timed.json` / `timed-objects`.
 		const freshDiff = await readConflictDiff(index, chapterCopy);
 		const ok = await resolveConflictCopy(
 			index,
@@ -337,14 +369,41 @@ describe('conflict copy detection', () => {
 			trashItem,
 		);
 		assert.deepEqual(ok, { ok: true });
-		assert.equal(await readFile(join(book, chapterOriginal), 'utf8'), '副本又在另一台机器改了一次\n');
+		assert.equal(await readFile(join(book, chapterOriginal), 'utf8'), '扫描快照期间 iCloud 把副本更新成了 V2\n');
 		assert.equal(existsSync(join(book, chapterCopy)), false);
 		assert.deepEqual(trashed, ['第2章 灯塔 2.md']);
+		assert.equal(existsSync(join(store.dir, 'timed.json')), true);
+		assert.equal(existsSync(join(store.dir, 'turns')), false);
 
-		const records = await store.list();
-		assert.equal(records.length, 1);
-		assert.equal(records[0].files[chapterOriginal], freshDiff.beforeHash);
-		await store.revert(records[0].id);
+		const [conflictRecord] = await store.list();
+		assert.equal(conflictRecord.kind, 'conflict');
+		assert.equal(conflictRecord.files[chapterOriginal], freshDiff.beforeHash);
+
+		// 5. With `assistant.snapshots.keep` = 1, saving new assistant snapshots prunes older turns but keeps `conflict`.
+		const turn1 = await store.begin({ kind: 'turn', title: '助手第一轮' });
+		await writeFile(join(book, '设定/文风.md'), '助手第一轮改写文风\n');
+		await store.finish(turn1.id);
+
+		const turn2 = await store.begin({ kind: 'turn', title: '助手第二轮' });
+		await writeFile(join(book, '设定/文风.md'), '助手第二轮改写文风\n');
+		await store.finish(turn2.id);
+
+		const kept = await store.list();
+		assert.deepEqual(
+			kept.map((item) => ({ id: item.id, kind: item.kind })),
+			[
+				{ id: conflictRecord.id, kind: 'conflict' },
+				{ id: turn2.id, kind: 'turn' },
+			],
+		);
+
+		const reverted = await store.revert(conflictRecord.id);
+		assert.equal(reverted.blocked.length, 0);
 		assert.equal(await readFile(join(book, chapterOriginal), 'utf8'), '扫描快照期间 iCloud 改写了原文\r\n');
+		assert.equal(await readFile(join(book, chapterCopy), 'utf8'), '扫描快照期间 iCloud 把副本更新成了 V2\n');
+
+		await store.revert(reverted.record!.id);
+		assert.equal(await readFile(join(book, chapterOriginal), 'utf8'), '扫描快照期间 iCloud 把副本更新成了 V2\n');
+		assert.equal(existsSync(join(book, chapterCopy)), false);
 	});
 });

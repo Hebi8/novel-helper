@@ -64,18 +64,18 @@ export async function resolveConflictCopy(
 		const record = await store.begin({ kind: 'conflict', title: original });
 		let replaced = false;
 		try {
-			const current = await readVersionedDocument(origFull);
-			if (!current) {
+			const [currentBefore, currentAfter] = await Promise.all([readVersionedDocument(origFull), readVersionedDocument(copyFull)]);
+			if (!currentBefore || !currentAfter) {
 				throw new Error(zh.fileMissing);
 			}
-			if (current.hash !== input.beforeHash) {
+			if (currentBefore.hash !== input.beforeHash || currentAfter.hash !== input.afterHash) {
 				return { ok: false, reason: 'changed', message: zh.conflictChanged };
 			}
 			if (record.files[original] !== input.beforeHash) {
 				return { ok: false, reason: 'unbacked', message: zh.conflictUnbacked };
 			}
 			replaced = true;
-			await atomicWrite(origFull, after.text.replaceAll('\n', after.lineEnding));
+			await atomicWrite(origFull, currentAfter.text.replaceAll('\n', currentAfter.lineEnding));
 			await trashItem(copyFull);
 		} finally {
 			if (replaced) {

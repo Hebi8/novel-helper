@@ -1,6 +1,6 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { existsSync } from 'node:fs';
-import { cp, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
@@ -17,6 +17,7 @@ async function withConflictBook(
 		page: Page;
 		root: string;
 		book: string;
+		data: string;
 		trash: string;
 		originalChapterText: string;
 		trashed(): Promise<string[]>;
@@ -81,6 +82,7 @@ async function withConflictBook(
 			page,
 			root,
 			book,
+			data,
 			trash,
 			originalChapterText,
 			trashed: () => app!.evaluate(() => (globalThis as typeof globalThis & { trashedPaths?: string[] }).trashedPaths ?? []),
@@ -95,7 +97,7 @@ async function withConflictBook(
 }
 
 test('identifies .md conflict copies in iCloud books, validates hashes and >5MB limits, snapshots before replace, and trashes copies', async () => {
-	await withConflictBook(async ({ app, page, root, book, trash, originalChapterText, trashed }) => {
+	await withConflictBook(async ({ app, page, root, book, data, trash, originalChapterText, trashed }) => {
 		// Status bar shows exact count of .md conflict copies (>= 2 with original present).
 		const statusButton = page.getByRole('button', { name: '有 3 个冲突副本', exact: true });
 		await expect(statusButton).toBeVisible();
@@ -173,7 +175,10 @@ test('identifies .md conflict copies in iCloud books, validates hashes and >5MB 
 		expect(existsSync(join(trash, '1-第2章 灯塔 2.md'))).toBe(true);
 		await expect(page.getByRole('button', { name: '有 2 个冲突副本', exact: true })).toBeVisible();
 
-		// Snapshot was saved before replacement even with timed interval = 0, and reverting restores pre-replacement original.
+		// Snapshot was saved on the timed track (`timed.json` / `timed-objects`) even with timed interval = 0, and reverting works.
+		const [snapId] = await readdir(join(data, 'snapshots'));
+		expect(existsSync(join(data, 'snapshots', snapId, 'timed.json'))).toBe(true);
+		expect(existsSync(join(data, 'snapshots', snapId, 'turns'))).toBe(false);
 		await page.getByRole('button', { name: '快照', exact: true }).click();
 		const snapshotsDialog = page.getByRole('dialog', { name: '快照', exact: true });
 		await expect(snapshotsDialog).toContainText(`冲突替换 · ${chapterOriginal}`);
