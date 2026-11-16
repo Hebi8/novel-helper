@@ -352,6 +352,13 @@ select:focus-visible {
 }
 .settings-window {
 	padding: 48px 30px 24px;
+}
+/* Only the title strip drags the window: a drag region swallows wheel events, so it cannot cover what scrolls. */
+.settings-window::before {
+	content: '';
+	position: fixed;
+	inset: 0 0 auto;
+	height: 40px;
 	-webkit-app-region: drag;
 }
 .settings-window h1 {
