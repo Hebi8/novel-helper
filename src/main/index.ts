@@ -194,6 +194,9 @@ if (!app.requestSingleInstanceLock()) {
 				mainShell?.publishTabBar();
 				installMenu(context);
 			},
+			isMainWindowLocked: () => Boolean(mainShell?.isLocked()),
+			isWindowClosing: () => Boolean(mainShell?.isClosingWindow()),
+			isFocusMode: (event) => Boolean(mainShell?.ownsSender(event.sender.id) && mainShell.isFocusMode()),
 			reindexBooks: async () => {
 				await Promise.all([...books.values()].map((book) => book.reconfigure(settings.get())));
 			},
@@ -284,9 +287,15 @@ if (!app.requestSingleInstanceLock()) {
 				}
 			},
 			open: async (root, source, selected, options) => {
+				if (mainShell?.isClosingWindow() || (!options?.replaceSender && mainShell?.isLocked())) {
+					return { kind: 'cancelled' };
+				}
 				try {
 					root = await resolveBookRoot(root);
 					return await openings.run(root, async () => {
+						if (mainShell?.isClosingWindow() || (!options?.replaceSender && mainShell?.isLocked())) {
+							return { kind: 'cancelled' };
+						}
 						if (options?.replaceRecent && !windows.value.books[root]) {
 							const prior = windows.session(options.replaceRecent);
 							if (prior.tabs.length) {

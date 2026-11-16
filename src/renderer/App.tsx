@@ -18,6 +18,7 @@ import { StatusBar } from './statusbar/StatusBar';
 import { Editor } from './editor/Editor';
 import { ReportView } from './editor/ReportView';
 import { reportKind, useDocuments } from './editor/useDocuments';
+import { BlockingOverlay } from './shell/BlockingOverlay';
 import { TopBar } from './shell/TopBar';
 import { Welcome } from './shell/Welcome';
 import { commands } from './shell/commands';
@@ -54,8 +55,15 @@ export function App() {
 		savingICloudRef.current = value;
 		setSavingICloudState(value);
 	};
-	const isWindowLocked = () => savingICloudRef.current === 'running' || trashingRef.current;
-	const isRunningOverlay = savingICloud === 'running' || trashing;
+	const [closing, setClosingState] = useState(false);
+	const closingRef = useRef(false);
+	const setClosing = (value: boolean) => {
+		closingRef.current = value;
+		setClosingState(value);
+	};
+	const isTransferLocked = () => savingICloudRef.current === 'running' || trashingRef.current;
+	const isWindowLocked = () => isTransferLocked() || closingRef.current;
+	const isRunningOverlay = savingICloud === 'running' || trashing || closing;
 	const hasModal =
 		isRunningOverlay ||
 		Boolean(trashDialog) ||
@@ -276,9 +284,19 @@ export function App() {
 	}, [initial?.settings['appearance.theme']]);
 	useEffect(() => {
 		let alive = true;
+		let focusUpdated = false;
+		let closingUpdated = false;
 		void window.novel.window
 			.bootstrap()
 			.then(async (data) => {
+				if (alive) {
+					if (!focusUpdated) {
+						setFocus(data.focus);
+					}
+					if (!closingUpdated) {
+						setClosing(data.closing);
+					}
+				}
 				await docs.restore(data.session);
 				if (alive) {
 					docs.setWordsSnapshot(data.words);
@@ -295,7 +313,14 @@ export function App() {
 			.catch((error) => setError(errorMessage(error)));
 		const unsubscribes = [
 			window.novel.book.onOpenResult(setOpenResult),
-			window.novel.window.onFocusChanged(setFocus),
+			window.novel.window.onFocusChanged((enabled) => {
+				focusUpdated = true;
+				setFocus(enabled);
+			}),
+			window.novel.window.onClosingChanged((value) => {
+				closingUpdated = true;
+				setClosing(value);
+			}),
 			window.novel.reports.onChanged(() => {
 				void docs.refreshReports().catch((error) => setError(errorMessage(error)));
 			}),
@@ -309,9 +334,15 @@ export function App() {
 			window.novel.settings.onChanged((settings) => setInitial((value) => (value ? { ...value, settings } : value))),
 			window.novel.usage.onChanged((usage) => setInitial((value) => (value ? { ...value, usage } : value))),
 			window.novel.window.onCommand((command) => {
-				if (isWindowLocked()) {
+				if (isTransferLocked()) {
 					if (command === 'flush') {
 						window.novel.window.flushed(false);
+					}
+					return;
+				}
+				if (closingRef.current) {
+					if (command === 'flush' || command === 'blur') {
+						actionRef.current[command]();
 					}
 					return;
 				}
@@ -343,6 +374,9 @@ export function App() {
 		};
 	}, []);
 	const openBook = (root?: string, selected = false) => {
+		if (isWindowLocked()) {
+			return;
+		}
 		void window.novel.book
 			.open(root, selected)
 			.then(setOpenResult)
@@ -586,30 +620,11 @@ export function App() {
 					<BlockingOverlay text={zh.savingToICloud} />
 				) : trashing ? (
 					<BlockingOverlay text={zh.movingToTrash} />
+				) : closing ? (
+					<BlockingOverlay text={zh.closingWindow} />
 				) : null}
 			</div>
 		</WorkspaceContext>
-	);
-}
-function BlockingOverlay({ text }: { text: string }) {
-	const ref = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		(document.activeElement as HTMLElement | null)?.blur();
-		ref.current?.focus();
-		const block = (event: Event) => {
-			event.preventDefault();
-			event.stopPropagation();
-		};
-		const events = ['keydown', 'keypress', 'beforeinput', 'paste', 'drop'] as const;
-		events.forEach((name) => window.addEventListener(name, block, true));
-		return () => {
-			events.forEach((name) => window.removeEventListener(name, block, true));
-		};
-	}, []);
-	return (
-		<div ref={ref} className="popover-backdrop icloud-saving-backdrop" role="status" aria-live="polite" tabIndex={-1}>
-			<div className="icloud-saving-card">{text}</div>
-		</div>
 	);
 }
 function isChapter(node: Book['tree'], path: string): boolean {

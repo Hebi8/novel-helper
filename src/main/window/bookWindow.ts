@@ -18,7 +18,6 @@ interface TabEntry {
 	ready: boolean;
 	closeGate: CloseGate;
 	disposeListeners: () => void;
-	closing?: boolean;
 	flushPromise?: Promise<boolean>;
 	resolveFlush?: (saved: boolean) => void;
 }
@@ -68,7 +67,10 @@ export class BookWindow {
 	private activeId: number | undefined;
 	private focusMode = false;
 	private menuExpanded = false;
-	private windowFlushInProgress = false;
+	private closingWindow = false;
+	private windowCloseQueued = false;
+	private activeCloseTasks = 0;
+	private closeChain: Promise<void> = Promise.resolve();
 	private windowClosingApproved = false;
 
 	constructor(private readonly options: BookWindowOptions) {
@@ -129,8 +131,20 @@ export class BookWindow {
 		tab?.resolveFlush?.(saved !== false);
 	};
 
-	isLocked(): boolean {
+	isTransferLocked(): boolean {
 		return this.tabs.some((tab) => this.options.savingToICloud.get(tab.id) === 'copying' || this.options.trashing.has(tab.id));
+	}
+
+	isClosingWindow(): boolean {
+		return this.closingWindow;
+	}
+
+	isLocked(): boolean {
+		return this.closingWindow || this.isTransferLocked();
+	}
+
+	isFocusMode(): boolean {
+		return this.focusMode;
 	}
 
 	activeSenderId(): number | undefined {
@@ -195,6 +209,9 @@ export class BookWindow {
 	}
 
 	setMenuExpanded(expanded: boolean): void {
+		if (expanded && this.isLocked()) {
+			return;
+		}
 		if (this.menuExpanded === expanded) {
 			return;
 		}
@@ -318,28 +335,36 @@ export class BookWindow {
 		this.selectTab(this.tabs[nextIdx].id);
 	}
 
-	async closeTab(id = this.activeId): Promise<boolean> {
-		if (id === undefined || this.isLocked() || this.windowFlushInProgress) {
+	closeTab(id?: number): Promise<boolean> {
+		return this.runCloseTask(() => this.performCloseTab(id));
+	}
+
+	private async performCloseTab(id?: number): Promise<boolean> {
+		if (this.window.isDestroyed() || this.windowClosingApproved || this.isTransferLocked()) {
 			return false;
 		}
-		const tab = this.tabs.find((item) => item.id === id);
-		if (!tab || tab.closing) {
+		const targetId = id ?? this.activeId;
+		if (targetId === undefined) {
+			return false;
+		}
+		const tab = this.tabs.find((item) => item.id === targetId);
+		if (!tab) {
 			return false;
 		}
 		if (!tab.index) {
+			this.windowClosingApproved = true;
 			this.window.close();
 			return true;
 		}
 		if (tab.ready && tab.closeGate.needsFlush()) {
 			const saved = await this.flushTab(tab);
-			if (!saved || this.isLocked() || !this.tabs.includes(tab)) {
-				if (!saved && this.tabs.includes(tab)) {
+			if (!saved || this.isTransferLocked() || !this.tabs.includes(tab)) {
+				if (!saved && this.tabs.includes(tab) && !this.closingWindow) {
 					this.selectTab(tab.id);
 				}
 				return false;
 			}
 		}
-		tab.closing = true;
 		await this.options.completion.buoys(tab.index).dispose();
 		await this.options.completion.drain(String(tab.id));
 		tab.closeGate.acknowledge();
@@ -451,6 +476,12 @@ export class BookWindow {
 			entry.resolveFlush?.(true);
 		});
 		view.webContents.once('did-finish-load', () => {
+			if (index && this.focusMode && !view.webContents.isDestroyed()) {
+				view.webContents.send(channels.focusChanged, true);
+			}
+			if (this.closingWindow && !view.webContents.isDestroyed()) {
+				view.webContents.send(channels.closingChanged, true);
+			}
 			if (!this.options.testing && !this.window.isDestroyed() && !this.window.isVisible()) {
 				this.window.show();
 			}
@@ -530,58 +561,106 @@ export class BookWindow {
 		}
 	}
 
+	private runCloseTask<T>(task: () => Promise<T>): Promise<T> {
+		this.activeCloseTasks++;
+		const run = this.closeChain.then(task, task);
+		this.closeChain = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run.finally(() => {
+			this.activeCloseTasks--;
+		});
+	}
+
+	private setClosingWindow(closing: boolean): void {
+		if (this.closingWindow === closing) {
+			return;
+		}
+		this.closingWindow = closing;
+		if (closing && this.menuExpanded) {
+			this.menuExpanded = false;
+			this.layout();
+		}
+		for (const tab of this.tabs) {
+			if (!tab.view.webContents.isDestroyed()) {
+				tab.view.webContents.send(channels.closingChanged, closing);
+			}
+		}
+		this.publishTabBar();
+		this.options.onStateChanged();
+	}
+
 	private handleWindowClose(event: Electron.Event): void {
 		if (this.windowClosingApproved) {
 			return;
 		}
-		if (this.isLocked()) {
+		if (this.isTransferLocked()) {
 			event.preventDefault();
 			this.options.cancelQuitting();
 			return;
 		}
 		const needsFlush = this.tabs.some((tab) => Boolean(tab.index && tab.ready && tab.closeGate.needsFlush()));
-		if (!needsFlush) {
+		if (this.activeCloseTasks === 0 && !needsFlush) {
 			return;
 		}
 		event.preventDefault();
-		if (this.windowFlushInProgress) {
+		if (this.windowCloseQueued) {
 			return;
 		}
-		this.windowFlushInProgress = true;
-		void (async () => {
-			try {
-				for (const tab of [...this.tabs]) {
-					if (!this.tabs.includes(tab) || !tab.index || !tab.ready || !tab.closeGate.needsFlush()) {
-						continue;
-					}
-					const saved = await this.flushTab(tab);
-					if (!saved || this.isLocked()) {
-						this.options.cancelQuitting();
-						if (!saved && this.tabs.includes(tab)) {
-							this.selectTab(tab.id);
-						}
-						return;
-					}
-				}
-				for (const tab of [...this.tabs]) {
-					if (tab.index) {
-						await this.options.completion.buoys(tab.index).dispose();
-					}
-					await this.options.completion.drain(String(tab.id));
-					tab.closeGate.acknowledge();
-				}
-				if (!this.window.isDestroyed()) {
-					this.windowClosingApproved = true;
-					if (this.options.isQuitting()) {
-						app.quit();
-					} else {
-						this.window.close();
-					}
-				}
-			} finally {
-				this.windowFlushInProgress = false;
+		this.windowCloseQueued = true;
+		this.setClosingWindow(true);
+		void this.runCloseTask(() => this.performWindowClose());
+	}
+
+	private async performWindowClose(): Promise<void> {
+		try {
+			if (this.window.isDestroyed() || this.windowClosingApproved) {
+				return;
 			}
-		})();
+			if (this.isTransferLocked()) {
+				this.setClosingWindow(false);
+				this.options.cancelQuitting();
+				return;
+			}
+			if (!this.closingWindow) {
+				this.setClosingWindow(true);
+			}
+			for (const tab of [...this.tabs]) {
+				if (!this.tabs.includes(tab) || !tab.index || !tab.ready || !tab.closeGate.needsFlush()) {
+					continue;
+				}
+				const saved = await this.flushTab(tab);
+				if (!saved || this.isTransferLocked()) {
+					this.setClosingWindow(false);
+					this.options.cancelQuitting();
+					if (!saved && this.tabs.includes(tab)) {
+						this.selectTab(tab.id);
+					}
+					return;
+				}
+			}
+			for (const tab of [...this.tabs]) {
+				if (tab.index) {
+					await this.options.completion.buoys(tab.index).dispose();
+				}
+				await this.options.completion.drain(String(tab.id));
+				tab.closeGate.acknowledge();
+			}
+			if (!this.window.isDestroyed()) {
+				this.windowClosingApproved = true;
+				if (this.options.isQuitting()) {
+					app.quit();
+				} else {
+					this.window.close();
+				}
+			}
+		} finally {
+			this.windowCloseQueued = false;
+			if (!this.windowClosingApproved && this.closingWindow) {
+				this.setClosingWindow(false);
+			}
+		}
 	}
 
 	private handleWindowClosed(): void {

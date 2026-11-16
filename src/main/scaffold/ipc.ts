@@ -14,6 +14,9 @@ export function registerScaffold(ctx: MainContext): void {
 		async (_event, root: string, language: NamesLanguage) => (await initialization(root, language, ctx.settings.get())).items,
 	);
 	ipcMain.handle(channels.structureInitialize, async (event, root: string, language: NamesLanguage, selected: string[]) => {
+		if (ctx.isMainWindowLocked()) {
+			return { kind: 'cancelled' };
+		}
 		await initialize(root, language, selected, ctx.settings.get());
 		return ctx.open(root, event.sender);
 	});

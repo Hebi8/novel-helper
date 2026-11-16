@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { PlusMenuData, TabBarState } from '../../shared/api';
 import { zh } from '../strings';
 import { applyTheme } from '../theme';
+import { BlockingOverlay } from './BlockingOverlay';
 import { handleBookTabShortcut } from './tabShortcuts';
 
 const MENU_WIDTH = 220;
@@ -187,6 +188,7 @@ export function TabBar() {
 					</div>
 				</div>
 			) : null}
+			{state.locked ? <BlockingOverlay /> : null}
 		</>
 	);
 }

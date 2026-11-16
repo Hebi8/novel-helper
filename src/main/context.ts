@@ -24,6 +24,9 @@ export interface MainContext {
 	isSavingToICloud(senderId: number): boolean;
 	isFocusedBookTrashing(): boolean;
 	setTrashing(senderId: number, active: boolean): void;
+	isMainWindowLocked(): boolean;
+	isWindowClosing(): boolean;
+	isFocusMode(event: Pick<IpcMainInvokeEvent, 'sender'>): boolean;
 	settings: SettingsStore;
 	secrets: SecretStore;
 	completion: CompletionService;

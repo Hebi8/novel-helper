@@ -80,9 +80,12 @@ export function registerBook(ctx: MainContext): void {
 		return ctx.snapshots.write(book.root, () => book.setTitle(title));
 	});
 	ipcMain.handle(channels.bookOpen, async (event, root?: string, chosen = false) => {
+		if (ctx.isMainWindowLocked()) {
+			return { kind: 'cancelled' };
+		}
 		const window = ctx.windowFor(event);
 		const selected = root ?? (await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })).filePaths[0];
-		return selected ? ctx.open(selected, event.sender, chosen) : { kind: 'cancelled' };
+		return selected && !ctx.isMainWindowLocked() ? ctx.open(selected, event.sender, chosen) : { kind: 'cancelled' };
 	});
 	ipcMain.handle(channels.bookRead, (event, path: string) => ctx.bookFor(event)!.read(bookPath(path)));
 	ipcMain.handle(channels.bookSave, async (event, path: string, text: string, base: string, force?: boolean) => {

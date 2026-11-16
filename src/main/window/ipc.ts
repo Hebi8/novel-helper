@@ -20,6 +20,8 @@ export function registerWindow(ctx: MainContext): void {
 			book: index?.book,
 			openResult: ctx.initialResult(event),
 			notice: ctx.initialNotice(event),
+			focus: ctx.isFocusMode(event),
+			closing: ctx.isWindowClosing(),
 			icloudAvailable,
 			icloudBooks: !index && icloudAvailable ? await bookEntries(await listICloudBooks()) : [],
 			recent: await bookEntries(ctx.windows.value.recent),
@@ -47,11 +49,17 @@ export function registerWindow(ctx: MainContext): void {
 	});
 	ipcMain.handle(channels.tabsClose, (event, id?: number) => ctx.closeTab(id, event.sender));
 	ipcMain.handle(channels.tabsOpenMenu, async () => {
+		if (ctx.isMainWindowLocked()) {
+			return { icloudBooks: [], recent: [] };
+		}
 		const icloudAvailable = await isICloudDriveAvailable();
 		const [icloudBooks, recent] = await Promise.all([
 			icloudAvailable ? bookEntries(await listICloudBooks()) : Promise.resolve([]),
 			bookEntries(ctx.windows.value.recent),
 		]);
+		if (ctx.isMainWindowLocked()) {
+			return { icloudBooks: [], recent: [] };
+		}
 		ctx.setTabMenuExpanded(true);
 		return { icloudBooks, recent };
 	});
@@ -60,6 +68,9 @@ export function registerWindow(ctx: MainContext): void {
 	});
 	ipcMain.handle(channels.tabsOpenBook, async (_event, root?: string) => {
 		ctx.setTabMenuExpanded(false);
+		if (ctx.isMainWindowLocked()) {
+			return;
+		}
 		const parent = ctx.mainWindow();
 		const selected =
 			root ??
@@ -67,12 +78,12 @@ export function registerWindow(ctx: MainContext): void {
 				? await dialog.showOpenDialog(parent, { properties: ['openDirectory', 'createDirectory'] })
 				: await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
 			).filePaths[0];
-		if (!selected) {
+		if (!selected || ctx.isMainWindowLocked()) {
 			return;
 		}
 		const target = ctx.activeSender();
 		const result = await ctx.open(selected, target);
-		if (result.kind !== 'opened') {
+		if (result.kind !== 'opened' && result.kind !== 'cancelled') {
 			ctx.sendOpenResult(result, target);
 		}
 	});

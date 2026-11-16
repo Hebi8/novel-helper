@@ -85,6 +85,7 @@ const api: AppAPI = {
 	window: {
 		focus: (enabled) => ipcRenderer.invoke(c.focusSet, enabled),
 		onFocusChanged: (listener) => listen(c.focusChanged, listener),
+		onClosingChanged: (listener) => listen(c.closingChanged, listener),
 		bootstrap: () => ipcRenderer.invoke(c.bootstrap),
 		saveSession: (session) => ipcRenderer.invoke(c.session, session),
 		flushed: (saved = true) => ipcRenderer.send(c.flushed, saved),

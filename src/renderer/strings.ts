@@ -352,6 +352,7 @@ export const zh = {
 	icloudBooks: 'iCloud 里的书',
 	saveToICloud: '存到 iCloud',
 	savingToICloud: '正在存到 iCloud…',
+	closingWindow: '正在保存…',
 	saveToICloudConfirm: (name: string) => `会把这本书复制到「iCloud 云盘/hebi8L/${name}」，原来的文件夹保留不动。`,
 	savedToICloud: (path: string) => `已存到 iCloud。原来的文件夹还在：${path}，以后请打开 iCloud 里的这一份`,
 	saveToICloudExists: 'iCloud 里已有同名的书',

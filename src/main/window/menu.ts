@@ -3,7 +3,7 @@ import { channels, type MenuCommand } from '../../shared/api';
 import { zh } from '../../renderer/strings';
 import type { MainContext } from '../context';
 export function installMenu(ctx: MainContext): void {
-	const saving = ctx.isFocusedBookSavingToICloud() || ctx.isFocusedBookTrashing();
+	const saving = ctx.isMainWindowLocked() || ctx.isFocusedBookSavingToICloud() || ctx.isFocusedBookTrashing();
 	const bookTabs = ctx.bookTabs();
 	const action = (label: string, command: MenuCommand, accelerator?: string): MenuItemConstructorOptions => ({
 		label,
@@ -12,18 +12,24 @@ export function installMenu(ctx: MainContext): void {
 		click: () => ctx.sendCommand(command),
 	});
 	const openRoot = async (root: string) => {
+		if (ctx.isMainWindowLocked()) {
+			return;
+		}
 		const target = ctx.activeSender();
 		const result = await ctx.open(root, target);
-		if (result.kind !== 'opened') {
+		if (result.kind !== 'opened' && result.kind !== 'cancelled') {
 			ctx.sendOpenResult(result, target);
 		}
 	};
 	const open = async () => {
+		if (ctx.isMainWindowLocked()) {
+			return;
+		}
 		const parent = ctx.mainWindow();
 		const { filePaths } = parent
 			? await dialog.showOpenDialog(parent, { properties: ['openDirectory', 'createDirectory'] })
 			: await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
-		if (filePaths[0]) {
+		if (filePaths[0] && !ctx.isMainWindowLocked()) {
 			await openRoot(filePaths[0]);
 		}
 	};
@@ -42,11 +48,13 @@ export function installMenu(ctx: MainContext): void {
 			{
 				label: zh.file,
 				submenu: [
-					{ label: zh.open, accelerator: 'Cmd+O', click: open },
+					{ label: zh.open, accelerator: 'Cmd+O', enabled: !saving, click: open },
 					{
 						label: zh.recent,
+						enabled: !saving,
 						submenu: ctx.windows.value.recent.map((root) => ({
 							label: root,
+							enabled: !saving,
 							click: () => {
 								void openRoot(root);
 							},

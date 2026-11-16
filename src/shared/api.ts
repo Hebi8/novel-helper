@@ -128,6 +128,8 @@ export interface Bootstrap {
 	openResult?: OpenResult;
 	notice?: string;
 	book?: Book;
+	focus: boolean;
+	closing: boolean;
 	icloudAvailable: boolean;
 	icloudBooks: ListedBook[];
 	recent: ListedBook[];
@@ -178,6 +180,7 @@ export interface AppAPI {
 	window: {
 		focus(enabled: boolean): Promise<void>;
 		onFocusChanged(listener: (enabled: boolean) => void): () => void;
+		onClosingChanged(listener: (closing: boolean) => void): () => void;
 		bootstrap(): Promise<Bootstrap>;
 		saveSession(session: SessionState): Promise<void>;
 		flushed(saved?: boolean): void;
@@ -218,6 +221,7 @@ export const channels = {
 	bookSearch: 'book:search',
 	focusSet: 'window:focus',
 	focusChanged: 'window:focusChanged',
+	closingChanged: 'window:closingChanged',
 	assistantState: 'assistant:state',
 	assistantProbe: 'assistant:probe',
 	assistantSend: 'assistant:send',
