@@ -378,6 +378,84 @@ export class Library {
 		return inside ? { blocked: { path: inside.from, sharedBy: [] } } : { renames: all };
 	}
 
+	/**
+	 * The top-level paths to move to Trash for a chapter or level, along with
+	 * all outline and summary files exclusively owned by it or its descendants,
+	 * resolved by the same companion and mirror-folder rules as `renames()`.
+	 */
+	trashTargets(node: BookNode): { targets: string[]; outlines: string[]; summaries: string[] } {
+		const subtree: BookNode[] = [];
+		const collect = (item: BookNode) => {
+			subtree.push(item);
+			item.children.forEach(collect);
+		};
+		collect(node);
+		const subtreePaths = new Set(subtree.map((item) => item.path));
+		const uses = this.uses();
+		const users = (path: string) => [...new Set(uses.filter((use) => use.file === path).map((use) => use.user))];
+		const outlineSet = new Set<string>();
+		const summarySet = new Set<string>();
+		for (const item of subtree) {
+			if (item.outline && users(item.outline).every((user) => subtreePaths.has(user))) {
+				outlineSet.add(item.outline);
+			}
+			if (item.summary && users(item.summary).every((user) => subtreePaths.has(user))) {
+				summarySet.add(item.summary);
+			}
+		}
+		if (node.kind === 'chapter') {
+			return {
+				targets: [node.path, ...outlineSet, ...summarySet],
+				outlines: [...outlineSet],
+				summaries: [...summarySet],
+			};
+		}
+		const owners = new Map<string, Set<string>>();
+		for (const use of uses) {
+			use.folders.forEach((level, folder) => owners.set(folder, (owners.get(folder) ?? new Set()).add(level)));
+		}
+		const levelNodes = subtree.filter((item) => item.kind === 'level');
+		const allLevels = this.levels();
+		const mirrorFolders: string[] = [];
+		for (const [folder, own] of this.mirrors()) {
+			const owned = owners.get(folder);
+			if (owned) {
+				if ([...owned].every((owner) => subtreePaths.has(owner))) {
+					mirrorFolders.push(folder);
+				}
+			} else if (
+				levelNodes.some(
+					(lvl) =>
+						isTail(own, [...lvl.dirs, lvl.name]) &&
+						allLevels.every((other) => subtreePaths.has(other.path) || !isTail(own, [...other.dirs, other.name])),
+				)
+			) {
+				mirrorFolders.push(folder);
+			}
+		}
+		for (const paths of this.companions.outline.values()) {
+			for (const path of paths.keys()) {
+				if (mirrorFolders.some((folder) => path.startsWith(`${folder}/`))) {
+					outlineSet.add(path);
+				}
+			}
+		}
+		for (const paths of this.companions.summary.values()) {
+			for (const path of paths.keys()) {
+				if (mirrorFolders.some((folder) => path.startsWith(`${folder}/`))) {
+					summarySet.add(path);
+				}
+			}
+		}
+		const candidates = [...new Set([node.path, ...outlineSet, ...mirrorFolders, ...summarySet])];
+		const targets = candidates.filter((one) => !candidates.some((other) => one !== other && one.startsWith(`${other}/`)));
+		return {
+			targets,
+			outlines: [...outlineSet],
+			summaries: [...summarySet],
+		};
+	}
+
 	/** Every level of the book. */
 	private levels(node: BookNode = this.tree()): BookNode[] {
 		return node.children.filter((child) => child.kind === 'level').flatMap((level) => [level, ...this.levels(level)]);

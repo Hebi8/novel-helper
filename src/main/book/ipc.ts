@@ -2,6 +2,7 @@ import { safePath } from '../scaffold/disk';
 import { readConflictDiff, resolveConflictCopy } from './conflicts';
 import { currentICloudRoot } from './files';
 import { copyBookToICloud, listICloudBooks, watchICloudBooks } from './icloud';
+import { bookEntries } from './indexer';
 import { bookPath } from './paths';
 import { ipcMain, dialog, shell } from 'electron';
 import { channels, type ConflictResolveInput } from '../../shared/api';
@@ -18,16 +19,18 @@ export function registerBook(ctx: MainContext): void {
 		stopWatching(id);
 		const onDestroyed = () => stopWatching(id);
 		const stop = watchICloudBooks(currentICloudRoot(), (books) => {
-			if (!event.sender.isDestroyed()) {
-				event.sender.send(channels.icloudChanged, books);
-			}
+			void bookEntries(books).then((entries) => {
+				if (!event.sender.isDestroyed()) {
+					event.sender.send(channels.icloudChanged, entries);
+				}
+			});
 		});
 		event.sender.once('destroyed', onDestroyed);
 		icloudWatchers.set(id, () => {
 			event.sender.removeListener('destroyed', onDestroyed);
 			stop();
 		});
-		return listICloudBooks();
+		return bookEntries(await listICloudBooks());
 	});
 	ipcMain.on(channels.icloudUnwatch, (event) => {
 		stopWatching(event.sender.id);
@@ -69,6 +72,10 @@ export function registerBook(ctx: MainContext): void {
 	ipcMain.handle(channels.bookReveal, async (event, path: string) => {
 		const book = ctx.bookFor(event)!;
 		shell.showItemInFolder(path ? await safePath(book.root, path) : book.root);
+	});
+	ipcMain.handle(channels.bookRenameTitle, (event, title: string) => {
+		const book = ctx.bookFor(event)!;
+		return ctx.snapshots.write(book.root, () => book.setTitle(title));
 	});
 	ipcMain.handle(channels.bookOpen, async (event, root?: string, chosen = false) => {
 		const window = ctx.windowFor(event);

@@ -56,6 +56,7 @@ export function relativeInside(folder: string, path: string): string | undefined
  */
 export interface Marker {
 	version: number;
+	title?: string;
 	language?: NamesLanguage;
 	/** The folders made for each kind of file, relative to the story folder. */
 	folders?: { chapters?: string; outlines?: string; summaries?: string; lore?: string[] };
@@ -82,11 +83,14 @@ export function parseMarker(text: string): Marker | undefined {
 	if (typeof data !== 'object' || data === null || Array.isArray(data)) {
 		return undefined;
 	}
-	const { version, language, folders, book } = data as Record<string, unknown>;
+	const { version, title, language, folders, book } = data as Record<string, unknown>;
 	if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
 		return undefined;
 	}
 	const marker: Marker = { version };
+	if (typeof title === 'string' && title.trim()) {
+		marker.title = title.trim();
+	}
 	if (language === 'zh' || language === 'en') {
 		marker.language = language;
 	}
@@ -104,6 +108,89 @@ export function parseMarker(text: string): Marker | undefined {
 		marker.book = book;
 	}
 	return marker;
+}
+
+/**
+ * Sets or updates top-level `title` in a marker JSON text while leaving all
+ * other fields and their formatting byte-for-byte unchanged.
+ */
+export function setMarkerTitle(raw: string, title: string): string | undefined {
+	if (!parseMarker(raw)) {
+		return undefined;
+	}
+	const skipWs = (index: number) => {
+		while (index < raw.length && (raw[index] === ' ' || raw[index] === '\t' || raw[index] === '\r' || raw[index] === '\n')) {
+			index++;
+		}
+		return index;
+	};
+	const scanString = (index: number) => {
+		let cursor = index + 1;
+		while (cursor < raw.length) {
+			if (raw[cursor] === '\\') {
+				cursor += 2;
+			} else if (raw[cursor] === '"') {
+				return cursor + 1;
+			} else {
+				cursor++;
+			}
+		}
+		return cursor;
+	};
+	const scanValue = (index: number) => {
+		if (raw[index] === '"') {
+			return scanString(index);
+		}
+		if (raw[index] === '{' || raw[index] === '[') {
+			let depth = 1;
+			let cursor = index + 1;
+			while (cursor < raw.length && depth > 0) {
+				if (raw[cursor] === '"') {
+					cursor = scanString(cursor);
+				} else {
+					if (raw[cursor] === '{' || raw[cursor] === '[') {
+						depth++;
+					} else if (raw[cursor] === '}' || raw[cursor] === ']') {
+						depth--;
+					}
+					cursor++;
+				}
+			}
+			return cursor;
+		}
+		let cursor = index;
+		while (cursor < raw.length && !/[\s,}\]]/.test(raw[cursor])) {
+			cursor++;
+		}
+		return cursor;
+	};
+	const open = skipWs(0);
+	const props: { key: string; afterDelimiter: number; keyStart: number; keyEnd: number; valueStart: number; valueEnd: number }[] = [];
+	let afterDelimiter = open + 1;
+	let cursor = skipWs(afterDelimiter);
+	while (cursor < raw.length && raw[cursor] !== '}') {
+		const keyStart = cursor;
+		const keyEnd = scanString(cursor);
+		const key = JSON.parse(raw.slice(keyStart, keyEnd)) as string;
+		const colon = skipWs(keyEnd);
+		const valueStart = skipWs(colon + 1);
+		const valueEnd = scanValue(valueStart);
+		props.push({ key, afterDelimiter, keyStart, keyEnd, valueStart, valueEnd });
+		cursor = skipWs(valueEnd);
+		if (raw[cursor] === ',') {
+			afterDelimiter = cursor + 1;
+			cursor = skipWs(afterDelimiter);
+		}
+	}
+	const encoded = JSON.stringify(title.trim());
+	const existing = [...props].reverse().find((prop) => prop.key === 'title');
+	if (existing) {
+		return raw.slice(0, existing.valueStart) + encoded + raw.slice(existing.valueEnd);
+	}
+	const last = props[props.length - 1];
+	const sep = raw.slice(last.afterDelimiter, last.keyStart);
+	const colon = raw.slice(last.keyEnd, last.valueStart);
+	return `${raw.slice(0, last.valueEnd)},${sep}"title"${colon}${encoded}${raw.slice(last.valueEnd)}`;
 }
 
 /**

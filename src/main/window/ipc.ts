@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { channels, type SessionState } from '../../shared/api';
 import { isICloudDriveAvailable, listICloudBooks } from '../book/icloud';
+import { bookEntries } from '../book/indexer';
 import type { MainContext } from '../context';
 export function registerWindow(ctx: MainContext): void {
 	ipcMain.handle(channels.focusSet, (event, enabled: boolean) => {
@@ -17,8 +18,8 @@ export function registerWindow(ctx: MainContext): void {
 			openResult: ctx.initialResult(event),
 			notice: ctx.initialNotice(event),
 			icloudAvailable,
-			icloudBooks: !index && icloudAvailable ? await listICloudBooks() : [],
-			recent: ctx.windows.value.recent,
+			icloudBooks: !index && icloudAvailable ? await bookEntries(await listICloudBooks()) : [],
+			recent: await bookEntries(ctx.windows.value.recent),
 			session: index ? ctx.windows.session(index.root) : { tabs: [] },
 			settings: ctx.settings.get(),
 			usage: ctx.completion.status(),

@@ -40,7 +40,7 @@ export function StructureInput({
 			alive = false;
 		};
 	}, [action, path]);
-	const title = action === 'chapter' ? zh.newChapter : action === 'level' ? zh.newLevel : zh.rename;
+	const title = action === 'chapter' ? zh.newChapter : action === 'level' ? (path === '' ? zh.newVolume : zh.newSublevel) : zh.rename;
 	return (
 		<Popover
 			title={title}

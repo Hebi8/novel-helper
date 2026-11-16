@@ -5,6 +5,7 @@ import { LorePanel } from './LorePanel';
 import { zh } from '../strings';
 export function LeftSidebar({
 	book,
+	renameBookRequest,
 	selected,
 	section,
 	select,
@@ -12,6 +13,7 @@ export function LeftSidebar({
 	hidden,
 }: {
 	book: Book;
+	renameBookRequest: number;
 	selected?: string;
 	section: number;
 	select(i: number): void;
@@ -28,7 +30,7 @@ export function LeftSidebar({
 				))}
 			</nav>
 			<div className="sidebar-panel" hidden={section !== 0}>
-				<ChaptersPanel tree={book.tree} selected={selected} open={open} />
+				<ChaptersPanel tree={book.tree} bookName={book.name} renameBookRequest={renameBookRequest} selected={selected} open={open} />
 			</div>
 			<div className="sidebar-panel" hidden={section !== 1}>
 				<OutlinePanel />

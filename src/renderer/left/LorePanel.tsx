@@ -88,8 +88,8 @@ export function LorePanel() {
 						</summary>
 						{group.entries.map((entry) => (
 							<Fragment key={entry.id}>
-								<button
-									className="tree-row lore-row"
+								<div
+									className={`tree-row lore-row ${menu?.entry.id === entry.id ? 'menu-open' : ''}`}
 									onClick={() => {
 										void workspace.open(entry.id);
 									}}
@@ -98,9 +98,24 @@ export function LorePanel() {
 										setMenu({ entry, x: event.clientX, y: event.clientY });
 									}}
 								>
-									<span>{entry.name}</span>
+									<button type="button" className="tree-name">
+										{entry.name}
+									</button>
 									<small>{[entry.always ? zh.always : '', entry.aliases.join('、')].filter(Boolean).join(' · ')}</small>
-								</button>
+									<span className="row-actions">
+										<button
+											type="button"
+											className="row-act row-dots"
+											onClick={(event) => {
+												event.stopPropagation();
+												const rect = event.currentTarget.getBoundingClientRect();
+												setMenu({ entry, x: rect.left, y: rect.bottom + 4 });
+											}}
+										>
+											{zh.moreActions}
+										</button>
+									</span>
+								</div>
 								{(conflicts.get(entry.id) ?? []).map((copy) => (
 									<button
 										type="button"
@@ -126,55 +141,44 @@ export function LorePanel() {
 				</button>
 			</div>
 			{menu ? (
-				<div
-					className="menu-backdrop"
-					onMouseDown={closeMenu}
-					onKeyDown={(event) => {
-						if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
-							closeMenu();
-						}
-					}}
-				>
-					<div className="context-menu" role="menu" style={{ left: menu.x, top: menu.y }} onMouseDown={(event) => event.stopPropagation()}>
-						<button
-							autoFocus
-							role="menuitem"
-							onClick={() => {
+				<TreeMenu
+					x={menu.x}
+					y={menu.y}
+					label={zh.lore}
+					close={closeMenu}
+					actions={[
+						{
+							label: zh.rename,
+							run: () => workspace.structure('rename', menu.entry.id),
+						},
+						{
+							label: menu.entry.always ? zh.unsetAlways : zh.setAlways,
+							run: () => {
 								void run(() => window.novel.reference.set(menu.entry.id, 'always', !menu.entry.always));
-							}}
-						>
-							{menu.entry.always ? zh.unsetAlways : zh.setAlways}
-						</button>
-						<button
-							role="menuitem"
-							onClick={() => {
-								setEdit({ kind: 'aliases', entry: menu.entry });
-								setMenu(undefined);
-							}}
-						>
-							{zh.setAliases}
-						</button>
-						<button
-							role="menuitem"
-							onClick={() => {
-								setEdit({ kind: 'type', entry: menu.entry });
-								setMenu(undefined);
-							}}
-						>
-							{zh.setType}
-						</button>
-						<button
-							role="menuitem"
-							onClick={() => {
-								const path = menu.entry.id;
-								closeMenu();
-								void window.novel.book.reveal(path).catch((error) => setError(errorMessage(error)));
-							}}
-						>
-							{zh.reveal}
-						</button>
-					</div>
-				</div>
+							},
+						},
+						{
+							label: zh.setAliases,
+							run: () => setEdit({ kind: 'aliases', entry: menu.entry }),
+						},
+						{
+							label: zh.setType,
+							run: () => setEdit({ kind: 'type', entry: menu.entry }),
+						},
+						{
+							label: zh.reveal,
+							run: () => {
+								void window.novel.book.reveal(menu.entry.id).catch((err) => setError(errorMessage(err)));
+							},
+						},
+						{
+							label: zh.moveToTrash,
+							separatorBefore: true,
+							danger: true,
+							run: () => workspace.trash({ kind: 'lore', path: menu.entry.id }),
+						},
+					]}
+				/>
 			) : null}
 			{conflictMenu ? (
 				<TreeMenu

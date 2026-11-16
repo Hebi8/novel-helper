@@ -2,6 +2,7 @@ import { dirname } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { firstNames } from '../../core/scaffold';
 import { suggestChapterName, suggestLevelName, nameProblem } from '../../core/book';
+import { stem } from '../../core/text';
 import type { BookNode } from '../../core/library';
 import type { BookIndex } from '../book/indexer';
 import { bookFolder, bookNames } from '../book/names';
@@ -25,14 +26,19 @@ export function targetLevel(tree: BookNode, path?: string): BookNode {
 export async function structureSuggestion(index: BookIndex, action: StructureAction, path?: string) {
 	const tree = index.book.tree;
 	const first = firstNames(bookNames(index).language);
+	if (action === 'rename') {
+		const node = findNode(tree, path!);
+		if (node) {
+			return { name: node.name, chapter: '' };
+		}
+		if (path && index.library.entry(path)) {
+			return { name: stem(path), chapter: '' };
+		}
+		throw new Error(zh.fileMissing);
+	}
 	const target = targetLevel(tree, path);
 	return {
-		name:
-			action === 'rename'
-				? findNode(tree, path!)!.name
-				: action === 'chapter'
-					? suggestChapterName(tree, target, first.chapter + ' ')
-					: suggestLevelName(tree, target, first.volume + ' '),
+		name: action === 'chapter' ? suggestChapterName(tree, target, first.chapter + ' ') : suggestLevelName(tree, target, first.volume + ' '),
 		chapter: suggestChapterName(tree, { ...target, children: [] }, first.chapter + ' '),
 	};
 }

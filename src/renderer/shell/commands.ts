@@ -2,6 +2,7 @@ import { assistantEvents } from '../assistant/events';
 import type { MenuCommand } from '../../shared/api';
 import type { useDocuments } from '../editor/useDocuments';
 interface CommandTarget {
+	renameBook(): void;
 	saveToICloud(): void;
 	newChapter(): void;
 	searchBook(): void;
@@ -18,6 +19,7 @@ export function commands(target: CommandTarget): Record<MenuCommand, () => void>
 	const active = () => docs.sessionRef.current.active;
 	const editor = () => (active() ? docs.handles.current.get(active()!) : undefined);
 	return {
+		renameBook: target.renameBook,
 		saveToICloud: target.saveToICloud,
 		newChapter: target.newChapter,
 		searchBook: target.searchBook,

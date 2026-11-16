@@ -9,9 +9,11 @@ import { initialization, initialize, prepareOpen } from '../main/scaffold/initia
 import { createFile, info } from '../main/scaffold/disk';
 import { createStructure, structureSuggestion } from '../main/scaffold/structure';
 import { renamePlan, renameBook } from '../main/scaffold/rename';
+import { executeTrash, trashPlan } from '../main/scaffold/trash';
+import { resolveUserDataPath, USER_DATA_DIR_NAME } from '../main/window/paths';
 import { atomicWrite } from '../main/book/files';
 import { searchBook, searchTexts } from '../main/search/search';
-import { BookIndex } from '../main/book/indexer';
+import { BookIndex, readBookTitle } from '../main/book/indexer';
 import { MARKER_FILE } from '../core/story';
 import { parseBuoyFile, renameState, serializeBuoyFile } from '../core/buoy';
 import { defaults } from '../shared/defaults';
@@ -425,4 +427,95 @@ test('buoy records are read after planning so the last completed update is prese
 	const after = parseBuoyFile(await readFile(join(book, movedPath(path, plan)), 'utf8'))!;
 	assert.equal(after.marks.length, record.marks.length);
 	assert.equal(after.marks.at(-1)!.before, 'last update');
+});
+
+test('userData path continues using Novel Helper unless overridden by --user-data-dir', () => {
+	assert.equal(USER_DATA_DIR_NAME, 'Novel Helper');
+	assert.equal(
+		resolveUserDataPath('/Users/writer/Library/Application Support', ['electron', 'dist/main/index.js']),
+		'/Users/writer/Library/Application Support/Novel Helper',
+	);
+	assert.equal(
+		resolveUserDataPath('/Users/writer/Library/Application Support', ['electron', '--user-data-dir=/tmp/custom']),
+		'/tmp/custom',
+	);
+});
+
+test('book title updates project.json losslessly while preserving folder name and book outline name', async (t) => {
+	const { book, index } = await fixture(t);
+	const before = await readFile(join(book, MARKER_FILE), 'utf8');
+	assert.equal(index.book.name, 'book');
+	assert.equal(await readBookTitle(book), 'book');
+	await index.setTitle('雾港纪事');
+	const after = await readFile(join(book, MARKER_FILE), 'utf8');
+	assert.equal(after.replace(',\n  "title": "雾港纪事"', ''), before);
+	assert.equal(index.book.name, '雾港纪事');
+	assert.equal(index.book.tree.name, '全书');
+	assert.equal(await readBookTitle(book), '雾港纪事');
+	await assert.rejects(index.setTitle('   '), /名字为空/);
+});
+
+test('trashing chapters, volumes and lore entries moves companions and stops without rollback on partial failure', async (t) => {
+	const { book, index, root } = await fixture(t);
+	const trashDir = join(root, 'trash');
+	await mkdir(trashDir);
+	const trashed: string[] = [];
+	let trashSeq = 0;
+	const fakeTrash = async (fullPath: string) => {
+		trashed.push(fullPath.slice(book.length + 1));
+		await renameFile(fullPath, join(trashDir, `${++trashSeq}`));
+	};
+
+	// Lore rename and trash.
+	const loreResult = await index.exclusive(() => rename(index, '人物/陆青.md', '陆青青'));
+	assert.deepEqual(loreResult.renames, [{ from: '人物/陆青.md', to: '人物/陆青青.md' }]);
+	assert.ok(index.library.entry('人物/陆青青.md'));
+	const lorePreview = await trashPlan(index, { kind: 'lore', path: '人物/陆青青.md' });
+	assert.equal(lorePreview.kind, 'lore');
+	assert.equal(lorePreview.name, '陆青青');
+	await index.exclusive(() => executeTrash(index, { kind: 'lore', path: '人物/陆青青.md' }, fakeTrash));
+	assert.equal(index.library.entry('人物/陆青青.md'), undefined);
+	assert.deepEqual(trashed, ['人物/陆青青.md']);
+
+	// Partial failure on chapter trash stops immediately, reports moved vs untouched, and rebuilds index.
+	trashed.length = 0;
+	let calls = 0;
+	const partial = await index.exclusive(() =>
+		executeTrash(index, { kind: 'structure', path: chapter }, async (fullPath) => {
+			if (++calls === 2) {
+				throw new Error('trash failed');
+			}
+			await fakeTrash(fullPath);
+		}),
+	);
+	assert.deepEqual(partial.trashed, [chapter]);
+	assert.match(partial.error!, /已移到废纸篓/);
+	assert.match(partial.error!, /未移动/);
+	assert.equal(index.library.isChapter(chapter), false);
+	assert.ok(await info(join(book, chapter.replace('正文/', '大纲/'))));
+	assert.ok(await info(join(book, `.novel-helper/buoys/${chapter}.json`)));
+
+	// Volume trash moves volume folder, volume outline, mirror outline folder, shallow summary, and buoy folder.
+	trashed.length = 0;
+	const volPath = '正文/第一卷 雾港';
+	const volPreview = await trashPlan(index, { kind: 'structure', path: volPath });
+	assert.equal(volPreview.sublevels, 1);
+	assert.equal(volPreview.sublevelUnit, '幕');
+	assert.equal(volPreview.chapters, 1);
+	assert.equal(volPreview.summaries, 1);
+	assert.equal(volPreview.hasBuoys, true);
+	const volResult = await index.exclusive(() => executeTrash(index, { kind: 'structure', path: volPath }, fakeTrash));
+	assert.equal(volResult.error, undefined);
+	assert.deepEqual(
+		volResult.trashed.sort(),
+		[
+			'.novel-helper/buoys/正文/第一卷 雾港',
+			'大纲/第一卷 雾港',
+			'大纲/第一卷 雾港.md',
+			'摘要/第1章 雾里来信.md',
+			'正文/第一卷 雾港',
+		].sort(),
+	);
+	assert.equal(index.library.chapterList().length, 0);
+	assert.ok(await info(join(book, '大纲/全书.md')));
 });

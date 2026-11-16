@@ -7,9 +7,22 @@ import { readdir, stat, mkdir } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { join, basename, matchesGlob } from 'node:path';
 import { Library, globRootDepth, globFolders, type FileKind, type Rename } from '../../core/library';
-import { MARKER_FILE, SCAN_DEPTH, SCAN_EXCLUDE, parseMarker, type Marker, storiesFromMarkers } from '../../core/story';
+import { markerOf } from '../../core/scaffold';
+import {
+	MARKER_FILE,
+	SCAN_DEPTH,
+	SCAN_EXCLUDE,
+	parseMarker,
+	serializeMarker,
+	setMarkerTitle,
+	type Marker,
+	storiesFromMarkers,
+} from '../../core/story';
+import { zh } from '../../renderer/strings';
 import { defaults, type Settings } from '../../shared/defaults';
-import type { Book, DiskFile, SaveResult } from '../../shared/api';
+import type { Book, DiskFile, ListedBook, SaveResult } from '../../shared/api';
+import { safePath } from '../scaffold/disk';
+import { bookNames } from './names';
 import {
 	atomicWrite,
 	currentICloudRoot,
@@ -91,6 +104,18 @@ export async function findStories(root: string, icloudRoot = currentICloudRoot()
 	return storiesFromMarkers(markers)
 		.slice(0, 50)
 		.map((path) => join(root, path));
+}
+export async function readBookTitle(root: string, icloudRoot = currentICloudRoot()): Promise<string> {
+	const fallback = basename(root);
+	try {
+		const text = await readAuxiliaryOptional(root, MARKER_FILE, isBookInICloud(root, icloudRoot));
+		return (text !== undefined ? parseMarker(text)?.title : undefined) ?? fallback;
+	} catch {
+		return fallback;
+	}
+}
+export async function bookEntries(roots: readonly string[], icloudRoot = currentICloudRoot()): Promise<ListedBook[]> {
+	return Promise.all(roots.map(async (root) => ({ root, name: await readBookTitle(root, icloudRoot) })));
 }
 export class BookIndex {
 	library = new Library(defaults['files.bookNames']);
@@ -179,7 +204,7 @@ export class BookIndex {
 	get book(): Book {
 		return {
 			root: this.root,
-			name: basename(this.root),
+			name: this.marker?.title ?? basename(this.root),
 			inICloud: this.inICloud,
 			tree: this.library.tree(),
 			conflicts: this.conflictList(),
@@ -190,12 +215,53 @@ export class BookIndex {
 	followRenames(renames: Rename[]): void {
 		this.opened = new Set([...this.opened].map((path) => movedPath(path, renames)));
 	}
+	untrackRemoved(paths: readonly string[]): void {
+		this.opened = new Set(
+			[...this.opened].filter((opened) => !paths.some((removed) => opened === removed || opened.startsWith(`${removed}/`))),
+		);
+	}
+	async setTitle(title: string): Promise<void> {
+		const clean = title.trim();
+		if (!clean) {
+			throw new Error(zh.invalidName);
+		}
+		await this.enqueue(async () => {
+			const full = await safePath(this.root, MARKER_FILE);
+			const before = await readOptional(full);
+			let after: string;
+			if (before === undefined) {
+				after = serializeMarker({ ...markerOf(bookNames(this)), title: clean });
+			} else {
+				const updated = setMarkerTitle(before, clean);
+				if (updated === undefined) {
+					throw new Error(zh.invalidMarker);
+				}
+				after = updated;
+			}
+			await mkdir(dirname(full), { recursive: true });
+			await atomicWrite(full, after);
+			this.marker = parseMarker(after);
+			this.notify();
+		});
+	}
 	start(): void {
 		this.watcher = watch(this.root, { recursive: true }, (_event, filename) => {
 			if (!filename) {
 				return;
 			}
 			const path = filename.toString();
+			if (path === MARKER_FILE) {
+				void this.enqueue(async () => {
+					try {
+						const marker = await readAuxiliaryOptional(this.root, MARKER_FILE, this.inICloud);
+						this.marker = marker !== undefined ? parseMarker(marker) : undefined;
+						this.notify();
+					} catch {
+						// Ignore unreadable external edits to the marker file.
+					}
+				});
+				return;
+			}
 			if (path.startsWith('.novel-helper/buoys/')) {
 				if (conflictCandidate(path, this.inICloud, ['.json']) === undefined) {
 					this.buoyVersion++;

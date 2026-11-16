@@ -13,6 +13,8 @@ const api: AppAPI = {
 		initialize: (root, language, selected) => ipcRenderer.invoke(c.structureInitialize, root, language, selected),
 		suggest: (action, path) => ipcRenderer.invoke(c.structureSuggest, action, path),
 		create: (input) => ipcRenderer.invoke(c.structureCreate, input),
+		trashPlan: (target) => ipcRenderer.invoke(c.structureTrashPlan, target),
+		trash: (target) => ipcRenderer.invoke(c.structureTrash, target),
 	},
 	search: { find: (query) => ipcRenderer.invoke(c.bookSearch, query) },
 	assistant: {
@@ -47,6 +49,7 @@ const api: AppAPI = {
 	},
 	book: {
 		reveal: (path) => ipcRenderer.invoke(c.bookReveal, path),
+		renameTitle: (title) => ipcRenderer.invoke(c.bookRenameTitle, title),
 		onOpenResult: (listener) => listen(c.openResult, listener),
 		open: (root, selected) => ipcRenderer.invoke(c.bookOpen, root, selected),
 		saveToICloud: () => ipcRenderer.invoke(c.bookSaveToICloud),

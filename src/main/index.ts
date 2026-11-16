@@ -17,20 +17,21 @@ import { isICloudDriveAvailableSync } from './book/icloud';
 import { type BookIndex } from './book/indexer';
 import { registerFeatures } from './register';
 import { installMenu } from './window/menu';
+import { resolveUserDataPath, USER_DATA_DIR_NAME } from './window/paths';
+import { zh } from '../renderer/strings';
 import { channels, type OpenResult } from '../shared/api';
 import type { MainContext } from './context';
 const testing = process.argv.includes('--test-mode');
-const userData = process.argv.find((arg) => arg.startsWith('--user-data-dir='))?.slice('--user-data-dir='.length);
-if (userData) {
-	app.setPath('userData', userData);
-}
+const explicitUserData = process.argv.find((arg) => arg.startsWith('--user-data-dir='))?.slice('--user-data-dir='.length);
+const userData = resolveUserDataPath(app.getPath('appData'), process.argv);
+app.setName(USER_DATA_DIR_NAME);
+app.setPath('userData', userData);
 const icloudDir = parseTestICloudArg(process.argv);
 if (icloudDir) {
 	setTestICloudRoot(icloudDir);
 } else if (testing) {
-	setTestICloudRoot(join(userData ?? tmpdir(), '__novel_helper_disabled_icloud__'));
+	setTestICloudRoot(join(explicitUserData ?? tmpdir(), '__novel_helper_disabled_icloud__'));
 }
-app.setName('Novel Helper');
 if (!app.requestSingleInstanceLock()) {
 	app.quit();
 } else {
@@ -42,8 +43,12 @@ if (!app.requestSingleInstanceLock()) {
 		}
 	});
 	void app.whenReady().then(async () => {
+		app.setName(zh.app);
+		app.setAboutPanelOptions({ applicationName: zh.app });
 		if (testing) {
 			app.dock?.hide();
+		} else if (!app.isPackaged) {
+			app.dock?.setIcon(join(__dirname, '../../build/icon.png'));
 		}
 		const directory = app.getPath('userData');
 		app.setAppLogsPath(join(directory, 'logs'));
@@ -81,7 +86,7 @@ if (!app.requestSingleInstanceLock()) {
 				minWidth: settingsOnly ? 500 : 820,
 				minHeight: 400,
 				show: false,
-				title: 'Novel Helper',
+				title: index ? index.book.name : zh.app,
 				titleBarStyle: 'hiddenInset',
 				backgroundColor: '#fbfaf7',
 				webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
@@ -91,7 +96,11 @@ if (!app.requestSingleInstanceLock()) {
 			}
 			if (index) {
 				books.set(window.webContents.id, index);
-				index.onChanged((book) => window.webContents.send(channels.bookChanged, book));
+				index.onChanged((book) => {
+					window.setTitle(book.name);
+					installMenu(context);
+					window.webContents.send(channels.bookChanged, book);
+				});
 				index.onFileChanged((file) => window.webContents.send(channels.fileChanged, file));
 				index.start();
 				windows.opened(index.root);
@@ -163,6 +172,10 @@ if (!app.requestSingleInstanceLock()) {
 		const context: MainContext = {
 			prepareBookRename,
 			isBookBusy: isAssistantBusy,
+			hasFocusedBook: () => {
+				const active = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+				return Boolean(active && books.has(active.webContents.id));
+			},
 			canSaveFocusedBookToICloud: () => {
 				if (!isICloudDriveAvailableSync()) {
 					return false;

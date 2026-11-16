@@ -87,7 +87,7 @@ test('saves a book to iCloud after checking conflicts, busy assistant, existing 
 	const root = await realpath(await mkdtemp(join(tmpdir(), 'novel-icloud-save-e2e-')));
 	const icloud = join(root, 'Mobile Documents');
 	const drive = join(icloud, 'com~apple~CloudDocs');
-	const booksDir = join(drive, 'Novel Helper');
+	const booksDir = join(drive, 'hebi8L');
 	const localBook = join(root, '雾港');
 	const otherBook = join(root, '另一本书');
 	const data = join(root, 'data');
@@ -151,7 +151,7 @@ test('saves a book to iCloud after checking conflicts, busy assistant, existing 
 			await page.locator('.topbar button.topbar-book').click();
 			await page.getByRole('menuitem', { name: '存到 iCloud', exact: true }).click();
 			const dialog = page.getByRole('dialog', { name: '存到 iCloud', exact: true });
-			await expect(dialog).toContainText('iCloud 云盘/Novel Helper/雾港');
+			await expect(dialog).toContainText('iCloud 云盘/hebi8L/雾港');
 			await expect(dialog).toContainText('原来的文件夹保留不动');
 			return dialog;
 		};
@@ -385,7 +385,7 @@ test('welcome page lists iCloud books without deduplicating recent, watches for 
 	const root = await realpath(await mkdtemp(join(tmpdir(), 'novel-icloud-welcome-e2e-')));
 	const icloud = join(root, 'Mobile Documents');
 	const drive = join(icloud, 'com~apple~CloudDocs');
-	const booksDir = join(drive, 'Novel Helper');
+	const booksDir = join(drive, 'hebi8L');
 	const firstBook = join(booksDir, '雾港');
 	const syncedBook = join(booksDir, '北境来信');
 	const stagingBook = join(root, 'staging-book');
@@ -451,7 +451,7 @@ test('blocks window close while initial saveAll is pending during Save to iCloud
 	const root = await realpath(await mkdtemp(join(tmpdir(), 'novel-icloud-close-gate-e2e-')));
 	const icloud = join(root, 'Mobile Documents');
 	const drive = join(icloud, 'com~apple~CloudDocs');
-	const booksDir = join(drive, 'Novel Helper');
+	const booksDir = join(drive, 'hebi8L');
 	const localBook = join(root, '雾港');
 	const otherBook = join(root, '另一本书');
 	const data = join(root, 'data');

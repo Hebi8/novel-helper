@@ -14,6 +14,7 @@ export interface MainContext {
 	reindexBooks(): Promise<void>;
 	prepareBookRename(root: string): Promise<void>;
 	isBookBusy(root: string): boolean;
+	hasFocusedBook(): boolean;
 	canSaveFocusedBookToICloud(): boolean;
 	isFocusedBookSavingToICloud(): boolean;
 	setSavingToICloud(senderId: number, state: 'copying' | 'closing' | undefined): void;

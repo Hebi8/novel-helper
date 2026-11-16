@@ -5,14 +5,14 @@ import { conflictOriginal } from '../../core/conflict';
 import type { Rename } from '../../core/library';
 import { nameProblem } from '../../core/book';
 import { BUOY_FOLDER, hasOpenMarks, markAt, parseBuoyFile, renameState, serializeBuoyFile, type BuoyFile } from '../../core/buoy';
-import { frontmatterLength } from '../../core/text';
+import { frontmatterLength, stem } from '../../core/text';
 import type { BookIndex } from '../book/indexer';
 import { atomicWrite, readOptional } from '../book/files';
 import { info, safePath } from './disk';
 import { findNode } from './structure';
 import { zh } from '../../renderer/strings';
 import type { RenameResult } from '../../shared/structure';
-async function jsonFiles(root: string, path: string, inICloud: boolean): Promise<string[]> {
+export async function jsonFiles(root: string, path: string, inICloud: boolean): Promise<string[]> {
 	if (!(await info(join(root, path)))) {
 		return [];
 	}
@@ -34,7 +34,32 @@ async function jsonFiles(root: string, path: string, inICloud: boolean): Promise
 }
 export async function renamePlan(index: BookIndex, path: string, name: string): Promise<Rename[]> {
 	const node = findNode(index.book.tree, path);
-	if (!node || node.kind === 'book' || nameProblem(name, [])) {
+	if (!node) {
+		const loreEntry = index.library.entry(path);
+		if (!loreEntry || nameProblem(name, [])) {
+			throw new Error(zh.invalidName);
+		}
+		name = name.trim();
+		const oldStem = stem(path);
+		if (name === oldStem) {
+			return [];
+		}
+		if (name.toLowerCase() === oldStem.toLowerCase()) {
+			throw new Error(zh.renameCase);
+		}
+		const slash = path.lastIndexOf('/') + 1;
+		const to = path.slice(0, slash) + name + path.slice(slash + oldStem.length);
+		const source = await safePath(index.root, path);
+		const target = await safePath(index.root, to);
+		if (!(await info(source))) {
+			throw new Error(`${zh.fileMissing}: ${path}`);
+		}
+		if (await info(target)) {
+			throw new Error(`${zh.fileExists}: ${to}`);
+		}
+		return [{ from: path, to }];
+	}
+	if (node.kind === 'book' || nameProblem(name, [])) {
 		throw new Error(zh.invalidName);
 	}
 	name = name.trim();

@@ -1,4 +1,4 @@
-# Novel Helper for Mac
+# hebi8L
 
 [简体中文](README.zh-CN.md)
 
@@ -24,7 +24,7 @@ npm run e2e
 npm run pack
 ```
 
-`pack` produces an unsigned arm64 application at `release/mac-arm64/Novel Helper.app`, with the default Electron icon. It only builds a directory target: no DMG, notarization or automatic updates.
+`pack` produces an unsigned arm64 application at `release/mac-arm64/hebi8L.app`, using `build/icon.icns`. It only builds a directory target: no DMG, notarization or automatic updates.
 
 ## Open or create a book
 
@@ -39,10 +39,12 @@ Use **⌘O** or **打开文件夹** to choose a folder. If the folder is not its
 | Accept / dismiss ghost text | Tab / Esc; typing also dismisses it |
 | Accept the first sentence | ⌘→ |
 | Request a continuation | ⌥\ |
-| New chapter, continuing the numbering | ⌘N, top bar or chapter-tree context menu |
-| New volume or nested level, with its first chapter | Chapter-tree context menu |
-| Rename a chapter or level with outlines, summaries and buoy records | Chapter-tree context menu |
-| Reveal a chapter, outline or lore item in Finder | Its context menu |
+| New chapter, continuing the numbering | ⌘N, hover button or `⋯`/context menu in the chapter tree |
+| New volume or nested level, with its first chapter | Hover button on the book row or `⋯`/context menu in the chapter tree |
+| Rename the book (`title` in `.novel-helper/project.json`) | Double-click the book row, its `⋯` menu, or **文件 → 重命名书…** |
+| Rename a chapter, level or lore entry | Its `⋯` or context menu |
+| Move a chapter, level (with companions and buoys) or lore entry to Trash | Its `⋯` or context menu |
+| Reveal a chapter, outline or lore item in Finder | Its `⋯` or context menu |
 | Quick open | ⌘P |
 | Find and replace in the current file | ⌘F |
 | Literal, case-insensitive book search | ⌘⇧F; total count, first 200 matches, no book-wide replacement |
@@ -55,7 +57,7 @@ Use **⌘O** or **打开文件夹** to choose a folder. If the folder is not its
 
 The left sidebar edits chapters, outlines and lore. The right sidebar reads outlines and lore, and holds the assistant. Chapters, outlines and other files are edited as plain Markdown in tabs; lore entries keep the full document in the editor while hiding the frontmatter block behind a left-aligned header (read-only filename title with a **源码** / **表单** toggle on the right), a two-column property grid and a thin divider above the body, preserving undo history across mode switches (switching automatically to raw source when find or book search jumps to a match inside hidden frontmatter, and falling back to raw source untouched when frontmatter lacks a newline after its closing delimiter or cannot be rewritten losslessly). Font, size and optional current-line centering are configurable; colors follow the system. Focus mode hides application chrome and restores the previous sidebar state when toggled again. Esc remains available to dismiss ghost text.
 
-Typing pauses save after one second; switching tabs, leaving the window and starting an assistant turn also save. Search and rename save pending edits first. IME composition is respected. External changes reload clean documents; unsaved documents show a conflict with a diff and a choice of versions. Files retain their line endings. Unsupported encoding or mixed line endings stop editing. There is no file deletion, dragging or reorder interface.
+Typing pauses save after one second; switching tabs, leaving the window and starting an assistant turn also save. Search, rename and moving items to the Trash save pending edits first. IME composition is respected. External changes reload clean documents; unsaved documents show a conflict with a diff and a choice of versions. Files retain their line endings. Unsupported encoding or mixed line endings stop editing. Chapters, levels (together with their outlines, summaries and buoy records) and lore entries can be moved to the macOS Trash after confirmation; there is no dragging or reorder interface.
 
 See [`docs/ux.md`](docs/ux.md) for the complete behavior and [`docs/layout.html`](docs/layout.html) for the layout.
 
@@ -151,8 +153,8 @@ Manual edits also have timed snapshots under `snapshots/<book-id>/` in the appli
 
 ## Syncing across two Macs
 
-- On one Mac, choose **存到 iCloud** from the book-name menu in the top bar (or **文件 → 存到 iCloud**). After confirmation, the app saves all open edits, covers the window with a blocking **正在存到 iCloud…** overlay until switching finishes or fails, and copies the book into `~/Library/Mobile Documents/com~apple~CloudDocs/Novel Helper/<Book>/` (recording each source file's path, size and modification time first, copying to `<Book>.partial` while skipping `.git`, `node_modules` and legacy `.novel-helper/snapshots`, verifying every copied file byte-for-byte and rechecking that no source file changed, then exclusively `mkdir`-creating `<Book>` before renaming `<Book>.partial` onto it; aborting without touching any existing target and moving `.partial` to the Trash via `shell.trashItem` if the source changed during copy, the target appeared concurrently, or any step fails; refusing if there are unresolved conflicts, a running assistant turn, or an existing folder of the same name in iCloud). The original folder is left untouched; the app then closes the old window, opens the iCloud copy, replaces the old path in **最近打开**, and shows a one-time notice at the top of the new window.
-- On another Mac signed in to the same Apple Account, the welcome page lists folders under `Novel Helper/` in **iCloud 里的书** (shown whenever at least one book folder exists, without deduplicating against **最近打开**, and watching the folder while the welcome page is open so newly synced books appear automatically); click a book to open it and keep writing. No iCloud UI is shown when `~/Library/Mobile Documents/com~apple~CloudDocs` does not exist, and **存到 iCloud** is hidden when the open book is already in iCloud Drive.
+- On one Mac, choose **存到 iCloud** from the book-name menu in the top bar (or **文件 → 存到 iCloud**). After confirmation, the app saves all open edits, covers the window with a blocking **正在存到 iCloud…** overlay until switching finishes or fails, and copies the book into `~/Library/Mobile Documents/com~apple~CloudDocs/hebi8L/<Folder>/` (recording each source file's path, size and modification time first, copying to `<Folder>.partial` while skipping `.git`, `node_modules` and legacy `.novel-helper/snapshots`, verifying every copied file byte-for-byte and rechecking that no source file changed, then exclusively `mkdir`-creating `<Folder>` before renaming `<Folder>.partial` onto it; aborting without touching any existing target and moving `.partial` to the Trash via `shell.trashItem` if the source changed during copy, the target appeared concurrently, or any step fails; refusing if there are unresolved conflicts, a running assistant turn, or an existing folder of the same name in iCloud). The original folder is left untouched; the app then closes the old window, opens the iCloud copy, replaces the old path in **最近打开**, and shows a one-time notice at the top of the new window.
+- On another Mac signed in to the same Apple Account, the welcome page lists folders under `hebi8L/` in **iCloud 里的书** (shown whenever at least one book folder exists, without deduplicating against **最近打开**, and watching the folder while the welcome page is open so newly synced books appear automatically); click a book to open it and keep writing. No iCloud UI is shown when `~/Library/Mobile Documents/com~apple~CloudDocs` does not exist, and **存到 iCloud** is hidden when the open book is already in iCloud Drive.
 - In Finder, choose **Keep Downloaded** (**保留下载**) on the book folder so chapters stay downloaded on disk rather than cloud-only placeholders.
 - Snapshots stay local on each Mac under its own application data directory and are never synced through iCloud. Saving a book to iCloud starts a new snapshot history under its new path; the old snapshots remain on that Mac's disk but are no longer visible in the UI.
 - Conflict copies are only recognized for books inside iCloud Drive (`~/Library/Mobile Documents/`). Inside iCloud Drive, avoid naming a regular file `Name 2.md` alongside `Name.md`, as it will be treated as a conflict copy.
@@ -161,8 +163,8 @@ Manual edits also have timed snapshots under `snapshots/<book-id>/` in the appli
 ## Data and logs
 
 - Manuscripts, lore and outlines stay in the selected book folder.
-- `.novel-helper/project.json` marks the book; buoys and templates also live under `.novel-helper/`.
-- Application settings, window state, shared usage records, per-book assistant conversations and per-book snapshots (`snapshots/<book-id>/`, with `book.json`) live under Electron's application data directory in `~/Library/Application Support/` (`Novel Helper` by default).
+- `.novel-helper/project.json` marks the book and stores its optional `title` (falling back to the folder name); buoys and templates also live under `.novel-helper/`.
+- Application settings, window state, shared usage records, per-book assistant conversations and per-book snapshots (`snapshots/<book-id>/`, with `book.json`) live under `~/Library/Application Support/Novel Helper` (preserved across the rename to `hebi8L`, along with the existing keychain item).
 - API keys remain encrypted using macOS safe storage backed by the system keychain, in the application data directory.
 - Logs are in the application's `logs/` directory. **帮助 → 打开日志** reveals it in Finder.
 

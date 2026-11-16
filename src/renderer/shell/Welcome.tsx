@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { errorMessage } from '../errors';
-import type { OpenResult } from '../../shared/api';
+import type { ListedBook, OpenResult } from '../../shared/api';
 import { zh } from '../strings';
 export function Welcome({
 	ready = false,
@@ -11,13 +11,13 @@ export function Welcome({
 	dismiss,
 }: {
 	ready?: boolean;
-	recent: string[];
-	initialICloudBooks?: string[];
+	recent: ListedBook[];
+	initialICloudBooks?: ListedBook[];
 	result?: OpenResult;
 	open(root?: string, selected?: boolean): void;
 	dismiss(): void;
 }) {
-	const [icloudBooks, setICloudBooks] = useState<string[]>(initialICloudBooks);
+	const [icloudBooks, setICloudBooks] = useState<ListedBook[]>(initialICloudBooks);
 	useEffect(() => {
 		setICloudBooks(initialICloudBooks);
 	}, [initialICloudBooks]);
@@ -60,9 +60,9 @@ export function Welcome({
 			{recent.length ? (
 				<section aria-label={zh.recent}>
 					<h2>{zh.recent}</h2>
-					{recent.map((root) => (
-						<button key={root} onClick={() => open(root)}>
-							{root.split('/').pop()}
+					{recent.map((item) => (
+						<button key={item.root} onClick={() => open(item.root)}>
+							{item.name}
 						</button>
 					))}
 				</section>
@@ -70,9 +70,9 @@ export function Welcome({
 			{icloudBooks.length ? (
 				<section aria-label={zh.icloudBooks}>
 					<h2>{zh.icloudBooks}</h2>
-					{icloudBooks.map((root) => (
-						<button key={root} onClick={() => open(root)}>
-							{root.split('/').pop()}
+					{icloudBooks.map((item) => (
+						<button key={item.root} onClick={() => open(item.root)}>
+							{item.name}
 						</button>
 					))}
 				</section>

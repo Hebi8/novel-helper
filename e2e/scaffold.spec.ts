@@ -126,9 +126,9 @@ test('new chapters, new volumes, safe rename and tab paths follow the chapter tr
 		const renamed = '正文/第一卷 雾港/第一幕 来信/Chapter 3 Renamed.md';
 		await expect(page.locator('.editor:visible .cm-content')).toHaveAttribute('aria-label', renamed);
 		expect(await readFile(join(book, renamed), 'utf8')).toBe('A new chapter.');
-		await tree.getByRole('button', { name: '全书', exact: true }).click({ button: 'right' });
-		await page.getByRole('menuitem', { name: '新建卷或下一层', exact: true }).click();
-		const volume = page.getByRole('dialog', { name: '新建卷或下一层', exact: true });
+		await tree.getByRole('button', { name: 'book', exact: true }).click({ button: 'right' });
+		await page.getByRole('menuitem', { name: '新建卷', exact: true }).click();
+		const volume = page.getByRole('dialog', { name: '新建卷', exact: true });
 		await volume.getByRole('textbox', { name: '名字', exact: true }).fill('Volume 2');
 		await volume.getByRole('textbox', { name: '第一章的名字', exact: true }).fill('Chapter 4');
 		await volume.getByRole('button', { name: '确定', exact: true }).click();

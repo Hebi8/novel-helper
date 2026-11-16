@@ -45,7 +45,7 @@ async function withBook(
 		await welcome.evaluate((root) => window.novel.book.open(root), book);
 		page = await next;
 		await page.waitForLoadState('domcontentloaded');
-		await expect(page.getByRole('tree', { name: '章节', exact: true })).toContainText('全书');
+		await expect(page.getByRole('tree', { name: '章节', exact: true })).toContainText('book');
 		await page
 			.getByRole('tree', { name: '章节', exact: true })
 			.getByRole('button', { name: /第2章 灯塔/ })

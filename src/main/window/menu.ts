@@ -53,6 +53,12 @@ export function installMenu(ctx: MainContext): void {
 						})),
 					},
 					...(ctx.canSaveFocusedBookToICloud() ? [action(zh.saveToICloud, 'saveToICloud')] : []),
+					{
+						label: zh.renameBook,
+						enabled: ctx.hasFocusedBook() && !saving,
+						click: () =>
+							(BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0])?.webContents.send(channels.command, 'renameBook'),
+					},
 					{ type: 'separator' },
 					action(zh.newChapter, 'newChapter', 'Cmd+N'),
 					action(zh.quickOpen, 'quickOpen', 'Cmd+P'),

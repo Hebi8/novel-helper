@@ -1,4 +1,11 @@
+import { Fragment } from 'react';
 import { zh } from '../strings';
+export interface TreeMenuAction {
+	label: string;
+	run(): void;
+	danger?: boolean;
+	separatorBefore?: boolean;
+}
 export function TreeMenu({
 	x,
 	y,
@@ -10,14 +17,14 @@ export function TreeMenu({
 	y: number;
 	label?: string;
 	close(): void;
-	actions: { label: string; run(): void }[];
+	actions: TreeMenuAction[];
 }) {
 	return (
 		<div
 			className="menu-backdrop"
 			onMouseDown={close}
 			onKeyDown={(event) => {
-				if (event.key === 'Escape') {
+				if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
 					close();
 				}
 			}}
@@ -30,17 +37,20 @@ export function TreeMenu({
 				onMouseDown={(event) => event.stopPropagation()}
 			>
 				{actions.map((action, i) => (
-					<button
-						key={action.label}
-						role="menuitem"
-						autoFocus={i === 0}
-						onClick={() => {
-							close();
-							action.run();
-						}}
-					>
-						{action.label}
-					</button>
+					<Fragment key={action.label}>
+						{action.separatorBefore ? <hr /> : null}
+						<button
+							role="menuitem"
+							className={action.danger ? 'danger' : undefined}
+							autoFocus={i === 0}
+							onClick={() => {
+								close();
+								action.run();
+							}}
+						>
+							{action.label}
+						</button>
+					</Fragment>
 				))}
 			</div>
 		</div>

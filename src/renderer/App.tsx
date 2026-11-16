@@ -1,8 +1,9 @@
 import { Initialize } from './scaffold/Initialize';
 import { Popover } from './scaffold/Popover';
 import { StructureInput } from './scaffold/StructureInput';
+import { TrashDialog } from './scaffold/TrashDialog';
 import { Search } from './scaffold/Search';
-import type { StructureAction } from '../shared/structure';
+import type { StructureAction, TrashPreview, TrashTarget } from '../shared/structure';
 import { QuickOpen } from './reference/QuickOpen';
 import { useReferences } from './reference/useReferences';
 import { errorMessage } from './errors';
@@ -36,6 +37,8 @@ export function App() {
 	const [search, setSearch] = useState(false);
 	const [focus, setFocus] = useState(false);
 	const [structure, setStructure] = useState<{ action: StructureAction; path?: string }>();
+	const [renameBookRequest, setRenameBookRequest] = useState(0);
+	const [trashDialog, setTrashDialog] = useState<{ target: TrashTarget; preview: TrashPreview; pending?: boolean }>();
 	const [savingICloud, setSavingICloudState] = useState<'confirm' | 'running'>();
 	const savingICloudRef = useRef<'confirm' | 'running' | undefined>(undefined);
 	const setSavingICloud = (value: 'confirm' | 'running' | undefined) => {
@@ -44,6 +47,79 @@ export function App() {
 	};
 	const [conflictDiff, setConflictDiff] = useState<ConflictDiff>();
 	const canSaveToICloud = Boolean(book && !book.inICloud && initial?.icloudAvailable);
+	useEffect(() => {
+		document.title = book ? book.name : zh.app;
+	}, [book]);
+	const requestRenameBook = () => {
+		if (!book) {
+			return;
+		}
+		if (focus) {
+			void window.novel.window.focus(false).then(() => setFocus(false));
+		}
+		setLeft(0);
+		setLeftOpen(true);
+		setRenameBookRequest((count) => count + 1);
+	};
+	const requestTrash = (target: TrashTarget) => {
+		if (!book) {
+			return;
+		}
+		void (async () => {
+			try {
+				await Promise.all([...docs.documents.current.values()].map((model) => model.save()));
+				const preview = await window.novel.structure.trashPlan(target);
+				setError('');
+				setTrashDialog({ target, preview });
+			} catch (err) {
+				setError(errorMessage(err));
+			}
+		})();
+	};
+	const confirmTrash = async () => {
+		if (!trashDialog || trashDialog.pending) {
+			return;
+		}
+		const { target } = trashDialog;
+		setTrashDialog((cur) => (cur ? { ...cur, pending: true } : cur));
+		try {
+			if (!(await docs.saveAll())) {
+				setTrashDialog(undefined);
+				setError(zh.assistantSaveFailed);
+				requestAnimationFrame(() => docs.focus());
+				return;
+			}
+			const result = await window.novel.structure.trash(target);
+			for (const tab of [...docs.sessionRef.current.tabs]) {
+				if (result.trashed.some((removed) => tab.path === removed || tab.path.startsWith(`${removed}/`))) {
+					docs.closeRemoved(tab.path);
+				}
+			}
+			if (
+				conflictDiff &&
+				result.trashed.some(
+					(removed) =>
+						conflictDiff.path === removed ||
+						conflictDiff.path.startsWith(`${removed}/`) ||
+						conflictDiff.original === removed ||
+						conflictDiff.original.startsWith(`${removed}/`),
+				)
+			) {
+				setConflictDiff(undefined);
+			}
+			setTrashDialog(undefined);
+			if (result.error) {
+				setError(result.error);
+			} else {
+				setError('');
+			}
+			requestAnimationFrame(() => docs.focus());
+		} catch (err) {
+			setTrashDialog(undefined);
+			setError(errorMessage(err));
+			requestAnimationFrame(() => docs.focus());
+		}
+	};
 	const requestSaveToICloud = () => {
 		if (canSaveToICloud && !savingICloudRef.current) {
 			setSavingICloud('confirm');
@@ -54,6 +130,7 @@ export function App() {
 			return;
 		}
 		setStructure(undefined);
+		setTrashDialog(undefined);
 		setSearch(false);
 		setQuick(false);
 		setConflictDiff(undefined);
@@ -123,6 +200,7 @@ export function App() {
 	const { session, documents } = docs;
 	const actions = commands({
 		documents: docs,
+		renameBook: requestRenameBook,
 		saveToICloud: requestSaveToICloud,
 		newChapter: () => showStructure('chapter'),
 		searchBook: () => {
@@ -208,6 +286,8 @@ export function App() {
 				book,
 				settings: initial?.settings ?? defaults,
 				structure: showStructure,
+				renameBook: requestRenameBook,
+				trash: requestTrash,
 				searchBook: () => setSearch(true),
 				session,
 				current: docs.current,
@@ -255,6 +335,19 @@ export function App() {
 						}}
 					/>
 				) : null}
+				{trashDialog && book ? (
+					<TrashDialog
+						preview={trashDialog.preview}
+						pending={trashDialog.pending}
+						close={() => {
+							setTrashDialog(undefined);
+							docs.focus();
+						}}
+						submit={() => {
+							void confirmTrash();
+						}}
+					/>
+				) : null}
 				{savingICloud === 'confirm' && book ? (
 					<Popover
 						title={zh.saveToICloud}
@@ -266,7 +359,7 @@ export function App() {
 							void confirmSaveToICloud();
 						}}
 					>
-						<p>{zh.saveToICloudConfirm(book.name)}</p>
+						<p>{zh.saveToICloudConfirm(book.root.split('/').pop() ?? book.name)}</p>
 					</Popover>
 				) : savingICloud === 'running' ? (
 					<SavingICloudOverlay />
@@ -317,6 +410,7 @@ export function App() {
 							<LeftSidebar
 								hidden={focus || !leftOpen}
 								book={book}
+								renameBookRequest={renameBookRequest}
 								selected={session.active}
 								section={left}
 								select={setLeft}

@@ -11,6 +11,7 @@ import {
 	relativeInside,
 	SCAN_EXCLUDE,
 	serializeMarker,
+	setMarkerTitle,
 	storiesFromMarkers,
 	storyState,
 } from '../core/story';
@@ -85,6 +86,41 @@ describe('marker file', () => {
 			folders: { chapters: undefined, outlines: '大纲', summaries: undefined, lore: ['设定'] },
 		});
 		assert.deepEqual(parseMarker('{"version": 1, "folders": ["正文"]}'), { version: 1 });
+		assert.deepEqual(parseMarker('{"version": 1, "title": "   "}'), { version: 1 });
+		assert.deepEqual(parseMarker('{"version": 1, "title": 42}'), { version: 1 });
+		assert.deepEqual(parseMarker('{"version": 1, "title": " 雾港纪事 "}'), { version: 1, title: '雾港纪事' });
+	});
+
+	test('setMarkerTitle inserts and updates title while keeping every other byte untouched', () => {
+		const original = [
+			'{',
+			'  "version": 1,',
+			'  "language": "zh",',
+			'  "folders": {',
+			'    "chapters": "正文",',
+			'    "outlines": "大纲",',
+			'    "summaries": "摘要",',
+			'    "lore": ["设定", "人物"]',
+			'  },',
+			'  "custom": {"keep": [1, "a\\"b"]},',
+			'  "book": "全书"',
+			'}',
+			'',
+		].join('\n');
+		const added = setMarkerTitle(original, '雾港纪事')!;
+		assert.equal(parseMarker(added)?.title, '雾港纪事');
+		assert.equal(added.replace(',\n  "title": "雾港纪事"', ''), original);
+
+		const updated = setMarkerTitle(added, '北角灯塔')!;
+		assert.equal(parseMarker(updated)?.title, '北角灯塔');
+		assert.equal(updated.replace(',\n  "title": "北角灯塔"', ''), original);
+
+		const crlf = original.replaceAll('\n', '\r\n');
+		const crlfAdded = setMarkerTitle(crlf, '海雾')!;
+		assert.ok(!/(?<!\r)\n/.test(crlfAdded));
+		assert.equal(crlfAdded.replace(',\r\n  "title": "海雾"', ''), crlf);
+
+		assert.equal(setMarkerTitle('{invalid', '雾港'), undefined);
 	});
 });
 

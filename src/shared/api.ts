@@ -5,6 +5,10 @@ import type { ProviderId } from '../llm/providers';
 import type { Settings, SettingKey } from './defaults';
 import type { AssistantAPI } from './assistant';
 export type { ConflictCopy, Settings, SettingKey };
+export interface ListedBook {
+	root: string;
+	name: string;
+}
 export interface Book {
 	referenceVersion?: number;
 	buoyVersion?: number;
@@ -63,6 +67,7 @@ export type OpenResult =
 	| { kind: 'empty'; root?: string }
 	| { kind: 'cancelled' };
 export type MenuCommand =
+	| 'renameBook'
 	| 'saveToICloud'
 	| 'newChapter'
 	| 'searchBook'
@@ -93,8 +98,8 @@ export interface Bootstrap {
 	notice?: string;
 	book?: Book;
 	icloudAvailable: boolean;
-	icloudBooks: string[];
-	recent: string[];
+	icloudBooks: ListedBook[];
+	recent: ListedBook[];
 	session: SessionState;
 	settings: Settings;
 	usage: UsageStatus;
@@ -105,11 +110,12 @@ export interface AppAPI {
 	assistant: AssistantAPI;
 	book: {
 		reveal(path: string): Promise<void>;
+		renameTitle(title: string): Promise<void>;
 		open(root?: string, selected?: boolean): Promise<OpenResult>;
 		saveToICloud(): Promise<void>;
-		watchICloud(): Promise<string[]>;
+		watchICloud(): Promise<ListedBook[]>;
 		unwatchICloud(): void;
-		onICloudChanged(listener: (books: string[]) => void): () => void;
+		onICloudChanged(listener: (books: ListedBook[]) => void): () => void;
 		read(path: string): Promise<DiskFile>;
 		save(path: string, text: string, base: string, force?: boolean): Promise<SaveResult>;
 		conflictDiff(path: string): Promise<ConflictDiff>;
@@ -150,7 +156,10 @@ export const channels = {
 	structureInitialize: 'structure:initialize',
 	structureSuggest: 'structure:suggest',
 	structureCreate: 'structure:create',
+	structureTrashPlan: 'structure:trashPlan',
+	structureTrash: 'structure:trash',
 	bookReveal: 'book:reveal',
+	bookRenameTitle: 'book:renameTitle',
 	bookSearch: 'book:search',
 	focusSet: 'window:focus',
 	focusChanged: 'window:focusChanged',

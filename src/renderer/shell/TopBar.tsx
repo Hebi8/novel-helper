@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useWorkspace } from '../workspace';
 import { SplitButton, FindButton } from '../reference/ReferenceTools';
 import { TreeMenu } from '../scaffold/TreeMenu';
 import { zh } from '../strings';
@@ -19,7 +18,6 @@ export function TopBar({
 	left(): void;
 	right(): void;
 }) {
-	const workspace = useWorkspace();
 	const [menu, setMenu] = useState<{ x: number; y: number }>();
 	return (
 		<header className="topbar">
@@ -56,9 +54,6 @@ export function TopBar({
 					actions={[{ label: zh.saveToICloud, run: saveToICloud }]}
 				/>
 			) : null}
-			<button aria-label={zh.newChapter} disabled={!name} onClick={() => workspace.structure('chapter')}>
-				＋
-			</button>
 			<span className="grow" />
 			<button aria-label={zh.assistantSnapshots} disabled={!name} onClick={() => window.dispatchEvent(new Event(assistantEvents.history))}>
 				<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
