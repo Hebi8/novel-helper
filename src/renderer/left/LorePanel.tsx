@@ -218,7 +218,6 @@ function NewLoreDialog({
 	const nameRef = useRef<HTMLInputElement>(null);
 	const typeInputRef = useRef<HTMLInputElement>(null);
 	const addChipRef = useRef<HTMLButtonElement>(null);
-	const cancelRef = useRef<HTMLButtonElement>(null);
 
 	useEffect(() => {
 		nameRef.current?.focus();
@@ -267,7 +266,7 @@ function NewLoreDialog({
 						close();
 						return;
 					}
-					if (event.key === 'Enter' && !addingType && event.target !== cancelRef.current && event.target !== addChipRef.current) {
+					if (event.key === 'Enter' && event.target === nameRef.current) {
 						event.preventDefault();
 						submitForm();
 					}
@@ -363,7 +362,7 @@ function NewLoreDialog({
 					<div className="lore-dialog-where">{zh.loreWhere(plan.preview)}</div>
 				</div>
 				<div className="lore-dialog-actions">
-					<button ref={cancelRef} type="button" className="lore-dialog-btn" disabled={pending} onClick={close}>
+					<button type="button" className="lore-dialog-btn" disabled={pending} onClick={close}>
 						{zh.cancel}
 					</button>
 					<button type="button" className="lore-dialog-btn primary" disabled={pending || !plan.valid} onClick={submitForm}>

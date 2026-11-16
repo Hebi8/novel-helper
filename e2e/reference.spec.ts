@@ -382,11 +382,21 @@ test('lore entry frontmatter form uses single full-document representation, pres
 		await expect(typeMenu).toHaveCount(0);
 		await expect(typeButton).toBeFocused();
 
-		// Choose existing type, then enter a custom new type with Enter: file changes ONLY on the `type` line.
+		// Starting IME composition in 新类型… and clicking an existing type closes the menu, ends composition, and lets saving finish cleanly.
 		await typeButton.click();
+		const composingTypeInput = typeMenu.getByPlaceholder('新类型…');
+		await composingTypeInput.focus();
+		await composingTypeInput.evaluate((el: HTMLInputElement) => {
+			el.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: 'shi' }));
+			const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+			setter.call(el, 'shi');
+			el.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true, data: 'shi' }));
+		});
 		await typeMenu.getByRole('option', { name: /物件/ }).click();
+		await expect(typeMenu).toHaveCount(0);
 		await expect(typeButton).toContainText('物件');
 		await expect.poll(() => readFile(towerPath, 'utf8')).toBe(initialTower.replace('type: 地点', 'type: 物件'));
+		expect(await page.evaluate(() => window.novel.book.read('设定/北角灯塔.md').then((f) => f.text.includes('type: 物件')))).toBe(true);
 
 		await typeButton.click();
 		await typeMenu.getByPlaceholder('新类型…').fill('建筑');
@@ -699,6 +709,30 @@ test('left lore tree group + and bottom row preselect types, and new entry dialo
 		await dialog.getByRole('button', { name: '人物', exact: true }).click();
 		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 人物/沈三娘.md');
 		await expect(createBtn).toBeEnabled();
+
+		// Tabbing from 名字 to unselected type chips: Enter and Space select the focused chip without submitting 新建.
+		await nameInput.focus();
+		await page.keyboard.press('Tab');
+		await expect(dialog.getByRole('button', { name: '人物', exact: true })).toBeFocused();
+		await page.keyboard.press('Tab');
+		const placeChip = dialog.getByRole('button', { name: '地点', exact: true });
+		await expect(placeChip).toBeFocused();
+		await page.keyboard.press('Enter');
+		await expect(dialog).toBeVisible();
+		await expect(placeChip).toHaveAttribute('aria-pressed', 'true');
+		await expect(dialog.getByRole('button', { name: '人物', exact: true })).toHaveAttribute('aria-pressed', 'false');
+		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 设定/沈三娘.md');
+
+		await page.keyboard.press('Tab');
+		const styleChip = dialog.getByRole('button', { name: '文风', exact: true });
+		await expect(styleChip).toBeFocused();
+		await page.keyboard.press('Space');
+		await expect(dialog).toBeVisible();
+		await expect(styleChip).toHaveAttribute('aria-pressed', 'true');
+		await expect(placeChip).toHaveAttribute('aria-pressed', 'false');
+
+		await dialog.getByRole('button', { name: '人物', exact: true }).click();
+		await expect(dialog.locator('.lore-dialog-where')).toHaveText('建在 人物/沈三娘.md');
 
 		// ＋ 新类型: click turns into input, Escape reverts to ＋ 新类型, Enter adds chip and selects it.
 		await dialog.getByRole('button', { name: '＋ 新类型', exact: true }).click();

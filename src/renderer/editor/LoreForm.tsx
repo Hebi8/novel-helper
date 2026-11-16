@@ -69,22 +69,22 @@ function TypeField({
 	const inputRef = useRef<HTMLInputElement>(null);
 	const id = useId();
 
-	useEffect(
-		() => () => {
-			if (composing.current) {
-				composing.current = false;
-				finishComposition.current();
-			}
-		},
-		[],
-	);
+	const endComposing = useCallback(() => {
+		if (composing.current) {
+			composing.current = false;
+			finishComposition.current();
+		}
+	}, []);
+
+	useEffect(() => () => endComposing(), [endComposing]);
 
 	const closeMenu = useCallback(() => {
+		endComposing();
 		setOpen(false);
 		setDraft('');
 		setActiveIndex(-1);
 		setTimeout(() => triggerRef.current?.focus(), 0);
-	}, []);
+	}, [endComposing]);
 
 	useEffect(() => {
 		if (!open) {
@@ -112,11 +112,23 @@ function TypeField({
 	}, [open, closeMenu]);
 
 	const choose = (option: string) => {
+		endComposing();
 		setOpen(false);
 		setDraft('');
 		setActiveIndex(-1);
 		commit(option, true);
 		setTimeout(() => triggerRef.current?.focus(), 0);
+	};
+
+	const toggleMenu = () => {
+		if (open) {
+			endComposing();
+			setOpen(false);
+			setDraft('');
+			setActiveIndex(-1);
+		} else {
+			setOpen(true);
+		}
 	};
 
 	return (
@@ -128,13 +140,7 @@ function TypeField({
 				className="lore-prop-val"
 				onClick={(event) => {
 					if (event.target === event.currentTarget) {
-						setOpen((was) => {
-							if (was) {
-								setDraft('');
-								setActiveIndex(-1);
-							}
-							return !was;
-						});
+						toggleMenu();
 						triggerRef.current?.focus();
 					}
 				}}
@@ -147,15 +153,7 @@ function TypeField({
 						className="lore-type-pill"
 						aria-haspopup="listbox"
 						aria-expanded={open}
-						onClick={() => {
-							setOpen((was) => {
-								if (was) {
-									setDraft('');
-									setActiveIndex(-1);
-								}
-								return !was;
-							});
-						}}
+						onClick={toggleMenu}
 						onKeyDown={(event) => {
 							if (handleHistoryKey(event, undo, redo)) {
 								return;
@@ -228,12 +226,7 @@ function TypeField({
 									composing.current = true;
 									compositionStart();
 								}}
-								onCompositionEnd={() => {
-									if (composing.current) {
-										composing.current = false;
-										compositionEnd();
-									}
-								}}
+								onCompositionEnd={endComposing}
 								onBeforeInput={(event) => {
 									if (!composing.current) {
 										handleHistoryBeforeInput(event, undo, redo);
@@ -296,19 +289,18 @@ function PillListField({
 	const inputRef = useRef<HTMLInputElement>(null);
 	const id = useId();
 
+	const endComposing = useCallback(() => {
+		if (composing.current) {
+			composing.current = false;
+			finishComposition.current();
+		}
+	}, []);
+
 	useEffect(() => {
 		setDraft('');
 	}, [syncVersion]);
 
-	useEffect(
-		() => () => {
-			if (composing.current) {
-				composing.current = false;
-				finishComposition.current();
-			}
-		},
-		[],
-	);
+	useEffect(() => () => endComposing(), [endComposing]);
 
 	return (
 		<>
@@ -331,6 +323,7 @@ function PillListField({
 							className="lore-pill-remove"
 							aria-label={zh.removeItem(item)}
 							onClick={() => {
+								endComposing();
 								commit(
 									items.filter((_, current) => current !== index),
 									true,
@@ -353,12 +346,7 @@ function PillListField({
 						composing.current = true;
 						compositionStart();
 					}}
-					onCompositionEnd={() => {
-						if (composing.current) {
-							composing.current = false;
-							compositionEnd();
-						}
-					}}
+					onCompositionEnd={endComposing}
 					onBeforeInput={(event) => {
 						if (!composing.current) {
 							handleHistoryBeforeInput(event, undo, redo);
@@ -376,6 +364,7 @@ function PillListField({
 						const end = target.selectionEnd ?? start;
 						const combined = draft.slice(0, start) + pasted + draft.slice(end);
 						const next = appendLoreListItems(items, combined, fieldKey);
+						endComposing();
 						setDraft('');
 						if (next.length !== items.length) {
 							commit(next, true);
@@ -449,11 +438,25 @@ function InlineTextField({
 }) {
 	const [rawText, setRawText] = useState<string>();
 	const composing = useRef(false);
+	const latestRaw = useRef(value);
+	latestRaw.current = rawText ?? value;
+	const latestCommit = useRef(commit);
+	latestCommit.current = commit;
 	const finishComposition = useRef(compositionEnd);
 	finishComposition.current = compositionEnd;
 	const inputRef = useRef<HTMLInputElement>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const id = useId();
+
+	const finishComposing = useCallback((text: string) => {
+		if (!composing.current) {
+			return;
+		}
+		composing.current = false;
+		const next = text.replace(/(?:\r\n|\r|\n)+/g, ' ');
+		latestCommit.current(next);
+		finishComposition.current();
+	}, []);
 
 	useEffect(() => {
 		setRawText(undefined);
@@ -461,12 +464,9 @@ function InlineTextField({
 
 	useEffect(
 		() => () => {
-			if (composing.current) {
-				composing.current = false;
-				finishComposition.current();
-			}
+			finishComposing(latestRaw.current);
 		},
-		[],
+		[finishComposing],
 	);
 
 	const shared = {
@@ -482,11 +482,9 @@ function InlineTextField({
 			if (!composing.current) {
 				return;
 			}
-			composing.current = false;
 			const next = event.currentTarget.value.replace(/(?:\r\n|\r|\n)+/g, ' ');
 			setRawText(next);
-			commit(next);
-			compositionEnd();
+			finishComposing(event.currentTarget.value);
 		},
 		onBeforeInput: (event: FormEvent<HTMLInputElement | HTMLTextAreaElement>) => {
 			if (!composing.current) {
