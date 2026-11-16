@@ -1,3 +1,4 @@
+import { countWords } from '../../core/text';
 import { errorMessage } from '../errors';
 import type { AppAPI, DiskFile } from '../../shared/api';
 /** One open document owns its save queue, including writes completed after switching tabs. */
@@ -6,6 +7,8 @@ export class DocumentModel {
 	base: string;
 	conflict?: string;
 	error?: string;
+	private cachedWords?: number;
+	private cachedBaseWords?: number;
 	private timer?: ReturnType<typeof setTimeout>;
 	private diskRevision = 0;
 	private composing = false;
@@ -47,17 +50,24 @@ export class DocumentModel {
 	) {
 		this.text = this.base = text;
 	}
+	get words(): number {
+		return (this.cachedWords ??= countWords(this.text));
+	}
+	get baseWords(): number {
+		return (this.cachedBaseWords ??= countWords(this.base));
+	}
 	get dirty(): boolean {
 		return this.text !== this.base;
 	}
 	get blocksClose(): boolean {
 		return this.dirty || this.conflict !== undefined;
 	}
-	edit(text: string): void {
+	edit(text: string, words?: number): void {
 		if (this.readOnly) {
 			return;
 		}
 		this.text = text;
+		this.cachedWords = words;
 		clearTimeout(this.timer);
 		if (!this.composing) {
 			this.timer = setTimeout(() => {
@@ -81,6 +91,7 @@ export class DocumentModel {
 			return 'conflict';
 		}
 		this.text = this.base = file.text;
+		this.cachedWords = this.cachedBaseWords = undefined;
 		this.publish();
 		return 'reload';
 	}
@@ -100,11 +111,13 @@ export class DocumentModel {
 				return;
 			}
 			const text = this.text;
+			const savedWords = this.cachedWords;
 			const revision = this.diskRevision;
 			try {
 				const result = await this.api.book.save(this.path, text, this.base, force);
 				if (result.saved) {
 					this.base = text;
+					this.cachedBaseWords = text === this.text && this.cachedWords !== undefined ? this.cachedWords : savedWords;
 					if (revision === this.diskRevision) {
 						this.conflict = undefined;
 					}
@@ -121,6 +134,7 @@ export class DocumentModel {
 	}
 	useDisk(): void {
 		this.text = this.base = this.conflict!;
+		this.cachedWords = this.cachedBaseWords = undefined;
 		this.conflict = undefined;
 		this.publish();
 	}

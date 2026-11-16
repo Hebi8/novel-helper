@@ -241,8 +241,16 @@ function totalsRow(label: string, totals: Totals): string {
 	return `| ${cell(label)} | ${totals.requests} | ${totals.input} | ${totals.cacheRead} | ${totals.cacheWrite} | ${totals.output} | ${dollars(totals.cost)} |`;
 }
 
+function kindOrder(kind?: string): number {
+	return kind === 'assistant' ? 2 : kind === 'position' ? 1 : 0;
+}
+
 function totalsTable(byModel: Record<string, Totals>, t: Translate): string[] {
-	const models = Object.keys(byModel).sort();
+	const models = Object.keys(byModel).sort((a, b) => {
+		const left = splitUsageKey(a);
+		const right = splitUsageKey(b);
+		return kindOrder(left.kind) - kindOrder(right.kind) || left.model.localeCompare(right.model);
+	});
 	if (!models.length) {
 		return [t('No requests.'), ''];
 	}
@@ -252,9 +260,11 @@ function totalsTable(byModel: Record<string, Totals>, t: Translate): string[] {
 		'|---|---:|---:|---:|---:|---:|---:|',
 		...models.map((key) => {
 			const { model, kind } = splitUsageKey(key);
-			return totalsRow(kind === 'position' ? t('{0} · outline position', model) : key, byModel[key]);
+			const label =
+				kind === 'position' ? t('{0} · outline position', model) : kind === 'assistant' ? t('{0} · assistant', model) : key;
+			return totalsRow(label, byModel[key]);
 		}),
-		...(models.length > 1 ? [totalsRow(t('Total'), all)] : []),
+		totalsRow(t('Total'), all),
 		'',
 	];
 	const input = all.input + all.cacheRead + all.cacheWrite;
@@ -294,6 +304,9 @@ export function renderUsage(ledger: Ledger, now: Date, info: UsageInfo, t: Trans
 	out.push(`## ${t('How this is counted')}`, '');
 	out.push(`- ${t('Token counts are what the provider reported for each request, cancelled ones included. Requests the provider refused are not counted.')}`);
 	out.push(`- ${t('Cost is tokens times the prices below. It is an estimate: the provider\'s bill is what counts.')}`);
+	out.push(
+		`- ${t('The assistant runs through Claude Code on this machine; when signed in with a subscription, the cost is a reference value converted at API prices, not an actual charge.')}`,
+	);
 	out.push(`- ${info.rates ? t('{0}: {1}.', info.current, prices(info.rates, t)) : t('{0}: no known price, so no cost is counted. Set `novelHelper.usage.prices` to add one.', info.current)}`);
 	out.push(
 		`- ${info.dailyLimit > 0 ? t('Daily limit: {0}. Once today\'s estimated cost reaches it, automatic requests stop until tomorrow; Alt+\\ still works.', dollars(info.dailyLimit)) : t('Daily limit: none. Set `novelHelper.usage.dailyLimitUsd` to stop automatic requests once a day\'s estimated cost reaches it.')}`,

@@ -37,6 +37,7 @@ export function registerAssistant(ctx: MainContext): void {
 				userData,
 				settings: () => ctx.settings.get(),
 				store: ctx.snapshots.store(book.root),
+				usage: ctx.completion.usage,
 				beforeTurn: (work) => ctx.snapshots.beforeWrite(book.root, work),
 				beforeHistory: () => ctx.snapshots.flush(book.root),
 				assistantOptions: (agent) => ctx.settings.assistantOptions(agent),

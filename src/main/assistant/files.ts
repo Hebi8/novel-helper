@@ -4,7 +4,7 @@ import { FileFormatError, readOptional } from '../book/files';
 
 /** ACP hides the message of an ordinary error, so one the agent can act on is sent as a request error. */
 export async function agentError(message: string): Promise<Error> {
-	const { RequestError } = await import('@agentclientprotocol/sdk');
+	const { RequestError } = await import('@agentclientprotocol/sdk/unstable');
 	return RequestError.internalError(undefined, message);
 }
 

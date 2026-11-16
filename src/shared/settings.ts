@@ -1,6 +1,14 @@
-import { defaults, type Settings, type SettingKey } from './defaults';
+import { defaults, type LineHeightLevel, type Settings, type SettingKey } from './defaults';
 import { zh } from '../renderer/strings';
+
+export const LINE_HEIGHT_VALUES: Record<LineHeightLevel, number> = {
+	tight: 1.65,
+	normal: 1.95,
+	loose: 2.25,
+};
+
 export const jsonSettings = Object.keys(defaults).filter((key) => typeof defaults[key as SettingKey] === 'object') as SettingKey[];
+
 export function parseSetting<K extends SettingKey>(key: K, text: string): Settings[K] {
 	const original = defaults[key];
 	if (typeof original === 'object') {
@@ -21,13 +29,19 @@ export function parseSetting<K extends SettingKey>(key: K, text: string): Settin
 	}
 	if (typeof original === 'number') {
 		const number = Number(text);
-		if (!text.trim() || !Number.isFinite(number) || number < 0 || (key === 'editor.fontSize' && number === 0)) {
+		if (
+			!text.trim() ||
+			!Number.isFinite(number) ||
+			number < 0 ||
+			((key === 'editor.fontSize' || key === 'editor.headingFontSize' || key === 'editor.lineWidth') && number === 0)
+		) {
 			throw new Error(zh.invalidNumber);
 		}
 		return number as Settings[K];
 	}
 	return text as Settings[K];
 }
+
 export async function saveSettingText<K extends SettingKey>(
 	key: K,
 	text: string,
@@ -35,11 +49,60 @@ export async function saveSettingText<K extends SettingKey>(
 ): Promise<void> {
 	await save(key, parseSetting(key, text));
 }
-export const settingGroups: { name: string; keys: SettingKey[] }[] = [
-	{ name: zh.settingsWriting, keys: ['editor.fontFamily', 'editor.fontSize', 'editor.centerLine'] },
-	{ name: zh.continuation, keys: ['enabled', 'trigger', 'debounceMs', 'maxSuggestionChars'] },
+
+export type SettingsCategoryId = 'editor' | 'appearance' | 'continuation' | 'assistant' | 'usage' | 'icloud' | 'about';
+
+export const settingGroups: { name: string; category: SettingsCategoryId; keys: SettingKey[] }[] = [
 	{
-		name: zh.settingsModel,
+		name: zh.settingsGroups.text,
+		category: 'editor',
+		keys: [
+			'editor.fontFamily',
+			'editor.fontSize',
+			'editor.lineHeight',
+			'editor.paragraphSpacing',
+			'editor.firstLineIndent',
+			'editor.lineWidth',
+		],
+	},
+	{
+		name: zh.settingsGroups.heading,
+		category: 'editor',
+		keys: ['editor.headingFontSize', 'editor.headingCenter'],
+	},
+	{
+		name: zh.settingsGroups.view,
+		category: 'editor',
+		keys: ['editor.focusParagraph', 'editor.centerLine'],
+	},
+	{
+		name: zh.settingsGroups.input,
+		category: 'editor',
+		keys: ['editor.autoPair'],
+	},
+	{
+		name: zh.settingsGroups.wordCount,
+		category: 'editor',
+		keys: ['editor.dailyWordGoal', 'editor.dayStartHour'],
+	},
+	{
+		name: zh.settingsGroups.files,
+		category: 'editor',
+		keys: ['files.lore', 'files.chapters', 'files.outlines', 'files.summaries', 'files.bookNames'],
+	},
+	{
+		name: zh.settingsGroups.theme,
+		category: 'appearance',
+		keys: ['appearance.theme'],
+	},
+	{
+		name: zh.settingsGroups.trigger,
+		category: 'continuation',
+		keys: ['enabled', 'trigger', 'debounceMs', 'maxSuggestionChars'],
+	},
+	{
+		name: zh.settingsGroups.model,
+		category: 'continuation',
 		keys: [
 			'provider',
 			'anthropic.model',
@@ -51,12 +114,9 @@ export const settingGroups: { name: string; keys: SettingKey[] }[] = [
 			'extraRequestBody',
 		],
 	},
-	{ name: zh.settingsUsage, keys: ['usage.dailyLimitUsd', 'usage.prices'] },
-	{ name: zh.assistant, keys: ['assistant.agent', 'assistant.command', 'assistant.args', 'assistant.snapshots.keep'] },
-	{ name: zh.assistantSnapshots, keys: ['snapshots.intervalMinutes', 'snapshots.keep'] },
-	{ name: zh.settingsFiles, keys: ['files.lore', 'files.chapters', 'files.outlines', 'files.summaries', 'files.bookNames'] },
 	{
-		name: zh.settingsContext,
+		name: zh.settingsGroups.context,
+		category: 'continuation',
 		keys: [
 			'context.beforeChars',
 			'context.afterChars',
@@ -71,5 +131,20 @@ export const settingGroups: { name: string; keys: SettingKey[] }[] = [
 			'context.previousChapters',
 			'context.previousChapterChars',
 		],
+	},
+	{
+		name: zh.settingsGroups.agent,
+		category: 'assistant',
+		keys: ['assistant.agent', 'assistant.command', 'assistant.args'],
+	},
+	{
+		name: zh.settingsGroups.snapshots,
+		category: 'assistant',
+		keys: ['assistant.snapshots.keep', 'snapshots.intervalMinutes', 'snapshots.keep'],
+	},
+	{
+		name: zh.settingsGroups.usage,
+		category: 'usage',
+		keys: ['usage.dailyLimitUsd', 'usage.prices'],
 	},
 ];

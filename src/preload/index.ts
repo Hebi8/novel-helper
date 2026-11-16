@@ -62,6 +62,7 @@ const api: AppAPI = {
 		resolveConflict: (input) => ipcRenderer.invoke(c.bookConflictResolve, input),
 		onChanged: (listener) => listen(c.bookChanged, listener),
 		onFileChanged: (listener) => listen(c.fileChanged, listener),
+		onWordsChanged: (listener) => listen(c.wordsChanged, listener),
 	},
 	completion: {
 		request: (input) => ipcRenderer.invoke(c.completionRequest, input),
@@ -71,6 +72,8 @@ const api: AppAPI = {
 		get: () => ipcRenderer.invoke(c.settingsGet),
 		set: (key, value) => ipcRenderer.invoke(c.settingsSet, key, value),
 		open: () => ipcRenderer.invoke(c.settingsOpen),
+		info: () => ipcRenderer.invoke(c.settingsInfo),
+		revealICloud: () => ipcRenderer.invoke(c.settingsRevealICloud),
 		onChanged: (listener) => listen(c.settingsChanged, listener),
 	},
 	secrets: {

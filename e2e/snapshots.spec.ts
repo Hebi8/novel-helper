@@ -68,15 +68,14 @@ test('timed snapshots configure in settings, record manual saves, show diffs, bl
 
 		const intervalLabel = '定时快照间隔（分钟，0 为关）';
 		const keepLabel = '定时快照保留份数';
+		await settingsPage.getByRole('tab', { name: '助手', exact: true }).click();
 		await expect(settingsPage.getByRole('heading', { name: '快照', exact: true })).toBeVisible();
-		await expect(settingsPage.getByRole('button', { name: intervalLabel, exact: true })).toHaveText('10');
-		await expect(settingsPage.getByRole('button', { name: keepLabel, exact: true })).toHaveText('100');
+		await expect(settingsPage.getByRole('slider', { name: intervalLabel, exact: true })).toHaveValue('10');
+		await expect(settingsPage.getByRole('slider', { name: keepLabel, exact: true })).toHaveValue('100');
 
-		await settingsPage.getByRole('button', { name: intervalLabel, exact: true }).click();
-		const intervalInput = settingsPage.getByRole('textbox', { name: intervalLabel, exact: true });
-		await intervalInput.fill('0.01');
-		await intervalInput.press('Enter');
-		await expect(settingsPage.getByRole('button', { name: intervalLabel, exact: true })).toHaveText('0.01');
+		await settingsPage.getByRole('slider', { name: intervalLabel, exact: true }).fill('1');
+		await expect(settingsPage.getByRole('slider', { name: intervalLabel, exact: true })).toHaveValue('1');
+		await page.evaluate(() => window.novel.settings.set('snapshots.intervalMinutes', 0.01));
 		await settingsPage.evaluate(() => window.novel.window.close());
 
 		await page.getByRole('button', { name: '收起右栏', exact: true }).click();

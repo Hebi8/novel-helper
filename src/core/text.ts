@@ -122,3 +122,8 @@ export function fenced(text: string, info = 'text'): string {
 	const fence = '`'.repeat(longest + 1);
 	return `${fence}${info}\n${text}\n${fence}`;
 }
+
+/** Prose word count: non-whitespace Unicode code points. */
+export function countWords(text: string): number {
+	return Array.from(text.replace(/\s/gu, '')).length;
+}

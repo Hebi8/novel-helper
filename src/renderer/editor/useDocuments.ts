@@ -3,9 +3,19 @@ import type { Rename } from '../../core/library';
 import { errorMessage } from '../errors';
 import { zh } from '../strings';
 import { useRef, useState } from 'react';
-import type { DiskFile, SessionState, OpenOptions, ReportKind } from '../../shared/api';
+import type { DiskFile, SessionState, OpenOptions, ReportKind, WordsSnapshot } from '../../shared/api';
 import type { EditorHandle } from './Editor';
 import { DocumentModel } from './document';
+import { wordCountsAt, type EditorWordCounts } from './prose';
+export interface CursorInfo {
+	path?: string;
+	anchor: number;
+	head: number;
+	focused: boolean;
+	totalWords: number;
+	beforeWords: number;
+	selectedWords: number;
+}
 export const reportPaths: Record<ReportKind, string> = { report: 'report:last-request', usageReport: 'report:usage' };
 export const reportKind = (path: string) => (Object.keys(reportPaths) as ReportKind[]).find((key) => reportPaths[key] === path);
 export function useDocuments() {
@@ -26,6 +36,35 @@ export function useDocuments() {
 	const opening = useRef(new Map<string, Promise<DocumentModel>>());
 	const serial = useRef(0);
 	const nextRequestId = () => ++serial.current;
+	const cursorRef = useRef<CursorInfo>({ anchor: 0, head: 0, focused: false, totalWords: 0, beforeWords: 0, selectedWords: 0 });
+	const cursorListeners = useRef(new Set<() => void>());
+	const docVersionRef = useRef(0);
+	const docListeners = useRef(new Set<() => void>());
+	const wordsSnapshotRef = useRef<WordsSnapshot>({ todayWords: 0, chapterWords: {} });
+	const notifyDocs = () => {
+		docVersionRef.current++;
+		docListeners.current.forEach((listener) => listener());
+	};
+	const notifyCursor = (next: CursorInfo) => {
+		const prev = cursorRef.current;
+		if (
+			prev.path === next.path &&
+			prev.anchor === next.anchor &&
+			prev.head === next.head &&
+			prev.focused === next.focused &&
+			prev.totalWords === next.totalWords &&
+			prev.beforeWords === next.beforeWords &&
+			prev.selectedWords === next.selectedWords
+		) {
+			return;
+		}
+		cursorRef.current = next;
+		cursorListeners.current.forEach((listener) => listener());
+	};
+	const setWordsSnapshot = (words: WordsSnapshot) => {
+		wordsSnapshotRef.current = words;
+		notifyDocs();
+	};
 	const load = (path: string) => {
 		const existing = documents.current.get(path);
 		if (existing) {
@@ -37,6 +76,7 @@ export function useDocuments() {
 			pending = (kind ? window.novel.reports.get(kind).then((text) => ({ path, text })) : window.novel.book.read(path))
 				.then((file) => {
 					const model = new DocumentModel(path, file.text, window.novel, kind !== undefined);
+					model.onChanged = notifyDocs;
 
 					documents.current.set(path, model);
 
@@ -200,9 +240,23 @@ export function useDocuments() {
 			handles.current.get(file.path)?.reload();
 		}
 	};
-	const cursor = (path: string, anchor: number, head: number) => {
+	const cursor = (path: string, anchor: number, head: number, focused?: boolean, counts?: EditorWordCounts) => {
 		const current = sessionRef.current;
 		sessionRef.current = { ...current, tabs: current.tabs.map((tab) => (tab.path === path ? { ...tab, anchor, head } : tab)) };
+		if (current.active === path) {
+			const view = handles.current.get(path)?.view;
+			const viewFocused = focused ?? (view ? view.root.activeElement === view.contentDOM : false);
+			const resolved = counts ?? (view ? wordCountsAt(view.state) : { total: 0, beforeHead: 0, selected: 0 });
+			notifyCursor({
+				path,
+				anchor,
+				head,
+				focused: viewFocused,
+				totalWords: resolved.total,
+				beforeWords: resolved.beforeHead,
+				selectedWords: resolved.selected,
+			});
+		}
 		scheduleSession();
 	};
 	const moveTab = (step: number) => {
@@ -277,6 +331,9 @@ export function useDocuments() {
 				right: panesRef.current.right && move(panesRef.current.right),
 			});
 		}
+		if (cursorRef.current.path) {
+			cursorRef.current = { ...cursorRef.current, path: move(cursorRef.current.path) };
+		}
 		persist({ tabs: current.tabs.map((tab) => ({ ...tab, path: move(tab.path) })), active: current.active && move(current.active) });
 	};
 	const registerHandle = (path: string, handle?: EditorHandle) => {
@@ -318,6 +375,22 @@ export function useDocuments() {
 		restore,
 		external,
 		cursor,
+		subscribeCursor: (listener: () => void) => {
+			cursorListeners.current.add(listener);
+			return () => {
+				cursorListeners.current.delete(listener);
+			};
+		},
+		getCursor: () => cursorRef.current,
+		subscribeDocs: (listener: () => void) => {
+			docListeners.current.add(listener);
+			return () => {
+				docListeners.current.delete(listener);
+			};
+		},
+		getDocVersion: () => docVersionRef.current,
+		getWordsSnapshot: () => wordsSnapshotRef.current,
+		setWordsSnapshot,
 		moveTab,
 		blur,
 		current,

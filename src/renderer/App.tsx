@@ -21,6 +21,7 @@ import { reportKind, useDocuments } from './editor/useDocuments';
 import { TopBar } from './shell/TopBar';
 import { Welcome } from './shell/Welcome';
 import { commands } from './shell/commands';
+import { applyTheme } from './theme';
 import { zh } from './strings';
 import { WorkspaceContext } from './workspace';
 export function App() {
@@ -265,6 +266,13 @@ export function App() {
 	});
 	const actionRef = useRef(actions);
 	actionRef.current = actions;
+	const bookRootRef = useRef<string | undefined>(undefined);
+	bookRootRef.current = book?.root;
+	useEffect(() => {
+		if (initial) {
+			applyTheme(initial.settings['appearance.theme']);
+		}
+	}, [initial?.settings['appearance.theme']]);
 	useEffect(() => {
 		let alive = true;
 		void window.novel.window
@@ -272,6 +280,7 @@ export function App() {
 			.then(async (data) => {
 				await docs.restore(data.session);
 				if (alive) {
+					docs.setWordsSnapshot(data.words);
 					setInitial(data);
 					setBook(data.book);
 					if (data.openResult) {
@@ -291,6 +300,11 @@ export function App() {
 			}),
 			window.novel.book.onChanged(setBook),
 			window.novel.book.onFileChanged(docs.external),
+			window.novel.book.onWordsChanged((update) => {
+				if (update.root === bookRootRef.current) {
+					docs.setWordsSnapshot({ todayWords: update.todayWords, chapterWords: update.chapterWords });
+				}
+			}),
 			window.novel.settings.onChanged((settings) => setInitial((value) => (value ? { ...value, settings } : value))),
 			window.novel.usage.onChanged((usage) => setInitial((value) => (value ? { ...value, usage } : value))),
 			window.novel.window.onCommand((command) => {
@@ -508,7 +522,7 @@ export function App() {
 											limited={initial.usage.state === 'limit'}
 											nextRequestId={docs.nextRequestId}
 											ready={(handle) => docs.registerHandle(tab.path, handle)}
-											cursor={(anchor, head) => docs.cursor(tab.path, anchor, head)}
+											cursor={(anchor, head, isFocused, counts) => docs.cursor(tab.path, anchor, head, isFocused, counts)}
 										/>
 									);
 								})}
@@ -543,6 +557,11 @@ export function App() {
 					<StatusBar
 						status={initial.usage}
 						document={active}
+						subscribeCursor={docs.subscribeCursor}
+						getCursor={docs.getCursor}
+						subscribeDocs={docs.subscribeDocs}
+						getDocVersion={docs.getDocVersion}
+						getWordsSnapshot={docs.getWordsSnapshot}
 						toggle={() => {
 							if (initial.usage.missingKey) {
 								void window.novel.settings.open();

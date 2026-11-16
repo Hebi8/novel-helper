@@ -31,10 +31,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Readable, Writable } from 'node:stream';
-import type { SessionConfigOption } from '@agentclientprotocol/sdk' with { 'resolution-mode': 'import' };
+import type { SessionConfigOption, Usage } from '@agentclientprotocol/sdk/unstable' with { 'resolution-mode': 'import' };
 
 async function main(): Promise<void> {
-	const acp = await import('@agentclientprotocol/sdk');
+	const acp = await import('@agentclientprotocol/sdk/unstable');
 	const flags = new Set(process.argv.slice(2));
 	const pidFile = process.argv.find((flag) => flag.startsWith('--pid='))?.slice('--pid='.length);
 	const openingFile = process.argv.find((flag) => flag.startsWith('--opening='))?.slice('--opening='.length);
@@ -269,6 +269,7 @@ async function main(): Promise<void> {
 				});
 				return response.outcome.outcome === 'selected' ? response.outcome.optionId : 'cancelled';
 			};
+			let turnUsage: Usage | undefined;
 			for (const line of blocks.at(-1)!.split('\n')) {
 				const [command, first = '', ...rest]: string[] = line.startsWith('[') ? JSON.parse(line) : line.split(' ');
 				const text = rest.join(' ');
@@ -276,6 +277,31 @@ async function main(): Promise<void> {
 				switch (command) {
 					case 'say':
 						await say([first, ...rest].join(' '));
+						break;
+					case 'usage': {
+						const inputTokens = Number(first);
+						const outputTokens = Number(rest[0] ?? 0);
+						const cachedReadTokens = rest[1] !== undefined ? Number(rest[1]) : undefined;
+						const cachedWriteTokens = rest[2] !== undefined ? Number(rest[2]) : undefined;
+						turnUsage = {
+							totalTokens: inputTokens + outputTokens + (cachedReadTokens ?? 0) + (cachedWriteTokens ?? 0),
+							inputTokens,
+							outputTokens,
+							...(cachedReadTokens !== undefined && { cachedReadTokens }),
+							...(cachedWriteTokens !== undefined && { cachedWriteTokens }),
+						};
+						break;
+					}
+					case 'cost':
+						await client.notify(acp.methods.client.session.update, {
+							sessionId,
+							update: {
+								sessionUpdate: 'usage_update',
+								used: 1000,
+								size: 200000,
+								cost: { amount: Number(first), currency: rest[0] || 'USD' },
+							},
+						});
 						break;
 					case 'think':
 						await update('agent_thought_chunk', [first, ...rest].join(' '));
@@ -335,9 +361,11 @@ async function main(): Promise<void> {
 						break;
 					case 'wait':
 						await new Promise<void>((resolve) => cancels.set(sessionId, resolve));
-						return { stopReason: 'cancelled' as const };
+						return { stopReason: 'cancelled' as const, ...(turnUsage && { usage: turnUsage }) };
 					case 'refuse':
 						return { stopReason: 'refusal' as const };
+					case 'fail':
+						throw acp.RequestError.internalError(undefined, [first, ...rest].join(' ') || 'turn failed');
 					case 'stderr':
 						process.stderr.write(`${[first, ...rest].join(' ')}\n`);
 						break;
@@ -345,7 +373,7 @@ async function main(): Promise<void> {
 						process.exit(Number(first));
 				}
 			}
-			return { stopReason: 'end_turn' as const };
+			return { stopReason: 'end_turn' as const, ...(turnUsage && { usage: turnUsage }) };
 		})
 		.connect(acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>));
 }

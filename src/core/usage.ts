@@ -110,11 +110,15 @@ function addTotals(into: Totals, from: Totals): void {
  */
 export type Ledger = Record<string, Record<string, Totals>>;
 
-/** What a request was for, when not a continuation: finding the chapter's place on the outline. */
-export type UsageKind = 'position';
+/** What a request was for, when not a continuation: finding the chapter's place on the outline, or an assistant turn. */
+export type UsageKind = 'position' | 'assistant';
 
 export function usageKey(provider: string, model: string, kind?: UsageKind): string {
 	return `${provider}/${model}${kind ? `#${kind}` : ''}`;
+}
+
+export function assistantUsageKey(model: string): string {
+	return `${model}#assistant`;
 }
 
 export function splitUsageKey(key: string): { model: string; kind?: string } {

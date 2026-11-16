@@ -3,7 +3,8 @@ import { describe, test } from 'node:test';
 import { buildContext } from '../core/context';
 import { Library } from '../core/library';
 import { renderReport, renderUsage, type RunRecord, type Translate } from '../core/report';
-import { type Ledger, record as recordUsage, usageKey } from '../core/usage';
+import { assistantUsageKey, type Ledger, record as recordUsage, usageKey } from '../core/usage';
+import { translateReport } from '../renderer/strings';
 import { buildHttpRequest } from '../llm/client';
 import { PROVIDERS } from '../llm/providers';
 
@@ -175,12 +176,26 @@ describe('renderUsage', () => {
 		assert.match(report, /- Daily limit: none\./);
 	});
 
-	test('requests that find the position on the outline have a row of their own', () => {
+	test('requests that find the position on the outline and assistant turns have rows of their own and sum into Total', () => {
 		const ledger: Ledger = {};
 		recordUsage(ledger, '2026-11-12', usageKey('anthropic', 'claude-haiku-5-5'), { input: 400, output: 20 }, 0.0001);
 		recordUsage(ledger, '2026-11-12', usageKey('anthropic', 'claude-haiku-5-5', 'position'), { input: 900, output: 2 }, 0.00009);
+		recordUsage(
+			ledger,
+			'2026-11-12',
+			assistantUsageKey('Fable 5.2'),
+			{ input: 9812, output: 6330, cacheRead: 402118, cacheWrite: 1200 },
+			0.884,
+		);
 		const report = renderUsage(ledger, now, info, t);
-		assert.match(report, /\| anthropic\/claude-haiku-5-5 \| 1 \| 400 \| 0 \| 0 \| 20 \| \$0\.000100 \|\n\| anthropic\/claude-haiku-5-5 · outline position \| 1 \| 900 \| 0 \| 0 \| 2 \| \$0\.000090 \|\n\| Total \| 2 \| 1300 /);
+		assert.match(
+			report,
+			/\| anthropic\/claude-haiku-5-5 \| 1 \| 400 \| 0 \| 0 \| 20 \| \$0\.000100 \|\n\| anthropic\/claude-haiku-5-5 · outline position \| 1 \| 900 \| 0 \| 0 \| 2 \| \$0\.000090 \|\n\| Fable 5\.2 · assistant \| 1 \| 9812 \| 402118 \| 1200 \| 6330 \| \$0\.8840 \|\n\| Total \| 3 \| 11112 \| 402118 \| 1200 \| 6352 \| \$0\.8842 \|/,
+		);
+		const zhReport = renderUsage(ledger, now, info, translateReport);
+		assert.match(zhReport, /\| Fable 5\.2 · 助手 \| 1 \|/);
+		assert.match(zhReport, /\| 合计 \| 3 \|/);
+		assert.ok(zhReport.includes('助手走本机的 Claude Code；用订阅登录时，金额是按 API 价格折算的参考值，不是实际扣费。'));
 	});
 
 	test('nothing yet; a model without a price; a daily limit', () => {

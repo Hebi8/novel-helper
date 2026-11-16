@@ -19,6 +19,7 @@ import {
 	storiesFromMarkers,
 } from '../../core/story';
 import { zh } from '../../renderer/strings';
+import { countWords } from '../../core/text';
 import { defaults, type Settings } from '../../shared/defaults';
 import type { Book, DiskFile, ListedBook, SaveResult } from '../../shared/api';
 import { safePath } from '../scaffold/disk';
@@ -137,6 +138,7 @@ export class BookIndex {
 	private files = new Set<string>();
 	private conflicts = new Map<string, string>();
 	private contents = new Map<string, string>();
+	private wordCounts = new Map<string, number>();
 	private lineEndings = new Map<string, LineEnding>();
 	private opened = new Set<string>();
 	private pending = new Set<string>();
@@ -309,12 +311,27 @@ export class BookIndex {
 		);
 		return result;
 	}
+	totalChapterWords(): number {
+		let sum = 0;
+		for (const path of this.library.chapterList()) {
+			sum += this.wordCounts.get(path) ?? 0;
+		}
+		return sum;
+	}
+	chapterWordCounts(): Record<string, number> {
+		const counts: Record<string, number> = {};
+		for (const path of this.library.chapterList()) {
+			counts[path] = this.wordCounts.get(path) ?? 0;
+		}
+		return counts;
+	}
 	async read(path: string): Promise<DiskFile> {
 		const content = await readDocument(join(this.root, path));
 		this.opened.add(path);
 		if (content) {
 			this.lineEndings.set(path, content.lineEnding);
 			this.contents.set(path, content.text);
+			this.wordCounts.set(path, countWords(content.text));
 		}
 		return { path, text: content?.text ?? '' };
 	}
@@ -328,6 +345,7 @@ export class BookIndex {
 			await atomicWrite(join(this.root, path), text.replaceAll('\n', ending));
 			this.lineEndings.set(path, ending);
 			this.contents.set(path, text);
+			this.wordCounts.set(path, countWords(text));
 			this.add(path, text);
 			this.notify();
 			return { saved: true };
@@ -393,6 +411,7 @@ export class BookIndex {
 		this.files.delete(path);
 		this.unindexFile(path);
 		this.contents.delete(path);
+		this.wordCounts.delete(path);
 		this.syncConflicts();
 	}
 	private async updateFile(path: string, notify: boolean): Promise<void> {
@@ -403,6 +422,7 @@ export class BookIndex {
 			if (error instanceof FileFormatError || ignored(error)) {
 				this.library.deleteLore(path);
 				this.contents.delete(path);
+				this.wordCounts.delete(path);
 				this.add(path);
 				if (notify && this.opened.has(path)) {
 					this.fileChanged({ path, text: '', error: String(error) });
@@ -425,6 +445,7 @@ export class BookIndex {
 		}
 		this.lineEndings.set(path, content.lineEnding);
 		this.contents.set(path, content.text);
+		this.wordCounts.set(path, countWords(content.text));
 		this.add(path, content.text);
 		if (notify && tracked && previous !== content.text) {
 			this.fileChanged({ path, text: content.text });
@@ -544,6 +565,7 @@ export class BookIndex {
 				this.files.clear();
 				this.conflicts.clear();
 				this.contents.clear();
+				this.wordCounts.clear();
 				this.lineEndings.clear();
 				this.referenceContents.clear();
 				this.referenceVersion++;
